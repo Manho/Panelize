@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panelize - AI Comparison</title>
+  <link rel="stylesheet" href="multi-panel.css">
+
+  <!-- Material Symbols font -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet">
+
+  <!-- DNS prefetch and preconnect for faster loading -->
+  <link rel="dns-prefetch" href="https://chatgpt.com">
+  <link rel="dns-prefetch" href="https://claude.ai">
+  <link rel="dns-prefetch" href="https://gemini.google.com">
+  <link rel="dns-prefetch" href="https://grok.com">
+  <link rel="dns-prefetch" href="https://chat.deepseek.com">
+  <link rel="dns-prefetch" href="https://copilot.microsoft.com">
+  <link rel="dns-prefetch" href="https://www.perplexity.ai">
+
+  <link rel="preconnect" href="https://chatgpt.com">
+  <link rel="preconnect" href="https://claude.ai">
+  <link rel="preconnect" href="https://gemini.google.com">
+  <link rel="preconnect" href="https://grok.com">
+  <link rel="preconnect" href="https://chat.deepseek.com">
+  <link rel="preconnect" href="https://copilot.microsoft.com">
+  <link rel="preconnect" href="https://www.perplexity.ai">
+</head>
+<body data-theme="auto">
+  <div id="app">
+    <!-- Top Toolbar -->
+    <header id="toolbar">
+      <div class="toolbar-left">
+        <button id="history-toggle" class="toolbar-btn" title="Toggle History Panel">
+          <span class="material-symbols-outlined">history</span>
+        </button>
+        <span class="app-title">Panelize</span>
+      </div>
+
+      <div class="toolbar-center">
+        <div id="panel-selectors">
+          <!-- Panel provider selectors will be dynamically generated -->
+        </div>
+        <button id="add-panel-btn" class="toolbar-btn" title="Add Panel">
+          <span class="material-symbols-outlined">add</span>
+        </button>
+      </div>
+
+      <div class="toolbar-right">
+        <button id="toggle-toolbar-btn" class="toolbar-btn" title="Collapse Toolbar">
+          <span class="material-symbols-outlined">expand_less</span>
+        </button>
+        <button id="new-chat-btn" class="toolbar-btn" title="New Chat for All">
+          <span class="material-symbols-outlined">add_comment</span>
+        </button>
+        <button id="layout-btn" class="toolbar-btn" title="Change Layout">
+          <span class="material-symbols-outlined">grid_view</span>
+        </button>
+        <button id="settings-btn" class="toolbar-btn" title="Settings">
+          <span class="material-symbols-outlined">settings</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Toolbar Expand Bar (shown when toolbar is collapsed) -->
+    <div id="toolbar-expand-bar" class="hidden">
+      <button id="expand-toolbar-btn" title="Expand Toolbar">
+        <span class="material-symbols-outlined">expand_more</span>
+      </button>
+    </div>
+
+    <!-- Main Content Area -->
+    <div id="main-content">
+      <!-- History Sidebar (collapsible) -->
+      <aside id="history-sidebar" class="collapsed">
+        <div class="sidebar-header">
+          <h3>Comparison History</h3>
+          <div class="sidebar-header-actions">
+            <button id="backup-manager-btn" class="icon-btn" title="Backup Manager">
+              <span class="material-symbols-outlined">backup</span>
+            </button>
+            <button id="export-history" class="icon-btn" title="Export History">
+              <span class="material-symbols-outlined">download</span>
+            </button>
+            <button id="clear-history" class="icon-btn" title="Clear All History">
+              <span class="material-symbols-outlined">delete_sweep</span>
+            </button>
+            <button id="close-history" class="icon-btn" title="Close">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="sidebar-search">
+          <input type="text" id="history-search" placeholder="Search history...">
+        </div>
+        <div id="history-list">
+          <!-- History items will be dynamically rendered -->
+          <div class="history-empty">
+            <span class="material-symbols-outlined">chat_bubble</span>
+            <p>No comparison history yet</p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Panel Grid Container -->
+      <div id="panel-grid" class="layout-2x2">
+        <!-- Panels will be dynamically generated -->
+      </div>
+    </div>
+
+    <!-- Bottom Input Bar -->
+    <footer id="input-bar">
+      <div class="input-container">
+        <button id="prompt-library-btn" class="input-btn" title="Prompt Library">
+          <span class="material-symbols-outlined">auto_awesome</span>
+        </button>
+        <button id="image-upload-btn" class="input-btn" title="Upload Images">
+          <span class="material-symbols-outlined">add_photo_alternate</span>
+        </button>
+        <input type="file" id="image-file-input" accept="image/*" multiple style="display: none;">
+        <div class="input-wrapper">
+          <div id="image-preview-container" class="image-preview-container"></div>
+          <textarea id="unified-input" placeholder="Enter your question to send to all AI providers..." rows="1"></textarea>
+        </div>
+        <div class="input-actions">
+          <span id="send-status" class="send-status"></span>
+          <!-- Clear All Inputs Button -->
+          <button id="clear-all-btn" class="clear-btn" title="Clear All Inputs">
+            <span class="material-symbols-outlined">backspace</span>
+          </button>
+          <!-- Fill Input Boxes Button (no auto-send) -->
+          <button id="fill-input-btn" class="fill-btn" title="Fill Input Boxes">
+            <span class="material-symbols-outlined">input</span>
+            <span class="btn-text">Fill</span>
+          </button>
+          <!-- Send All Button (fill + auto-send) -->
+          <button id="send-all-btn" class="send-btn" title="Send to All">
+            <span class="material-symbols-outlined">send</span>
+            <span class="btn-text">Send All</span>
+          </button>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Layout Selector Modal -->
+    <div id="layout-modal" class="modal" style="display: none;">
+      <div class="modal-content modal-small">
+        <div class="modal-header">
+          <h3>Select Layout</h3>
+          <button class="close-btn" id="close-layout-modal">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="layout-options">
+            <button class="layout-option" data-layout="2x2" title="2x2 Grid">
+              <div class="layout-preview layout-2x2-preview">
+                <div></div><div></div><div></div><div></div>
+              </div>
+              <span>2x2</span>
+            </button>
+            <button class="layout-option" data-layout="1x4" title="1x4 Row">
+              <div class="layout-preview layout-1x4-preview">
+                <div></div><div></div><div></div><div></div>
+              </div>
+              <span>1x4</span>
+            </button>
+            <button class="layout-option" data-layout="2x1" title="2x1 Column">
+              <div class="layout-preview layout-2x1-preview">
+                <div></div><div></div>
+              </div>
+              <span>2x1</span>
+            </button>
+            <button class="layout-option" data-layout="3x1" title="3x1 Row">
+              <div class="layout-preview layout-3x1-preview">
+                <div></div><div></div><div></div>
+              </div>
+              <span>3x1</span>
+            </button>
+            <button class="layout-option" data-layout="1x2" title="1x2 Column">
+              <div class="layout-preview layout-1x2-preview">
+                <div></div><div></div>
+              </div>
+              <span>1x2</span>
+            </button>
+            <button class="layout-option" data-layout="1x3" title="1x3 Row">
+              <div class="layout-preview layout-1x3-preview">
+                <div></div><div></div><div></div>
+              </div>
+              <span>1x3</span>
+            </button>
+            <button class="layout-option" data-layout="1x1" title="Single Panel">
+              <div class="layout-preview layout-1x1-preview">
+                <div></div>
+              </div>
+              <span>1x1</span>
+            </button>
+            <button class="layout-option" data-layout="1x5" title="1x5 Row">
+              <div class="layout-preview layout-1x5-preview">
+                <div></div><div></div><div></div><div></div><div></div>
+              </div>
+              <span>1x5</span>
+            </button>
+            <button class="layout-option" data-layout="1x6" title="1x6 Row">
+              <div class="layout-preview layout-1x6-preview">
+                <div></div><div></div><div></div><div></div><div></div><div></div>
+              </div>
+              <span>1x6</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prompt Library Modal -->
+    <div id="prompt-modal" class="modal" style="display: none;">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h3>Prompt Library</h3>
+          <div class="modal-header-actions">
+            <button id="new-prompt-btn" class="header-action-btn" title="New Prompt">
+              <span class="material-symbols-outlined">add</span>
+            </button>
+            <button class="close-btn" id="close-prompt-modal">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <div class="prompt-filters">
+            <div class="prompt-search-wrapper">
+              <input type="text" id="prompt-search" placeholder="Search prompts...">
+            </div>
+            <div class="prompt-filter-buttons">
+              <select id="prompt-category-filter">
+                <option value="">All Categories</option>
+              </select>
+              <button id="prompt-favorites-btn" class="filter-btn" title="Show favorites only">
+                <span class="material-symbols-outlined">star</span>
+              </button>
+              <button id="prompt-recent-btn" class="filter-btn active" title="Recently used">
+                <span class="material-symbols-outlined">schedule</span>
+              </button>
+            </div>
+          </div>
+          <div id="prompt-list-modal">
+            <!-- Prompts will be dynamically rendered -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prompt Editor Modal (新增/编辑提示词) -->
+    <div id="prompt-editor-modal" class="modal" style="display: none;">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h3 id="prompt-editor-title">New Prompt</h3>
+          <button class="close-btn" id="close-prompt-editor">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="prompt-title-input">Title</label>
+            <input type="text" id="prompt-title-input" placeholder="Enter prompt title...">
+          </div>
+          <div class="form-group">
+            <label for="prompt-content-input">Content</label>
+            <textarea id="prompt-content-input" rows="8" placeholder="Enter prompt content... Use {variable} for variables"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="prompt-category-input">Category</label>
+            <input type="text" id="prompt-category-input" placeholder="e.g., Writing, Coding, Research">
+          </div>
+          <div class="form-group">
+            <label for="prompt-tags-input">Tags (comma separated)</label>
+            <input type="text" id="prompt-tags-input" placeholder="e.g., writing, creative, blog">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="delete-prompt-btn" class="btn-danger" style="margin-right: auto; display: none;">Delete</button>
+          <button id="cancel-prompt-editor" class="btn-secondary">Cancel</button>
+          <button id="save-prompt-btn" class="btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Variable Input Modal -->
+    <div id="variable-modal" class="modal" style="display: none;">
+      <div class="modal-content modal-small">
+        <div class="modal-header">
+          <h3>Fill in Variables</h3>
+          <button class="close-btn" id="close-variable-modal">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="variable-instruction">This prompt contains variables. Please fill in the values:</p>
+          <div id="variable-inputs">
+            <!-- Variable inputs will be dynamically generated -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="cancel-variable-btn" class="btn-secondary">Cancel</button>
+          <button id="apply-variable-btn" class="btn-primary">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- View Comparison Modal -->
+    <div id="comparison-modal" class="modal" style="display: none;">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h3 id="comparison-title">Comparison</h3>
+          <div class="modal-header-actions">
+            <button id="copy-comparison-btn" class="header-action-btn" title="Copy all">
+              <span class="material-symbols-outlined">content_copy</span>
+            </button>
+            <button id="delete-comparison-btn" class="header-action-btn" title="Delete">
+              <span class="material-symbols-outlined">delete</span>
+            </button>
+            <button class="close-btn" id="close-comparison-modal">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <div id="comparison-question" class="comparison-question"></div>
+          <div id="comparison-responses" class="comparison-responses">
+            <!-- Responses will be dynamically rendered -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Backup Manager Modal -->
+    <div id="backup-modal" class="modal" style="display: none;">
+      <div class="modal-content modal-large">
+        <div class="modal-header">
+          <h3>Chat History Backup Manager</h3>
+          <button class="close-btn" id="close-backup-modal">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="backup-actions">
+            <button id="export-chat-history-btn" class="btn-primary">
+              <span class="material-symbols-outlined">download</span>
+              Export to File
+            </button>
+            <button id="import-chat-history-btn" class="btn-secondary">
+              <span class="material-symbols-outlined">upload</span>
+              Import from File
+            </button>
+            <input type="file" id="import-file-input" accept=".json" style="display: none;">
+          </div>
+
+          <h4 class="backup-section-title">Auto Backups (Latest 10)</h4>
+          <div id="auto-backups-list">
+            <!-- Auto backups will be dynamically rendered -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="multi-panel.js"></script>
+</body>
+</html>

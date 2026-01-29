@@ -1,0 +1,242 @@
+{
+  "manifest_version": 3,
+  "name": "Panelize",
+  "version": "1.0.0",
+  "description": "Compare AI chatbots side-by-side. Use ChatGPT, Claude, Gemini, Grok & more in one window.",
+  "default_locale": "en",
+
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "clipboardRead",
+    "downloads"
+  ],
+
+  "host_permissions": [
+    "*://chatgpt.com/*",
+    "*://chat.openai.com/*",
+    "*://claude.ai/*",
+    "*://gemini.google.com/*",
+    "*://grok.com/*",
+    "*://chat.deepseek.com/*",
+    "*://www.perplexity.ai/*",
+    "*://perplexity.ai/*",
+    "*://www.google.com/*",
+    "*://google.com/*",
+    "*://copilot.microsoft.com/*",
+    "*://www.bing.com/*",
+    "*://bing.com/*",
+    "*://api.github.com/*"
+  ],
+
+  "optional_host_permissions": [
+    "*://localhost/*",
+    "*://127.0.0.1/*",
+    "*://*/*"
+  ],
+
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+
+
+  "options_page": "options/options.html",
+
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "__MSG_actionDefaultTitle__"
+  },
+
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Open Panelize"
+    },
+    "open-prompt-library": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "__MSG_commandOpenPromptLibrary__"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+
+
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-chatgpt.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/chatgpt-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/chatgpt-save-button.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-claude.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/claude-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/claude-save-button.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-gemini.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/gemini-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/gemini-save-button.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://grok.com/*"],
+      "js": [
+        "content-scripts/button-finder-utils.js",
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-grok.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/grok-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/grok-save-button.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://chat.deepseek.com/*"],
+      "js": [
+        "content-scripts/button-finder-utils.js",
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-deepseek.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/deepseek-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/deepseek-save-button.css"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://www.perplexity.ai/*"],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-perplexity.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/perplexity-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/perplexity-save-button.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://www.google.com/search*"],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-google.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/google-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/google-save-button.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://copilot.microsoft.com/*", "https://www.bing.com/chat*", "https://bing.com/chat*"],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-copilot.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/conversation-extractor-utils.js",
+        "content-scripts/language-detector.js",
+        "content-scripts/copilot-history-extractor.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "css": ["content-scripts/copilot-save-button.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "libs/Readability.js",
+        "content-scripts/page-content-extractor.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "bypass_headers",
+        "enabled": true,
+        "path": "rules/bypass-headers.json"
+      }
+    ]
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "data/prompt-libraries/default-prompts.json",
+        "data/version-info.json",
+        "_locales/en/messages.json",
+        "_locales/zh_CN/messages.json",
+        "_locales/zh_TW/messages.json"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
