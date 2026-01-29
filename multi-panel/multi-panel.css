@@ -1776,3 +1776,38 @@ body {
   background: #5a2a2a;
   color: #ff6b6b;
 }
+
+/* Visit link styles for comparison history */
+.visit-link {
+  display: block;
+  padding: 8px 12px;
+  background: #e3f2fd;
+  border: 1px solid #bbdefb;
+  border-radius: 6px;
+  color: #1976d2;
+  text-decoration: none;
+  font-size: 12px;
+  word-break: break-all;
+  transition: all 0.2s ease;
+}
+
+.visit-link:hover {
+  background: #bbdefb;
+  border-color: #90caf9;
+  text-decoration: underline;
+}
+
+.visit-link::before {
+  content: '🔗 ';
+}
+
+[data-theme="dark"] .visit-link {
+  background: #1a3a5a;
+  border-color: #2a5a8a;
+  color: #64b5f6;
+}
+
+[data-theme="dark"] .visit-link:hover {
+  background: #2a5a8a;
+  border-color: #3a7ab9;
+}

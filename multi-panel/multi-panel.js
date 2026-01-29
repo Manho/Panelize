@@ -403,7 +403,26 @@ async function broadcastMessage(text, autoSubmit = true) {
 
       // Save to comparison history (only when actually sending)
       if (autoSubmit) {
-        await saveComparisonToHistory(text, panels.map(p => p.providerId));
+        // Collect URLs from each panel's iframe
+        const providerUrls = {};
+        panels.forEach(panel => {
+          try {
+            // Try to get the current URL from the iframe
+            if (panel.iframe && panel.iframe.contentWindow) {
+              providerUrls[panel.providerId] = panel.iframe.contentWindow.location.href;
+            } else {
+              // Fallback to default provider URL
+              const provider = getProviderById(panel.providerId);
+              providerUrls[panel.providerId] = provider?.url || '';
+            }
+          } catch (e) {
+            // Cross-origin or other error, use default URL
+            const provider = getProviderById(panel.providerId);
+            providerUrls[panel.providerId] = provider?.url || '';
+          }
+        });
+
+        await saveComparisonToHistory(text, panels.map(p => p.providerId), providerUrls);
       }
     }
   } catch (error) {
@@ -754,11 +773,12 @@ async function loadComparisonHistory() {
   }
 }
 
-async function saveComparisonToHistory(question, providers) {
+async function saveComparisonToHistory(question, providers, providerUrls = {}) {
   const record = {
     id: Date.now().toString(),
     question,
     providers,
+    providerUrls,
     timestamp: Date.now(),
     layout: currentLayout
   };
@@ -950,6 +970,12 @@ function viewComparison(record) {
     const provider = getProviderById(pid);
     if (!provider) return '';
 
+    // Check if we have a saved URL for this provider
+    const savedUrl = record.providerUrls?.[pid];
+    const linkHtml = savedUrl
+      ? `<a href="${savedUrl}" target="_blank" rel="noopener noreferrer" class="visit-link">${savedUrl}</a>`
+      : `<em>Response not captured. Visit ${provider.name} to see the response.</em>`;
+
     return `
       <div class="comparison-response">
         <div class="comparison-response-header">
@@ -957,7 +983,7 @@ function viewComparison(record) {
           <span>${provider.name}</span>
         </div>
         <div class="comparison-response-content">
-          <em>Response not captured. Visit ${provider.name} to see the response.</em>
+          ${linkHtml}
         </div>
       </div>
     `;
