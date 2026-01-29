@@ -31,9 +31,6 @@
     <!-- Top Toolbar -->
     <header id="toolbar">
       <div class="toolbar-left">
-        <button id="history-toggle" class="toolbar-btn" title="Toggle History Panel">
-          <span class="material-symbols-outlined">history</span>
-        </button>
         <span class="app-title">Panelize</span>
       </div>
 
@@ -71,37 +68,6 @@
 
     <!-- Main Content Area -->
     <div id="main-content">
-      <!-- History Sidebar (collapsible) -->
-      <aside id="history-sidebar" class="collapsed">
-        <div class="sidebar-header">
-          <h3>Comparison History</h3>
-          <div class="sidebar-header-actions">
-            <button id="backup-manager-btn" class="icon-btn" title="Backup Manager">
-              <span class="material-symbols-outlined">backup</span>
-            </button>
-            <button id="export-history" class="icon-btn" title="Export History">
-              <span class="material-symbols-outlined">download</span>
-            </button>
-            <button id="clear-history" class="icon-btn" title="Clear All History">
-              <span class="material-symbols-outlined">delete_sweep</span>
-            </button>
-            <button id="close-history" class="icon-btn" title="Close">
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-        </div>
-        <div class="sidebar-search">
-          <input type="text" id="history-search" placeholder="Search history...">
-        </div>
-        <div id="history-list">
-          <!-- History items will be dynamically rendered -->
-          <div class="history-empty">
-            <span class="material-symbols-outlined">chat_bubble</span>
-            <p>No comparison history yet</p>
-          </div>
-        </div>
-      </aside>
-
       <!-- Panel Grid Container -->
       <div id="panel-grid" class="layout-2x2">
         <!-- Panels will be dynamically generated -->
@@ -303,32 +269,6 @@
         <div class="modal-footer">
           <button id="cancel-variable-btn" class="btn-secondary">Cancel</button>
           <button id="apply-variable-btn" class="btn-primary">Apply</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- View Comparison Modal -->
-    <div id="comparison-modal" class="modal" style="display: none;">
-      <div class="modal-content modal-large">
-        <div class="modal-header">
-          <h3 id="comparison-title">Comparison</h3>
-          <div class="modal-header-actions">
-            <button id="copy-comparison-btn" class="header-action-btn" title="Copy all">
-              <span class="material-symbols-outlined">content_copy</span>
-            </button>
-            <button id="delete-comparison-btn" class="header-action-btn" title="Delete">
-              <span class="material-symbols-outlined">delete</span>
-            </button>
-            <button class="close-btn" id="close-comparison-modal">
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-        </div>
-        <div class="modal-body">
-          <div id="comparison-question" class="comparison-question"></div>
-          <div id="comparison-responses" class="comparison-responses">
-            <!-- Responses will be dynamically rendered -->
-          </div>
         </div>
       </div>
     </div>
