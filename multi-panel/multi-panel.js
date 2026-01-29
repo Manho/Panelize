@@ -1069,14 +1069,6 @@ function setupEventListeners() {
     }
   });
 
-  // Comparison modal
-  document.getElementById('close-comparison-modal').addEventListener('click', closeComparisonModal);
-  document.getElementById('comparison-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'comparison-modal') {
-      closeComparisonModal();
-    }
-  });
-
   // Layout modal outside click
   document.getElementById('layout-modal').addEventListener('click', (e) => {
     if (e.target.id === 'layout-modal') {
@@ -1145,10 +1137,6 @@ function openPromptModal() {
 function closePromptModal() {
   document.getElementById('prompt-modal').style.display = 'none';
   document.getElementById('prompt-search').value = '';
-}
-
-function closeComparisonModal() {
-  document.getElementById('comparison-modal').style.display = 'none';
 }
 
 // ===== Provider Switcher =====
