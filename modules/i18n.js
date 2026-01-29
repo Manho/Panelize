@@ -61,7 +61,13 @@ export async function initializeLanguage(preferredLocale = null) {
  * @returns {string} Locale code
  */
 function getBrowserLocale() {
-  const browserLang = chrome.i18n.getUILanguage();
+  let browserLang = 'en';
+  try {
+    browserLang = chrome.i18n.getUILanguage();
+  } catch (error) {
+    // chrome.i18n not available, use default
+    browserLang = navigator.language || 'en';
+  }
 
   // Map browser language codes to our supported locales
   if (browserLang.startsWith('zh')) {
@@ -105,7 +111,14 @@ export function t(key, substitutions = null) {
   }
 
   // Fallback to Chrome's native i18n
-  return chrome.i18n.getMessage(key, substitutions) || key;
+  try {
+    if (typeof chrome !== 'undefined' && chrome.i18n) {
+      return chrome.i18n.getMessage(key, substitutions) || key;
+    }
+  } catch (error) {
+    // chrome.i18n not available
+  }
+  return key;
 }
 
 /**
@@ -159,7 +172,14 @@ export function translatePage(root = document) {
  * @returns {string} Language code (e.g., 'en', 'zh_CN', 'zh_TW')
  */
 export function getCurrentLanguage() {
-  return chrome.i18n.getUILanguage();
+  try {
+    if (typeof chrome !== 'undefined' && chrome.i18n) {
+      return chrome.i18n.getUILanguage();
+    }
+  } catch (error) {
+    // chrome.i18n not available
+  }
+  return currentLocale || 'en';
 }
 
 /**

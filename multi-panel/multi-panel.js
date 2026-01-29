@@ -896,13 +896,13 @@ async function searchPromptLibrary(query) {
 // ===== Event Listeners =====
 function setupEventListeners() {
   // Backup manager
-  document.getElementById('backup-manager-btn').addEventListener('click', openBackupManager);
-  document.getElementById('close-backup-modal').addEventListener('click', closeBackupModal);
-  document.getElementById('export-chat-history-btn').addEventListener('click', exportChatHistory);
-  document.getElementById('import-chat-history-btn').addEventListener('click', () => {
-    document.getElementById('import-file-input').click();
+  document.getElementById('backup-manager-btn')?.addEventListener('click', openBackupManager);
+  document.getElementById('close-backup-modal')?.addEventListener('click', closeBackupModal);
+  document.getElementById('export-chat-history-btn')?.addEventListener('click', exportChatHistory);
+  document.getElementById('import-chat-history-btn')?.addEventListener('click', () => {
+    document.getElementById('import-file-input')?.click();
   });
-  document.getElementById('import-file-input').addEventListener('change', importChatHistory);
+  document.getElementById('import-file-input')?.addEventListener('change', importChatHistory);
 
   // Layout button
   document.getElementById('layout-btn').addEventListener('click', openLayoutModal);

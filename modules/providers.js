@@ -69,10 +69,18 @@ export async function getProviderByIdWithSettings(id) {
 }
 
 export async function getEnabledProviders() {
-  const settings = await chrome.storage.sync.get({
+  let settings = {
     enabledProviders: ['chatgpt', 'claude', 'gemini', 'google', 'grok', 'deepseek', 'perplexity'],
     providerOrder: null
-  });
+  };
+  
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      settings = await chrome.storage.sync.get(settings);
+    }
+  } catch (error) {
+    console.warn('Failed to load provider settings, using defaults');
+  }
 
   // Filter enabled providers
   let enabledProviders = PROVIDERS.filter(p => settings.enabledProviders.includes(p.id));
