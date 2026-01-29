@@ -24,15 +24,12 @@ import {
   importConversationsFromFile,
   getAutoBackups,
   restoreFromAutoBackup,
-  deleteAutoBackup,
-  startAutoBackup
+  deleteAutoBackup
 } from '../modules/history-manager.js';
 
 // ===== State Management =====
 let currentLayout = '2x2';
 let panels = []; // Array of { id, providerId, iframe, state }
-let isHistoryOpen = false;
-let comparisonHistory = []; // Array of comparison records
 let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
 
 // 提示词编辑器状态
@@ -66,21 +63,13 @@ async function init() {
 
   // Setup event listeners
   setupEventListeners();
-
-  // Load comparison history
-  await loadComparisonHistory();
-
-  // Start automatic chat history backup
-  startAutoBackup();
 }
 
 async function loadSettings() {
   try {
     const settings = await chrome.storage.sync.get({
       multiPanelLayout: '2x2',
-      multiPanelProviders: DEFAULT_PROVIDERS,
-      multiPanelAutoSave: true,
-      multiPanelShowHistory: false
+      multiPanelProviders: DEFAULT_PROVIDERS
     });
 
     currentLayout = settings.multiPanelLayout;
@@ -88,13 +77,6 @@ async function loadSettings() {
     // Apply layout
     const panelGrid = document.getElementById('panel-grid');
     panelGrid.className = `layout-${currentLayout}`;
-
-    // Auto-show history sidebar if enabled
-    if (settings.multiPanelShowHistory) {
-      isHistoryOpen = true;
-      document.getElementById('history-sidebar').classList.remove('collapsed');
-      document.getElementById('history-toggle').classList.add('active');
-    }
   } catch (error) {
     console.error('Error loading settings:', error);
   }
@@ -399,11 +381,6 @@ async function broadcastMessage(text, autoSubmit = true) {
       // Clear images after successful send
       if (autoSubmit) {
         clearAllImages();
-      }
-
-      // Save to comparison history (only when actually sending)
-      if (autoSubmit) {
-        await saveComparisonToHistory(text, panels.map(p => p.providerId));
       }
     }
   } catch (error) {
@@ -743,229 +720,6 @@ async function adjustPanelCount(targetCount) {
   }
 }
 
-// ===== Comparison History =====
-async function loadComparisonHistory() {
-  try {
-    const result = await chrome.storage.local.get({ comparisonHistory: [] });
-    comparisonHistory = result.comparisonHistory;
-    renderHistoryList();
-  } catch (error) {
-    console.error('Error loading comparison history:', error);
-  }
-}
-
-async function saveComparisonToHistory(question, providers) {
-  const record = {
-    id: Date.now().toString(),
-    question,
-    providers,
-    timestamp: Date.now(),
-    layout: currentLayout
-  };
-
-  comparisonHistory.unshift(record);
-
-  // Keep only last 100 records
-  if (comparisonHistory.length > 100) {
-    comparisonHistory = comparisonHistory.slice(0, 100);
-  }
-
-  try {
-    await chrome.storage.local.set({ comparisonHistory });
-    renderHistoryList();
-  } catch (error) {
-    console.error('Error saving comparison history:', error);
-  }
-}
-
-function renderHistoryList() {
-  const historyList = document.getElementById('history-list');
-
-  if (comparisonHistory.length === 0) {
-    historyList.innerHTML = `
-      <div class="history-empty">
-        <span class="material-symbols-outlined">chat_bubble</span>
-        <p>No comparison history yet</p>
-      </div>
-    `;
-    return;
-  }
-
-  historyList.innerHTML = comparisonHistory.map(record => {
-    const date = new Date(record.timestamp);
-    const dateStr = date.toLocaleDateString();
-    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    return `
-      <div class="history-item" data-id="${record.id}">
-        <div class="history-item-actions">
-          <button class="copy-history-btn" data-id="${record.id}" title="Copy question">
-            <span class="material-symbols-outlined">content_copy</span>
-          </button>
-          <button class="reuse-history-btn" data-id="${record.id}" title="Reuse this question">
-            <span class="material-symbols-outlined">replay</span>
-          </button>
-          <button class="delete-btn" data-id="${record.id}" title="Delete">
-            <span class="material-symbols-outlined">delete</span>
-          </button>
-        </div>
-        <div class="history-item-question">${escapeHtml(record.question)}</div>
-        <div class="history-item-meta">
-          <span>${dateStr} ${timeStr}</span>
-          <div class="history-item-providers">
-            ${record.providers.map(pid => {
-              const provider = getProviderById(pid);
-              return provider ? `<img src="${provider.icon}" alt="${provider.name}" title="${provider.name}">` : '';
-            }).join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Add click handlers
-  historyList.querySelectorAll('.history-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-      // Don't trigger on button clicks
-      if (e.target.closest('button')) return;
-      const record = comparisonHistory.find(r => r.id === item.dataset.id);
-      if (record) {
-        viewComparison(record);
-      }
-    });
-  });
-
-  // Copy button handlers
-  historyList.querySelectorAll('.copy-history-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const record = comparisonHistory.find(r => r.id === btn.dataset.id);
-      if (record) {
-        navigator.clipboard.writeText(record.question);
-        showToast('Question copied to clipboard!');
-      }
-    });
-  });
-
-  // Reuse button handlers
-  historyList.querySelectorAll('.reuse-history-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const record = comparisonHistory.find(r => r.id === btn.dataset.id);
-      if (record) {
-        document.getElementById('unified-input').value = record.question;
-        resizeTextarea();
-        showToast('Question loaded to input!');
-      }
-    });
-  });
-
-  // Delete button handlers
-  historyList.querySelectorAll('.delete-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteHistoryItem(btn.dataset.id);
-    });
-  });
-}
-
-async function deleteHistoryItem(id) {
-  if (!confirm('Delete this comparison record?')) return;
-
-  comparisonHistory = comparisonHistory.filter(r => r.id !== id);
-
-  try {
-    await chrome.storage.local.set({ comparisonHistory });
-    renderHistoryList();
-    showToast('Record deleted');
-  } catch (error) {
-    console.error('Error deleting history item:', error);
-    showToast('Failed to delete record');
-  }
-}
-
-async function exportComparisonHistory() {
-  if (comparisonHistory.length === 0) {
-    showToast('No history to export');
-    return;
-  }
-
-  const exportData = {
-    exportDate: new Date().toISOString(),
-    type: 'multi-panel-comparison-history',
-    records: comparisonHistory.map(record => ({
-      question: record.question,
-      providers: record.providers,
-      timestamp: new Date(record.timestamp).toISOString(),
-      layout: record.layout
-    }))
-  };
-
-  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `comparison-history-${new Date().toISOString().split('T')[0]}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-
-  showToast('History exported successfully!');
-}
-
-async function clearComparisonHistory() {
-  if (comparisonHistory.length === 0) {
-    showToast('History is already empty');
-    return;
-  }
-
-  if (!confirm(`Delete all ${comparisonHistory.length} comparison records?\n\nThis action cannot be undone.`)) {
-    return;
-  }
-
-  comparisonHistory = [];
-
-  try {
-    await chrome.storage.local.set({ comparisonHistory });
-    renderHistoryList();
-    showToast('All history cleared');
-  } catch (error) {
-    console.error('Error clearing history:', error);
-    showToast('Failed to clear history');
-  }
-}
-
-function viewComparison(record) {
-  const modal = document.getElementById('comparison-modal');
-  const titleEl = document.getElementById('comparison-title');
-  const questionEl = document.getElementById('comparison-question');
-  const responsesEl = document.getElementById('comparison-responses');
-
-  titleEl.textContent = 'Comparison';
-  questionEl.textContent = record.question;
-
-  responsesEl.innerHTML = record.providers.map(pid => {
-    const provider = getProviderById(pid);
-    if (!provider) return '';
-
-    return `
-      <div class="comparison-response">
-        <div class="comparison-response-header">
-          <img src="${provider.icon}" alt="${provider.name}">
-          <span>${provider.name}</span>
-        </div>
-        <div class="comparison-response-content">
-          <em>Response not captured. Visit ${provider.name} to see the response.</em>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  modal.style.display = 'flex';
-}
-
 // ===== Prompt Library =====
 let currentPromptFilter = 'recent'; // 'recent', 'favorites', 'all'
 let currentCategoryFilter = '';
@@ -1141,14 +895,6 @@ async function searchPromptLibrary(query) {
 
 // ===== Event Listeners =====
 function setupEventListeners() {
-  // History toggle
-  document.getElementById('history-toggle').addEventListener('click', toggleHistory);
-  document.getElementById('close-history').addEventListener('click', toggleHistory);
-
-  // History management
-  document.getElementById('export-history').addEventListener('click', exportComparisonHistory);
-  document.getElementById('clear-history').addEventListener('click', clearComparisonHistory);
-
   // Backup manager
   document.getElementById('backup-manager-btn').addEventListener('click', openBackupManager);
   document.getElementById('close-backup-modal').addEventListener('click', closeBackupModal);
@@ -1352,13 +1098,6 @@ function setupEventListeners() {
     }
   });
 
-  // History search
-  const historySearch = document.getElementById('history-search');
-  historySearch.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase().trim();
-    filterHistory(query);
-  });
-
   // Prompt Editor Modal
   document.getElementById('close-prompt-editor')?.addEventListener('click', closePromptEditor);
   document.getElementById('cancel-prompt-editor')?.addEventListener('click', closePromptEditor);
@@ -1410,74 +1149,6 @@ function closePromptModal() {
 
 function closeComparisonModal() {
   document.getElementById('comparison-modal').style.display = 'none';
-}
-
-// ===== History Sidebar =====
-function toggleHistory() {
-  const sidebar = document.getElementById('history-sidebar');
-  const toggleBtn = document.getElementById('history-toggle');
-
-  isHistoryOpen = !isHistoryOpen;
-  sidebar.classList.toggle('collapsed', !isHistoryOpen);
-  toggleBtn.classList.toggle('active', isHistoryOpen);
-
-  // Save preference
-  chrome.storage.sync.set({ multiPanelShowHistory: isHistoryOpen }).catch(err => {
-    console.error('Error saving history preference:', err);
-  });
-}
-
-function filterHistory(query) {
-  if (!query) {
-    renderHistoryList();
-    return;
-  }
-
-  const filteredHistory = comparisonHistory.filter(record =>
-    record.question.toLowerCase().includes(query)
-  );
-
-  const historyList = document.getElementById('history-list');
-
-  if (filteredHistory.length === 0) {
-    historyList.innerHTML = `
-      <div class="history-empty">
-        <span class="material-symbols-outlined">search_off</span>
-        <p>No matching history</p>
-      </div>
-    `;
-    return;
-  }
-
-  historyList.innerHTML = filteredHistory.map(record => {
-    const date = new Date(record.timestamp);
-    const dateStr = date.toLocaleDateString();
-    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    return `
-      <div class="history-item" data-id="${record.id}">
-        <div class="history-item-question">${escapeHtml(record.question)}</div>
-        <div class="history-item-meta">
-          <span>${dateStr} ${timeStr}</span>
-          <div class="history-item-providers">
-            ${record.providers.map(pid => {
-              const provider = getProviderById(pid);
-              return provider ? `<img src="${provider.icon}" alt="${provider.name}" title="${provider.name}">` : '';
-            }).join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  historyList.querySelectorAll('.history-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const record = comparisonHistory.find(r => r.id === item.dataset.id);
-      if (record) {
-        viewComparison(record);
-      }
-    });
-  });
 }
 
 // ===== Provider Switcher =====
