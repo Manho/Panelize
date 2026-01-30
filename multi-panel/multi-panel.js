@@ -85,10 +85,20 @@ async function loadSettings() {
 async function initializePanels() {
   try {
     const settings = await chrome.storage.sync.get({
+      providerOrder: null,
+      enabledProviders: DEFAULT_PROVIDERS,
       multiPanelProviders: DEFAULT_PROVIDERS
     });
 
-    const providerIds = settings.multiPanelProviders;
+    // Use providerOrder if available (from settings page), fallback to multiPanelProviders
+    let providerIds;
+    if (settings.providerOrder && Array.isArray(settings.providerOrder) && settings.providerOrder.length > 0) {
+      // Filter to only include enabled providers that exist in providerOrder
+      providerIds = settings.providerOrder.filter(id => settings.enabledProviders.includes(id));
+    } else {
+      providerIds = settings.multiPanelProviders;
+    }
+
     const panelCount = LAYOUT_PANEL_COUNTS[currentLayout] || 4;
 
     // Create panels for each provider
