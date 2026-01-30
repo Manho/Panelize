@@ -42,6 +42,26 @@ function getEnabledProvidersOrDefault(settings) {
   return [...DEFAULT_ENABLED_PROVIDERS];
 }
 
+function getProviderDisplayOrder(settings) {
+  const savedOrder = Array.isArray(settings.providerOrder) ? settings.providerOrder : [];
+  const allIds = PROVIDERS.map(provider => provider.id);
+  const orderedIds = [];
+
+  for (const id of savedOrder) {
+    if (allIds.includes(id) && !orderedIds.includes(id)) {
+      orderedIds.push(id);
+    }
+  }
+
+  for (const id of allIds) {
+    if (!orderedIds.includes(id)) {
+      orderedIds.push(id);
+    }
+  }
+
+  return orderedIds;
+}
+
 function isEdgeBrowser() {
   const uaData = navigator.userAgentData;
   if (uaData && Array.isArray(uaData.brands)) {
@@ -202,28 +222,12 @@ async function loadSettings() {
 async function renderProviderList() {
   const settings = await getSettings();
   const enabledProviders = getEnabledProvidersOrDefault(settings);
-  const providerOrder = settings.providerOrder || [...enabledProviders];
+  const displayOrder = getProviderDisplayOrder(settings);
   const listContainer = document.getElementById('provider-list');
 
-  // Sort PROVIDERS based on providerOrder for enabled ones, then append disabled ones
+  const orderIndex = new Map(displayOrder.map((id, index) => [id, index]));
   const sortedProviders = [...PROVIDERS].sort((a, b) => {
-    const aEnabled = enabledProviders.includes(a.id);
-    const bEnabled = enabledProviders.includes(b.id);
-
-    // Enabled providers first
-    if (aEnabled && !bEnabled) return -1;
-    if (!aEnabled && bEnabled) return 1;
-
-    // Among enabled, sort by providerOrder
-    if (aEnabled && bEnabled) {
-      const aIndex = providerOrder.indexOf(a.id);
-      const bIndex = providerOrder.indexOf(b.id);
-      if (aIndex === -1) return 1;
-      if (bIndex === -1) return -1;
-      return aIndex - bIndex;
-    }
-
-    return 0;
+    return (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0);
   });
 
   listContainer.innerHTML = sortedProviders.map(provider => {
@@ -245,8 +249,15 @@ async function renderProviderList() {
 
   // Add click listeners to toggles
   listContainer.querySelectorAll('.toggle-switch').forEach(toggle => {
-    toggle.addEventListener('click', async () => {
-      await toggleProvider(toggle.dataset.providerId);
+    toggle.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const providerItem = toggle.closest('.provider-item');
+      const providerId = providerItem?.dataset.providerId || toggle.dataset.providerId;
+      if (!providerId) return;
+
+      await toggleProvider(providerId);
     });
   });
 
@@ -290,12 +301,15 @@ function setupProviderDragAndDrop(container) {
 
 // Save the new provider order
 async function saveProviderOrder(container) {
-  const items = container.querySelectorAll('.provider-item.draggable');
+  const settings = await getSettings();
+  const enabledProviders = getEnabledProvidersOrDefault(settings);
+  const items = container.querySelectorAll('.provider-item');
   const newOrder = Array.from(items).map(item => item.dataset.providerId);
+  const newEnabledOrder = newOrder.filter(id => enabledProviders.includes(id));
 
   await saveSetting('providerOrder', newOrder);
-  // Also update enabledProviders to match the new order
-  await saveSetting('enabledProviders', newOrder);
+  // Also update enabledProviders to match the new order among enabled items
+  await saveSetting('enabledProviders', newEnabledOrder);
   showStatus('success', t('msgProviderSettingsUpdated'));
 }
 
