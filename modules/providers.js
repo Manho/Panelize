@@ -24,14 +24,6 @@ export const PROVIDERS = [
     enabled: true
   },
   {
-    id: 'google',
-    name: 'Google',
-    url: 'https://www.google.com/search?udm=50',
-    icon: '/icons/providers/google.png',
-    iconDark: '/icons/providers/dark/google.png',
-    enabled: true
-  },
-  {
     id: 'grok',
     name: 'Grok',
     url: 'https://grok.com',
@@ -48,11 +40,11 @@ export const PROVIDERS = [
     enabled: true
   },
   {
-    id: 'perplexity',
-    name: 'Perplexity',
-    url: 'https://www.perplexity.ai',
-    icon: '/icons/providers/perplexity.png',
-    iconDark: '/icons/providers/dark/perplexity.png',
+    id: 'google',
+    name: 'Google',
+    url: 'https://www.google.com/search?udm=50',
+    icon: '/icons/providers/google.png',
+    iconDark: '/icons/providers/dark/google.png',
     enabled: true
   }
 ];
@@ -70,7 +62,7 @@ export async function getProviderByIdWithSettings(id) {
 
 export async function getEnabledProviders() {
   let settings = {
-    enabledProviders: ['chatgpt', 'claude', 'gemini', 'google', 'grok', 'deepseek', 'perplexity'],
+    enabledProviders: ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'google'],
     providerOrder: null
   };
   
