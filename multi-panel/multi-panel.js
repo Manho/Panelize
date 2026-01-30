@@ -93,10 +93,12 @@ async function initializePanels() {
     // Use providerOrder if available (from settings page), fallback to multiPanelProviders
     let providerIds;
     if (settings.providerOrder && Array.isArray(settings.providerOrder) && settings.providerOrder.length > 0) {
-      // Filter to only include enabled providers that exist in providerOrder
+      // Use providerOrder directly since it now reflects enabled providers in correct order
+      // Filter to ensure all providers in providerOrder are actually enabled
       providerIds = settings.providerOrder.filter(id => settings.enabledProviders.includes(id));
     } else {
-      providerIds = settings.multiPanelProviders;
+      // Fallback: use enabledProviders in their stored order, or multiPanelProviders
+      providerIds = settings.enabledProviders || settings.multiPanelProviders;
     }
 
     const panelCount = LAYOUT_PANEL_COUNTS[currentLayout] || 4;

@@ -294,6 +294,8 @@ async function saveProviderOrder(container) {
   const newOrder = Array.from(items).map(item => item.dataset.providerId);
 
   await saveSetting('providerOrder', newOrder);
+  // Also update enabledProviders to match the new order
+  await saveSetting('enabledProviders', newOrder);
   showStatus('success', t('msgProviderSettingsUpdated'));
 }
 
