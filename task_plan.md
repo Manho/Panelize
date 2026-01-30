@@ -30,6 +30,12 @@ Phase 1
 - [x] Verify providers.js syntax is valid
 - [x] Confirm provider count and order
 - [x] Document changes in findings.md
+- [x] Fix additional files with old provider order:
+  - options/options.js DEFAULT_ENABLED_PROVIDERS
+  - modules/settings.js DEFAULT_SETTINGS
+  - background/service-worker.js enabledProviders and providerNames
+- [x] Fix multi-panel to use providerOrder from settings
+- [x] Test provider order logic with test script
 - **Status:** complete
 
 ### Phase 5: Delivery
