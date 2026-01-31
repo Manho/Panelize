@@ -159,7 +159,7 @@
     "message": "Default Shortcuts"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Shift+E (Ctrl+Shift+E on Windows/Linux) opens Panelize.<br>Command+Shift+P (Ctrl+Shift+P on Windows/Linux) opens Prompt Library."
+    "message": "Command+Shift+E (Ctrl+Shift+E on Windows/Linux) opens Panelize.<br>Command+Shift+L (Ctrl+Shift+L on Windows/Linux) opens Prompt Library.<br>After installing, confirm or set shortcuts in chrome://extensions/shortcuts."
   },
   "btnOpenShortcuts": {
     "message": "Open Shortcuts"
@@ -177,7 +177,7 @@
     "message": "Auto-paste Clipboard to Prompt Library"
   },
   "descAutoPaste": {
-    "message": "Automatically paste clipboard content to workspace when opening Prompt Library with Command+Shift+P"
+    "message": "Automatically paste clipboard content to workspace when opening Prompt Library with Command+Shift+L"
   },
 
   "sectionChatHistory": {

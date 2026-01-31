@@ -103,7 +103,7 @@
     "message": "預設快速鍵"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Shift+E（Windows/Linux 為 Ctrl+Shift+E）開啟 Panelize。<br>Command+Shift+P（Windows/Linux 為 Ctrl+Shift+P）開啟提示詞庫。"
+    "message": "Command+Shift+E（Windows/Linux 為 Ctrl+Shift+E）開啟 Panelize。<br>Command+Shift+L（Windows/Linux 為 Ctrl+Shift+L）開啟提示詞庫。<br>安裝後可能需要在 chrome://extensions/shortcuts 中確認或設定快捷鍵。"
   },
   "btnOpenShortcuts": {
     "message": "開啟快速鍵設定"
@@ -121,7 +121,7 @@
     "message": "自動貼上剪貼簿到提示詞庫"
   },
   "descAutoPaste": {
-    "message": "使用 Command + Shift + P 開啟提示詞庫時自動將剪貼簿內容貼上到工作區"
+    "message": "使用 Command + Shift + L 開啟提示詞庫時自動將剪貼簿內容貼上到工作區"
   },
   "sectionChatHistory": {
     "message": "聊天記錄"
