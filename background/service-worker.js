@@ -10,6 +10,7 @@ const DEFAULT_SHORTCUT_SETTING = { keyboardShortcutEnabled: true };
 const DEFAULT_OPEN_MODE = { openMode: 'tab' };
 let keyboardShortcutEnabled = true;
 let openMode = 'tab';
+const PENDING_MULTI_PANEL_ACTION_KEY = 'pendingMultiPanelAction';
 
 async function loadShortcutSetting() {
   try {
@@ -28,6 +29,27 @@ async function loadOpenModeSetting() {
   } catch (error) {
     // Fallback to default if storage unavailable
     openMode = 'tab';
+  }
+}
+
+async function setPendingMultiPanelAction(action, payload = {}) {
+  const pendingAction = {
+    action,
+    payload,
+    createdAt: Date.now()
+  };
+
+  try {
+    await chrome.storage.session.set({ [PENDING_MULTI_PANEL_ACTION_KEY]: pendingAction });
+    return;
+  } catch (error) {
+    // Fallback to local storage if session storage is unavailable
+  }
+
+  try {
+    await chrome.storage.local.set({ [PENDING_MULTI_PANEL_ACTION_KEY]: pendingAction });
+  } catch (error) {
+    // Ignore storage errors
   }
 }
 
@@ -167,11 +189,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           contentToSend = `${info.selectionText}\n\nSource: ${info.pageUrl}`;
         }
 
-        // Wait for multi-panel to load, then send message to switch provider
-        setTimeout(() => {
-          notifyMessage({
-            action: 'switchProvider',
-            payload: { providerId, selectedText: contentToSend }
+      // Wait for multi-panel to load, then send message to switch provider
+      setTimeout(() => {
+        setPendingMultiPanelAction('switchProvider', { providerId, selectedText: contentToSend });
+        notifyMessage({
+          action: 'switchProvider',
+          payload: { providerId, selectedText: contentToSend }
           }).catch(() => {
             // Multi-Panel may not be ready yet, silently ignore
           });
@@ -186,6 +209,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           if (response && response.success) {
             // Send extracted content to multi-panel
             setTimeout(() => {
+              setPendingMultiPanelAction('switchProvider', { providerId, selectedText: response.content });
               notifyMessage({
                 action: 'switchProvider',
                 payload: { providerId, selectedText: response.content }
@@ -196,6 +220,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           } else {
             // Extraction failed - send empty to provider
             setTimeout(() => {
+              setPendingMultiPanelAction('switchProvider', { providerId, selectedText: '' });
               notifyMessage({
                 action: 'switchProvider',
                 payload: { providerId, selectedText: '' }
@@ -206,6 +231,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           // Content script not ready or extraction failed
           // Send empty to provider
           setTimeout(() => {
+            setPendingMultiPanelAction('switchProvider', { providerId, selectedText: '' });
             notifyMessage({
               action: 'switchProvider',
               payload: { providerId, selectedText: '' }
@@ -233,6 +259,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
         // Wait for multi-panel to load, then switch to prompt library
         setTimeout(() => {
+          setPendingMultiPanelAction('openPromptLibrary', { selectedText: contentToSend });
           notifyMessage({
             action: 'openPromptLibrary',
             payload: { selectedText: contentToSend }
@@ -250,6 +277,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           if (response && response.success) {
             // Send extracted content to multi-panel
             setTimeout(() => {
+              setPendingMultiPanelAction('openPromptLibrary', { selectedText: response.content });
               notifyMessage({
                 action: 'openPromptLibrary',
                 payload: { selectedText: response.content }
@@ -260,6 +288,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           } else {
             // Extraction failed - send empty
             setTimeout(() => {
+              setPendingMultiPanelAction('openPromptLibrary', { selectedText: '' });
               notifyMessage({
                 action: 'openPromptLibrary',
                 payload: { selectedText: '' }
@@ -270,6 +299,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           // Content script not ready or extraction failed
           // Send empty
           setTimeout(() => {
+            setPendingMultiPanelAction('openPromptLibrary', { selectedText: '' });
             notifyMessage({
               action: 'openPromptLibrary',
               payload: { selectedText: '' }
@@ -405,21 +435,24 @@ async function handleSaveConversation(conversationData, sender) {
 
 // Listen for keyboard shortcuts - simplified for Multi-Panel mode
 chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command === 'open-prompt-library' || command === 'open-multi-panel') {
+  if (!keyboardShortcutEnabled) {
+    return;
+  }
+
+  if (command === 'open-prompt-library') {
     // Open Multi-Panel
+    await setPendingMultiPanelAction('openPromptLibrary', {});
     await openMultiPanel();
 
     // If it's prompt library command, also send message to open it
-    if (command === 'open-prompt-library') {
-      setTimeout(() => {
-        notifyMessage({
-          action: 'openPromptLibrary',
-          payload: {}
-        }).catch(() => {
-          // Multi-Panel may not be ready yet, ignore error
-        });
-      }, 500);
-    }
+    setTimeout(() => {
+      notifyMessage({
+        action: 'openPromptLibrary',
+        payload: {}
+      }).catch(() => {
+        // Multi-Panel may not be ready yet, ignore error
+      });
+    }, 500);
   } else if (command === 'toggle-focus') {
     // In Multi-Panel mode, toggle-focus just opens/focuses the Multi-Panel
     await openMultiPanel();

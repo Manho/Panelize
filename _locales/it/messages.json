@@ -102,7 +102,7 @@
     "message": "Scorciatoie predefinite"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Shift+E (Ctrl+Shift+E su Windows/Linux) apre la barra laterale con il provider predefinito.<br>Command+Shift+P (Ctrl+Shift+P su Windows/Linux) apre la Libreria Prompt.<br>Puoi personalizzarle nelle impostazioni delle scorciatoie del tuo browser."
+    "message": "Command+Shift+E (Ctrl+Shift+E su Windows/Linux) apre la barra laterale con il provider predefinito.<br>Command+Shift+L (Ctrl+Shift+L su Windows/Linux) apre la Libreria Prompt.<br>Puoi personalizzarle nelle impostazioni delle scorciatoie del tuo browser.<br>Dopo l'installazione, potrebbe essere necessario confermare o assegnare le scorciatoie in chrome://extensions/shortcuts."
   },
   "btnOpenShortcuts": {
     "message": "Apri scorciatoie"
@@ -120,7 +120,7 @@
     "message": "Incolla automaticamente appunti nella Libreria Prompt"
   },
   "descAutoPaste": {
-    "message": "Incolla automaticamente il contenuto degli appunti nell'area di lavoro quando si apre la Libreria Prompt con Command+Shift+P"
+    "message": "Incolla automaticamente il contenuto degli appunti nell'area di lavoro quando si apre la Libreria Prompt con Command+Shift+L"
   },
   "sectionChatHistory": {
     "message": "Cronologia chat"

@@ -102,7 +102,7 @@
     "message": "Standard-Tastaturkürzel"
   },
   "descDefaultShortcuts": {
-    "message": "Befehl+Umschalt+E (Strg+Umschalt+E unter Windows/Linux) öffnet die Seitenleiste mit dem Standard-Anbieter.<br>Befehl+Umschalt+P (Strg+Umschalt+P unter Windows/Linux) öffnet die Prompt-Bibliothek.<br>Sie können diese in den Tastaturkürzel-Einstellungen Ihres Browsers anpassen."
+    "message": "Befehl+Umschalt+E (Strg+Umschalt+E unter Windows/Linux) öffnet die Seitenleiste mit dem Standard-Anbieter.<br>Befehl+Umschalt+L (Strg+Umschalt+L unter Windows/Linux) öffnet die Prompt-Bibliothek.<br>Sie können diese in den Tastaturkürzel-Einstellungen Ihres Browsers anpassen.<br>Nach der Installation müssen Sie die Tastaturkürzel ggf. unter chrome://extensions/shortcuts bestätigen oder festlegen."
   },
   "btnOpenShortcuts": {
     "message": "Tastaturkürzel öffnen"
@@ -120,7 +120,7 @@
     "message": "Zwischenablage automatisch in Prompt-Bibliothek einfügen"
   },
   "descAutoPaste": {
-    "message": "Fügt den Inhalt der Zwischenablage automatisch in den Arbeitsbereich ein, wenn die Prompt-Bibliothek mit Befehl+Umschalt+P geöffnet wird"
+    "message": "Fügt den Inhalt der Zwischenablage automatisch in den Arbeitsbereich ein, wenn die Prompt-Bibliothek mit Befehl+Umschalt+L geöffnet wird"
   },
   "sectionChatHistory": {
     "message": "Chat-Verlauf"

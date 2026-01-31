@@ -102,7 +102,7 @@
     "message": "기본 단축키"
   },
   "descDefaultShortcuts": {
-    "message": "Command + Shift + E (Windows/Linux 에서 Ctrl + Shift + E)를 누르면 기본 제공자로 사이드바가 열립니다.<br>Command + Shift + P (Windows/Linux 에서 Ctrl + Shift + P)를 누르면 프롬프트 라이브러리가 열립니다.<br>브라우저의 단축키 설정에서 사용자 지정할 수 있습니다."
+    "message": "Command + Shift + E (Windows/Linux 에서 Ctrl + Shift + E)를 누르면 기본 제공자로 사이드바가 열립니다.<br>Command + Shift + L (Windows/Linux 에서 Ctrl + Shift + L)를 누르면 프롬프트 라이브러리가 열립니다.<br>브라우저의 단축키 설정에서 사용자 지정할 수 있습니다.<br>설치 후 chrome://extensions/shortcuts 에서 단축키를 확인하거나 지정해야 할 수 있습니다."
   },
   "btnOpenShortcuts": {
     "message": "단축키 열기"
@@ -120,7 +120,7 @@
     "message": "프롬프트 라이브러리에 클립보드 자동 붙여넣기"
   },
   "descAutoPaste": {
-    "message": "Command + Shift + P 로 프롬프트 라이브러리를 열 때 작업 영역에 클립보드 내용을 자동으로 붙여넣습니다"
+    "message": "Command + Shift + L 로 프롬프트 라이브러리를 열 때 작업 영역에 클립보드 내용을 자동으로 붙여넣습니다"
   },
   "sectionChatHistory": {
     "message": "채팅 기록"

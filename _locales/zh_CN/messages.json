@@ -104,7 +104,7 @@
     "message": "默认快捷键"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Shift+E（Windows/Linux 上为 Ctrl+Shift+E）打开 Panelize。<br>Command+Shift+P（Windows/Linux 上为 Ctrl+Shift+P）打开提示词库。"
+    "message": "Command+Shift+E（Windows/Linux 上为 Ctrl+Shift+E）打开 Panelize。<br>Command+Shift+L（Windows/Linux 上为 Ctrl+Shift+L）打开提示词库。<br>安装后可能需要在 chrome://extensions/shortcuts 中确认或设置快捷键。"
   },
   "btnOpenShortcuts": {
     "message": "打开快捷键设置"
@@ -122,7 +122,7 @@
     "message": "自动粘贴剪贴板到提示词库"
   },
   "descAutoPaste": {
-    "message": "使用 Command + Shift + P 打开提示词库时自动将剪贴板内容粘贴到工作区"
+    "message": "使用 Command + Shift + L 打开提示词库时自动将剪贴板内容粘贴到工作区"
   },
   "sectionChatHistory": {
     "message": "聊天历史"

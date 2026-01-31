@@ -102,7 +102,7 @@
     "message": "Raccourcis par défaut"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Maj+E (Ctrl+Maj+E sur Windows/Linux) ouvre la barre latérale avec le fournisseur par défaut.<br>Command+Maj+P (Ctrl+Maj+P sur Windows/Linux) ouvre la bibliothèque de prompts.<br>Vous pouvez personnaliser ces raccourcis dans les paramètres de raccourcis de votre navigateur."
+    "message": "Command+Maj+E (Ctrl+Maj+E sur Windows/Linux) ouvre la barre latérale avec le fournisseur par défaut.<br>Command+Maj+L (Ctrl+Maj+L sur Windows/Linux) ouvre la bibliothèque de prompts.<br>Vous pouvez personnaliser ces raccourcis dans les paramètres de raccourcis de votre navigateur.<br>Après l'installation, vous devrez peut-être confirmer ou définir les raccourcis dans chrome://extensions/shortcuts."
   },
   "btnOpenShortcuts": {
     "message": "Ouvrir les raccourcis"
@@ -120,7 +120,7 @@
     "message": "Coller automatiquement le presse-papiers dans la bibliothèque de prompts"
   },
   "descAutoPaste": {
-    "message": "Coller automatiquement le contenu du presse-papiers dans l'espace de travail lors de l'ouverture de la bibliothèque de prompts avec Command+Maj+P"
+    "message": "Coller automatiquement le contenu du presse-papiers dans l'espace de travail lors de l'ouverture de la bibliothèque de prompts avec Command+Maj+L"
   },
   "sectionChatHistory": {
     "message": "Historique des conversations"

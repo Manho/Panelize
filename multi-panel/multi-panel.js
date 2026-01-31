@@ -42,6 +42,7 @@ let isPopupWindow = false;   // 当前窗口是否为弹出窗口
 // Default panel configuration
 const DEFAULT_PROVIDERS = ['chatgpt', 'claude', 'gemini', 'grok'];
 const MAX_PANELS = 6;
+const PENDING_MULTI_PANEL_ACTION_KEY = 'pendingMultiPanelAction';
 const LAYOUT_PANEL_COUNTS = {
   '1x1': 1,
   '1x2': 2,
@@ -55,11 +56,13 @@ const LAYOUT_PANEL_COUNTS = {
   '3x1': 3,
   '3x2': 6
 };
+let isInitialized = false;
 
 // ===== Initialization =====
 async function init() {
   await applyTheme();
   await initializeLanguage();
+  registerRuntimeMessageListener();
 
   // Detect window type and load mode
   await detectWindowType();
@@ -75,6 +78,91 @@ async function init() {
 
   // Setup event listeners
   setupEventListeners();
+
+  isInitialized = true;
+  await handlePendingMultiPanelAction();
+}
+
+async function getPendingMultiPanelAction() {
+  try {
+    const result = await chrome.storage.session.get(PENDING_MULTI_PANEL_ACTION_KEY);
+    if (result && result[PENDING_MULTI_PANEL_ACTION_KEY]) {
+      return result[PENDING_MULTI_PANEL_ACTION_KEY];
+    }
+  } catch (error) {
+    // Ignore session storage errors
+  }
+
+  try {
+    const result = await chrome.storage.local.get(PENDING_MULTI_PANEL_ACTION_KEY);
+    return result ? result[PENDING_MULTI_PANEL_ACTION_KEY] : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function clearPendingMultiPanelAction() {
+  try {
+    await chrome.storage.session.remove(PENDING_MULTI_PANEL_ACTION_KEY);
+  } catch (error) {
+    // Ignore session storage errors
+  }
+
+  try {
+    await chrome.storage.local.remove(PENDING_MULTI_PANEL_ACTION_KEY);
+  } catch (error) {
+    // Ignore local storage errors
+  }
+}
+
+async function handlePendingMultiPanelAction() {
+  const pendingAction = await getPendingMultiPanelAction();
+  if (!pendingAction || !pendingAction.action) {
+    return;
+  }
+
+  const handled = await handleMultiPanelAction(pendingAction.action, pendingAction.payload || {});
+  if (handled) {
+    await clearPendingMultiPanelAction();
+  }
+}
+
+async function handleMultiPanelAction(action, payload = {}) {
+  if (action === 'openPromptLibrary') {
+    if (payload.selectedText) {
+      applyPromptToInput(payload.selectedText);
+    }
+    openPromptModal();
+    return true;
+  }
+
+  if (action === 'switchProvider') {
+    if (payload.providerId && panels.length > 0) {
+      await switchPanelProvider(panels[0].id, payload.providerId);
+    }
+    if (payload.selectedText) {
+      applyPromptToInput(payload.selectedText);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function registerRuntimeMessageListener() {
+  if (!chrome?.runtime?.onMessage) return;
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message?.action || !isInitialized) {
+      return;
+    }
+
+    handleMultiPanelAction(message.action, message.payload || {}).then((handled) => {
+      if (handled) {
+        clearPendingMultiPanelAction();
+      }
+    });
+  });
 }
 
 async function loadSettings() {

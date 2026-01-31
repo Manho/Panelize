@@ -102,7 +102,7 @@
     "message": "デフォルトショートカット"
   },
   "descDefaultShortcuts": {
-    "message": "Command + Shift + E（Windows/Linux では Ctrl + Shift + E）でデフォルトプロバイダーのサイドバーが開きます。<br>Command + Shift + P（Windows/Linux では Ctrl + Shift + P）でプロンプトライブラリが開きます。<br>ブラウザのショートカット設定でカスタマイズできます。"
+    "message": "Command + Shift + E（Windows/Linux では Ctrl + Shift + E）でデフォルトプロバイダーのサイドバーが開きます。<br>Command + Shift + L（Windows/Linux では Ctrl + Shift + L）でプロンプトライブラリが開きます。<br>ブラウザのショートカット設定でカスタマイズできます。<br>インストール後、chrome://extensions/shortcuts でショートカットを確認または設定する必要がある場合があります。"
   },
   "btnOpenShortcuts": {
     "message": "ショートカットを開く"
@@ -120,7 +120,7 @@
     "message": "プロンプトライブラリにクリップボードを自動貼り付け"
   },
   "descAutoPaste": {
-    "message": "Command + Shift + P でプロンプトライブラリを開くときに、ワークスペースにクリップボードの内容を自動的に貼り付けます"
+    "message": "Command + Shift + L でプロンプトライブラリを開くときに、ワークスペースにクリップボードの内容を自動的に貼り付けます"
   },
   "sectionChatHistory": {
     "message": "チャット履歴"

@@ -66,7 +66,7 @@ Save important conversations from any AI provider. Never lose a valuable discuss
 ### Keyboard Shortcuts
 
 - **`Cmd/Ctrl+Shift+E`**: Open Panelize window
-- **`Cmd/Ctrl+Shift+P`**: Access prompt library
+- **`Cmd/Ctrl+Shift+L`**: Access prompt library
 - **Customizable Enter Behavior**: Configure Enter vs Shift+Enter for each AI provider
 
 ### Your Preferences, Your Way
@@ -176,7 +176,7 @@ Enable only the AI providers you use. Customize which ones appear in your panels
 
 ### Using the Prompt Library
 
-Press `Cmd/Ctrl+Shift+P` to open the Prompt Library.
+Press `Cmd/Ctrl+Shift+L` to open the Prompt Library.
 
 **Create a prompt:**
 Click "New Prompt", enter a title, content, and optional category/tags. Use `{variable}` syntax for dynamic placeholders.
@@ -196,6 +196,7 @@ Access saved conversations anytime through the history panel.
 **Edge:** Navigate to `edge://extensions/shortcuts`
 
 Find "Panelize" in the list and customize your shortcuts.
+After installing, you may need to confirm or assign shortcuts here before they work.
 
 ---
 

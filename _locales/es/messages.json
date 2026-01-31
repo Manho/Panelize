@@ -102,7 +102,7 @@
     "message": "Atajos Predeterminados"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Shift+E (Ctrl+Shift+E en Windows/Linux) abre la barra lateral con el proveedor predeterminado.<br>Command+Shift+P (Ctrl+Shift+P en Windows/Linux) abre la Biblioteca de Prompts.<br>Puedes personalizarlos en la configuración de atajos de tu navegador."
+    "message": "Command+Shift+E (Ctrl+Shift+E en Windows/Linux) abre la barra lateral con el proveedor predeterminado.<br>Command+Shift+L (Ctrl+Shift+L en Windows/Linux) abre la Biblioteca de Prompts.<br>Puedes personalizarlos en la configuración de atajos de tu navegador.<br>Después de instalar, es posible que tengas que confirmar o asignar los atajos en chrome://extensions/shortcuts."
   },
   "btnOpenShortcuts": {
     "message": "Abrir Atajos"
@@ -120,7 +120,7 @@
     "message": "Pegar Automáticamente Portapapeles en Biblioteca de Prompts"
   },
   "descAutoPaste": {
-    "message": "Pega automáticamente el contenido del portapapeles en el espacio de trabajo al abrir la Biblioteca de Prompts con Command+Shift+P"
+    "message": "Pega automáticamente el contenido del portapapeles en el espacio de trabajo al abrir la Biblioteca de Prompts con Command+Shift+L"
   },
   "sectionChatHistory": {
     "message": "Historial de Chat"
