@@ -782,6 +782,53 @@ body {
   padding: 20px;
 }
 
+/* Form Group Styles */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-group label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.form-group input[type="text"],
+.form-group textarea {
+  padding: 10px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  color: #333;
+  transition: border-color 0.2s;
+}
+
+.form-group input[type="text"]:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #1976d2;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.5;
+}
+
+.form-group input[type="text"]::placeholder,
+.form-group textarea::placeholder {
+  color: #999;
+}
+
 /* Layout Options */
 .layout-options {
   display: grid;
@@ -1175,6 +1222,27 @@ body {
 
 [data-theme="dark"] .prompt-item-modal-preview {
   color: #aaa;
+}
+
+[data-theme="dark"] .form-group label {
+  color: #e0e0e0;
+}
+
+[data-theme="dark"] .form-group input[type="text"],
+[data-theme="dark"] .form-group textarea {
+  background: #2d2d2d;
+  border-color: #444;
+  color: #e0e0e0;
+}
+
+[data-theme="dark"] .form-group input[type="text"]:focus,
+[data-theme="dark"] .form-group textarea:focus {
+  border-color: #64b5f6;
+}
+
+[data-theme="dark"] .form-group input[type="text"]::placeholder,
+[data-theme="dark"] .form-group textarea::placeholder {
+  color: #888;
 }
 
 /* Prompt Modal Enhancements */
