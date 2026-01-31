@@ -118,6 +118,21 @@ body {
   color: #1976d2;
 }
 
+/* Toggle Open Mode Button */
+#toggle-open-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+#toggle-open-mode-btn .btn-text {
+  font-size: 12px;
+  font-weight: 500;
+}
+
 /* Toolbar Collapsed State */
 #toolbar.collapsed {
   display: none;

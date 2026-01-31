@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "Mode d'ouverture"
+  },
+  "descOpenMode": {
+    "message": "Choisissez comment ouvrir Panelize en cliquant sur l'icône ou en utilisant les raccourcis"
+  },
+  "optionTabMode": {
+    "message": "Onglet (Nouvel onglet)"
+  },
+  "optionPopupMode": {
+    "message": "Fenêtre popup"
+  },
+  "switchToTabMode": {
+    "message": "Mode onglet"
+  },
+  "switchToTabModeTitle": {
+    "message": "Passer au mode onglet"
+  },
+  "switchToPopupMode": {
+    "message": "Mode popup"
+  },
+  "switchToPopupModeTitle": {
+    "message": "Passer au mode fenêtre popup"
+  },
+  "msgOpenModeUpdated": {
+    "message": "Mode d'ouverture mis à jour"
+  },
+  "msgLayoutUpdated": {
+    "message": "Disposition mise à jour"
   }
 }

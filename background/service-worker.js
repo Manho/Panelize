@@ -7,7 +7,9 @@ import { t, initializeLanguage } from '../modules/i18n.js';
 
 // Install event - setup context menus
 const DEFAULT_SHORTCUT_SETTING = { keyboardShortcutEnabled: true };
+const DEFAULT_OPEN_MODE = { openMode: 'tab' };
 let keyboardShortcutEnabled = true;
+let openMode = 'tab';
 
 async function loadShortcutSetting() {
   try {
@@ -19,38 +21,58 @@ async function loadShortcutSetting() {
   }
 }
 
-// 新增：打开 Multi-Panel 独立窗口的函数
+async function loadOpenModeSetting() {
+  try {
+    const result = await chrome.storage.sync.get(DEFAULT_OPEN_MODE);
+    openMode = result.openMode || 'tab';
+  } catch (error) {
+    // Fallback to default if storage unavailable
+    openMode = 'tab';
+  }
+}
+
+// 新增：打开 Multi-Panel 的函数（支持标签页和弹出窗口两种模式）
 async function openMultiPanel() {
   const multiPanelUrl = chrome.runtime.getURL('multi-panel/multi-panel.html');
 
-  // 检查是否已有 Multi-Panel 窗口打开
-  const windows = await chrome.windows.getAll({ populate: true });
-  for (const win of windows) {
-    for (const tab of win.tabs || []) {
-      if (tab.url === multiPanelUrl) {
-        // 已有窗口，聚焦它
-        await chrome.windows.update(win.id, { focused: true });
-        return;
+  if (openMode === 'popup') {
+    // 弹出窗口模式：查找现有窗口或创建新窗口
+    const windows = await chrome.windows.getAll({ populate: true });
+    for (const win of windows) {
+      for (const tab of win.tabs || []) {
+        if (tab.url === multiPanelUrl) {
+          // 已有窗口，聚焦它
+          await chrome.windows.update(win.id, { focused: true });
+          return;
+        }
       }
     }
-  }
 
-  // 创建新窗口
-  await chrome.windows.create({
-    url: multiPanelUrl,
-    type: 'popup',
-    width: 1400,
-    height: 900
-  });
+    // 创建新弹出窗口
+    await chrome.windows.create({
+      url: multiPanelUrl,
+      type: 'popup',
+      width: 1400,
+      height: 900
+    });
+  } else {
+    // 标签页模式：始终创建新标签页
+    await chrome.tabs.create({
+      url: multiPanelUrl,
+      active: true
+    });
+  }
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
   await createContextMenus();
   await loadShortcutSetting();
+  await loadOpenModeSetting();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   await loadShortcutSetting();
+  await loadOpenModeSetting();
 });
 
 // Create/update context menus dynamically based on enabled providers
@@ -107,6 +129,11 @@ async function createContextMenus() {
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (changes.enabledProviders || changes.language) {
     createContextMenus();
+  }
+
+  // 新增：监听 openMode 变化
+  if (namespace === 'sync' && changes.openMode) {
+    openMode = changes.openMode.newValue || 'tab';
   }
 });
 

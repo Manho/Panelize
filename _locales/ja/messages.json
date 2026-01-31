@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "開くモード"
+  },
+  "descOpenMode": {
+    "message": "アイコンをクリックするかショートカットを使用したときに Panelize を開く方法を選択してください"
+  },
+  "optionTabMode": {
+    "message": "タブ（新しいタブ）"
+  },
+  "optionPopupMode": {
+    "message": "ポップアップウィンドウ"
+  },
+  "switchToTabMode": {
+    "message": "タブモード"
+  },
+  "switchToTabModeTitle": {
+    "message": "タブモードに切り替え"
+  },
+  "switchToPopupMode": {
+    "message": "ポップアップモード"
+  },
+  "switchToPopupModeTitle": {
+    "message": "ポップアップモードに切り替え"
+  },
+  "msgOpenModeUpdated": {
+    "message": "開くモードを更新しました"
+  },
+  "msgLayoutUpdated": {
+    "message": "レイアウトを更新しました"
   }
 }

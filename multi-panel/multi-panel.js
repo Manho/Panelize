@@ -35,6 +35,10 @@ let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
 // 提示词编辑器状态
 let currentEditingPromptId = null;
 
+// 打开模式状态
+let currentOpenMode = 'tab'; // 'tab' 或 'popup'
+let isPopupWindow = false;   // 当前窗口是否为弹出窗口
+
 // Default panel configuration
 const DEFAULT_PROVIDERS = ['chatgpt', 'claude', 'gemini', 'grok'];
 const MAX_PANELS = 6;
@@ -55,6 +59,12 @@ async function init() {
   await applyTheme();
   await initializeLanguage();
 
+  // Detect window type and load mode
+  await detectWindowType();
+
+  // Restore state if needed (after mode switch)
+  await restoreStateIfNeeded();
+
   // Load saved settings
   await loadSettings();
 
@@ -69,16 +79,161 @@ async function loadSettings() {
   try {
     const settings = await chrome.storage.sync.get({
       multiPanelLayout: '2x2',
-      multiPanelProviders: DEFAULT_PROVIDERS
+      multiPanelProviders: DEFAULT_PROVIDERS,
+      openMode: 'tab'
     });
 
     currentLayout = settings.multiPanelLayout;
+    currentOpenMode = settings.openMode || 'tab';
 
     // Apply layout
     const panelGrid = document.getElementById('panel-grid');
     panelGrid.className = `layout-${currentLayout}`;
   } catch (error) {
     console.error('Error loading settings:', error);
+  }
+}
+
+// ===== Open Mode Management =====
+async function detectWindowType() {
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    // popup 类型的窗口 type 为 'popup'
+    isPopupWindow = currentWindow.type === 'popup';
+
+    // 读取设置中的模式
+    const settings = await chrome.storage.sync.get({ openMode: 'tab' });
+    currentOpenMode = settings.openMode;
+
+    updateToggleButton();
+  } catch (error) {
+    console.error('Error detecting window type:', error);
+  }
+}
+
+function updateToggleButton() {
+  const btn = document.getElementById('toggle-open-mode-btn');
+  if (!btn) return;
+
+  const icon = btn.querySelector('.material-symbols-outlined');
+  const text = btn.querySelector('.btn-text');
+
+  if (isPopupWindow) {
+    // 当前是弹出窗口，提示可以切换到标签页
+    icon.textContent = 'tab';
+    text.textContent = t('switchToTabMode') || 'Tab Mode';
+    btn.title = t('switchToTabModeTitle') || 'Switch to Tab Mode';
+  } else {
+    // 当前是标签页，提示可以切换到弹出窗口
+    icon.textContent = 'open_in_new';
+    text.textContent = t('switchToPopupMode') || 'Popup Mode';
+    btn.title = t('switchToPopupModeTitle') || 'Switch to Popup Mode';
+  }
+}
+
+function collectCurrentState() {
+  const state = {
+    inputText: document.getElementById('unified-input')?.value || '',
+    uploadedImages: [...uploadedImages],
+    currentLayout: currentLayout,
+    panels: panels.map(p => ({
+      providerId: p.providerId
+    })),
+    timestamp: Date.now()
+  };
+  return state;
+}
+
+async function toggleOpenMode() {
+  // 1. 收集当前状态
+  const state = collectCurrentState();
+
+  // 2. 保存状态到 storage（临时）
+  try {
+    await chrome.storage.session.set({
+      preservedState: state
+    });
+  } catch (error) {
+    console.error('Error saving state:', error);
+    // Fallback to local storage if session storage fails
+    await chrome.storage.local.set({
+      preservedState: state
+    });
+  }
+
+  // 3. 切换设置
+  const newMode = isPopupWindow ? 'tab' : 'popup';
+  await chrome.storage.sync.set({ openMode: newMode });
+
+  // 4. 在新模式下打开
+  const multiPanelUrl = chrome.runtime.getURL('multi-panel/multi-panel.html');
+
+  if (isPopupWindow) {
+    // 从弹出窗口切换到标签页：创建新标签页，关闭当前窗口
+    await chrome.tabs.create({ url: multiPanelUrl, active: true });
+    window.close(); // 关闭当前弹出窗口
+  } else {
+    // 从标签页切换到弹出窗口：创建弹出窗口，关闭当前标签页
+    await chrome.windows.create({
+      url: multiPanelUrl,
+      type: 'popup',
+      width: 1400,
+      height: 900
+    });
+    // 获取当前标签页并关闭
+    const currentTab = await chrome.tabs.getCurrent();
+    if (currentTab) {
+      await chrome.tabs.remove(currentTab.id);
+    }
+  }
+}
+
+async function restoreStateIfNeeded() {
+  try {
+    // Try session storage first, then local storage
+    let result = await chrome.storage.session.get('preservedState');
+    if (!result.preservedState) {
+      result = await chrome.storage.local.get('preservedState');
+    }
+
+    if (result.preservedState) {
+      const state = result.preservedState;
+
+      // 恢复输入文本
+      const input = document.getElementById('unified-input');
+      if (input && state.inputText) {
+        input.value = state.inputText;
+        // Trigger resize to adjust textarea height
+        resizeTextarea();
+      }
+
+      // 恢复图片
+      if (state.uploadedImages && state.uploadedImages.length > 0) {
+        uploadedImages = state.uploadedImages;
+        renderImagePreviews();
+      }
+
+      // 恢复布局
+      if (state.currentLayout) {
+        currentLayout = state.currentLayout;
+        const panelGrid = document.getElementById('panel-grid');
+        if (panelGrid) {
+          panelGrid.className = `layout-${currentLayout}`;
+        }
+      }
+
+      // 恢复面板配置（保存到 multiPanelProviders）
+      if (state.panels && state.panels.length > 0) {
+        const providerIds = state.panels.map(p => p.providerId);
+        await chrome.storage.sync.set({ multiPanelProviders: providerIds });
+      }
+
+      // 清除已恢复的状态
+      await chrome.storage.session.remove('preservedState');
+      await chrome.storage.local.remove('preservedState');
+    }
+  } catch (error) {
+    console.error('Error restoring state:', error);
   }
 }
 
@@ -939,6 +1094,12 @@ function setupEventListeners() {
   document.getElementById('settings-btn').addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
   });
+
+  // Toggle open mode button
+  const toggleModeBtn = document.getElementById('toggle-open-mode-btn');
+  if (toggleModeBtn) {
+    toggleModeBtn.addEventListener('click', toggleOpenMode);
+  }
 
   // Prompt library button
   document.getElementById('prompt-library-btn').addEventListener('click', openPromptModal);

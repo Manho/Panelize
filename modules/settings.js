@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS = {
   rememberLastProvider: true,  // When true, sidebar opens last selected provider; when false, always opens default provider
   theme: 'auto',
   keyboardShortcutEnabled: true,
+  openMode: 'tab',  // 'tab' or 'popup'
   enterKeyBehavior: {
     enabled: true,
     preset: 'swapped',  // 'default', 'swapped', 'slack', 'discord', 'custom'

@@ -26,6 +26,36 @@
   "btnOpenMultiPanel": {
     "message": "Open Multi-Panel"
   },
+  "labelOpenMode": {
+    "message": "Open Mode"
+  },
+  "descOpenMode": {
+    "message": "Choose how to open Panelize when clicking the icon or using shortcuts"
+  },
+  "optionTabMode": {
+    "message": "Tab (New Tab)"
+  },
+  "optionPopupMode": {
+    "message": "Popup Window"
+  },
+  "switchToTabMode": {
+    "message": "Tab Mode"
+  },
+  "switchToTabModeTitle": {
+    "message": "Switch to Tab Mode"
+  },
+  "switchToPopupMode": {
+    "message": "Popup Mode"
+  },
+  "switchToPopupModeTitle": {
+    "message": "Switch to Popup Mode"
+  },
+  "msgOpenModeUpdated": {
+    "message": "Open mode updated"
+  },
+  "msgLayoutUpdated": {
+    "message": "Layout updated"
+  },
   "labelDefaultLayout": {
     "message": "Default Layout"
   },

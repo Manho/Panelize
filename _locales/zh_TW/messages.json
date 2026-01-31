@@ -815,5 +815,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "開啟模式"
+  },
+  "descOpenMode": {
+    "message": "選擇點擊圖示或使用快捷鍵時如何開啟 Panelize"
+  },
+  "optionTabMode": {
+    "message": "分頁（新分頁）"
+  },
+  "optionPopupMode": {
+    "message": "彈出視窗"
+  },
+  "switchToTabMode": {
+    "message": "分頁模式"
+  },
+  "switchToTabModeTitle": {
+    "message": "切換到分頁模式"
+  },
+  "switchToPopupMode": {
+    "message": "彈窗模式"
+  },
+  "switchToPopupModeTitle": {
+    "message": "切換到彈出視窗模式"
+  },
+  "msgOpenModeUpdated": {
+    "message": "開啟模式已更新"
+  },
+  "msgLayoutUpdated": {
+    "message": "佈局已更新"
   }
 }

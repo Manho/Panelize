@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "Modalità di apertura"
+  },
+  "descOpenMode": {
+    "message": "Scegli come aprire Panelize quando clicchi sull'icona o usi le scorciatoie"
+  },
+  "optionTabMode": {
+    "message": "Scheda (Nuova scheda)"
+  },
+  "optionPopupMode": {
+    "message": "Finestra popup"
+  },
+  "switchToTabMode": {
+    "message": "Modalità scheda"
+  },
+  "switchToTabModeTitle": {
+    "message": "Passa alla modalità scheda"
+  },
+  "switchToPopupMode": {
+    "message": "Modalità popup"
+  },
+  "switchToPopupModeTitle": {
+    "message": "Passa alla modalità finestra popup"
+  },
+  "msgOpenModeUpdated": {
+    "message": "Modalità di apertura aggiornata"
+  },
+  "msgLayoutUpdated": {
+    "message": "Layout aggiornato"
   }
 }

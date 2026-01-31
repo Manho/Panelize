@@ -194,6 +194,12 @@ async function loadSettings() {
     sourceUrlPlacementSelect.value = settings.sourceUrlPlacement || 'end';
   }
 
+  // Open mode setting
+  const openModeSelect = document.getElementById('open-mode-select');
+  if (openModeSelect) {
+    openModeSelect.value = settings.openMode || 'tab';
+  }
+
   // Enter key behavior settings
   const enterBehavior = settings.enterKeyBehavior || {
     enabled: true,
@@ -503,6 +509,15 @@ function setupEventListeners() {
     checkUpdatesBtn.addEventListener('click', performVersionCheck);
   }
 
+  // Multi-Panel: Open mode selection
+  const openModeSelect = document.getElementById('open-mode-select');
+  if (openModeSelect) {
+    openModeSelect.addEventListener('change', async (e) => {
+      await saveSetting('openMode', e.target.value);
+      showStatus('success', t('msgOpenModeUpdated') || 'Open mode updated');
+    });
+  }
+
   // Multi-Panel: Layout selection
   const multiPanelLayoutSelect = document.getElementById('multi-panel-layout-select');
   if (multiPanelLayoutSelect) {
@@ -513,7 +528,7 @@ function setupEventListeners() {
 
     multiPanelLayoutSelect.addEventListener('change', async (e) => {
       await chrome.storage.sync.set({ multiPanelLayout: e.target.value });
-      showStatus('success', 'Layout updated');
+      showStatus('success', t('msgLayoutUpdated') || 'Layout updated');
     });
   }
 }

@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "Режим открытия"
+  },
+  "descOpenMode": {
+    "message": "Выберите, как открывать Panelize при нажатии на значок или использовании ярлыков"
+  },
+  "optionTabMode": {
+    "message": "Вкладка (Новая вкладка)"
+  },
+  "optionPopupMode": {
+    "message": "Всплывающее окно"
+  },
+  "switchToTabMode": {
+    "message": "Режим вкладки"
+  },
+  "switchToTabModeTitle": {
+    "message": "Переключиться в режим вкладки"
+  },
+  "switchToPopupMode": {
+    "message": "Режим всплывающего окна"
+  },
+  "switchToPopupModeTitle": {
+    "message": "Переключиться в режим всплывающего окна"
+  },
+  "msgOpenModeUpdated": {
+    "message": "Режим открытия обновлен"
+  },
+  "msgLayoutUpdated": {
+    "message": "Макет обновлен"
   }
 }

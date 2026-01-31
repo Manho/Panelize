@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "열기 모드"
+  },
+  "descOpenMode": {
+    "message": "아이콘을 클릭하거나 단축키를 사용할 때 Panelize를 여는 방법을 선택하세요"
+  },
+  "optionTabMode": {
+    "message": "탭 (새 탭)"
+  },
+  "optionPopupMode": {
+    "message": "팝업 창"
+  },
+  "switchToTabMode": {
+    "message": "탭 모드"
+  },
+  "switchToTabModeTitle": {
+    "message": "탭 모드로 전환"
+  },
+  "switchToPopupMode": {
+    "message": "팝업 모드"
+  },
+  "switchToPopupModeTitle": {
+    "message": "팝업 모드로 전환"
+  },
+  "msgOpenModeUpdated": {
+    "message": "열기 모드가 업데이트되었습니다"
+  },
+  "msgLayoutUpdated": {
+    "message": "레이아웃이 업데이트되었습니다"
   }
 }

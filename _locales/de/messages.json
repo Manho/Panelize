@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "Öffnungsmodus"
+  },
+  "descOpenMode": {
+    "message": "Wählen Sie, wie Panelize geöffnet werden soll, wenn Sie auf das Symbol klicken oder Tastenkürzel verwenden"
+  },
+  "optionTabMode": {
+    "message": "Tab (Neuer Tab)"
+  },
+  "optionPopupMode": {
+    "message": "Popup-Fenster"
+  },
+  "switchToTabMode": {
+    "message": "Tab-Modus"
+  },
+  "switchToTabModeTitle": {
+    "message": "Zum Tab-Modus wechseln"
+  },
+  "switchToPopupMode": {
+    "message": "Popup-Modus"
+  },
+  "switchToPopupModeTitle": {
+    "message": "Zum Popup-Modus wechseln"
+  },
+  "msgOpenModeUpdated": {
+    "message": "Öffnungsmodus aktualisiert"
+  },
+  "msgLayoutUpdated": {
+    "message": "Layout aktualisiert"
   }
 }

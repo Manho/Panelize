@@ -810,5 +810,36 @@
         "content": "$1"
       }
     }
+  },
+
+  "labelOpenMode": {
+    "message": "Modo de apertura"
+  },
+  "descOpenMode": {
+    "message": "Elige cómo abrir Panelize al hacer clic en el icono o usar atajos"
+  },
+  "optionTabMode": {
+    "message": "Pestaña (Nueva pestaña)"
+  },
+  "optionPopupMode": {
+    "message": "Ventana emergente"
+  },
+  "switchToTabMode": {
+    "message": "Modo pestaña"
+  },
+  "switchToTabModeTitle": {
+    "message": "Cambiar a modo pestaña"
+  },
+  "switchToPopupMode": {
+    "message": "Modo emergente"
+  },
+  "switchToPopupModeTitle": {
+    "message": "Cambiar a modo ventana emergente"
+  },
+  "msgOpenModeUpdated": {
+    "message": "Modo de apertura actualizado"
+  },
+  "msgLayoutUpdated": {
+    "message": "Diseño actualizado"
   }
 }
