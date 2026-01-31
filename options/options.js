@@ -182,12 +182,6 @@ async function loadSettings() {
     autoPasteToggle.checked = settings.autoPasteClipboard === true;
   }
 
-  // Source URL placement setting
-  const sourceUrlPlacementSelect = document.getElementById('source-url-placement-select');
-  if (sourceUrlPlacementSelect) {
-    sourceUrlPlacementSelect.value = settings.sourceUrlPlacement || 'end';
-  }
-
   // Open mode setting
   const openModeSelect = document.getElementById('open-mode-select');
   if (openModeSelect) {
@@ -411,15 +405,6 @@ function setupEventListeners() {
       const enabled = e.target.checked;
       await saveSetting('autoPasteClipboard', enabled);
       showStatus('success', enabled ? t('msgAutoPasteEnabled') : t('msgAutoPasteDisabled'));
-    });
-  }
-
-  // Source URL placement change
-  const sourceUrlPlacementSelect = document.getElementById('source-url-placement-select');
-  if (sourceUrlPlacementSelect) {
-    sourceUrlPlacementSelect.addEventListener('change', async (e) => {
-      await saveSetting('sourceUrlPlacement', e.target.value);
-      showStatus('success', t('msgSourceUrlPlacementUpdated'));
     });
   }
 

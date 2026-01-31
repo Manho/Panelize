@@ -80,7 +80,6 @@
   "sectionProviders": {
     "message": "AI 提供商"
   },
-
   "labelEnabledProviders": {
     "message": "已启用的提供商"
   },
@@ -90,7 +89,6 @@
   "sectionKeyboardShortcuts": {
     "message": "键盘快捷键"
   },
-
   "sectionKeyboard": {
     "message": "键盘"
   },
@@ -127,27 +125,6 @@
   "sectionChatHistory": {
     "message": "聊天历史"
   },
-
-
-  "sectionContentSending": {
-    "message": "内容发送"
-  },
-  "labelSourceUrlPlacement": {
-    "message": "来源网址位置"
-  },
-  "descSourceUrlPlacement": {
-    "message": "选择向 AI 提供商发送选定文本或页面内容时来源网址的放置位置"
-  },
-  "urlPlacementEnd": {
-    "message": "在末尾（内容之后）"
-  },
-  "urlPlacementBeginning": {
-    "message": "在开头（内容之前）"
-  },
-  "urlPlacementNone": {
-    "message": "不包含网址"
-  },
-
   "sectionEnterBehavior": {
     "message": "回车键行为"
   },
@@ -313,15 +290,11 @@
   "msgAutoPasteDisabled": {
     "message": "自动粘贴已禁用"
   },
-
   "msgEnterCustomizationEnabled": {
     "message": "回车键自定义已启用"
   },
   "msgEnterCustomizationDisabled": {
     "message": "回车键自定义已禁用"
-  },
-  "msgSourceUrlPlacementUpdated": {
-    "message": "来源网址位置已更新"
   },
   "msgPresetChanged": {
     "message": "预设已更改为： $PRESET$",
@@ -509,9 +482,6 @@
   "contextMenuSendTo": {
     "message": "发送到 Panelize"
   },
-  "contextMenuPromptLibrary": {
-    "message": "提示词库"
-  },
   "sidebarChatHistory": {
     "message": "聊天历史"
   },
@@ -686,7 +656,6 @@
   "labelLoading": {
     "message": "加载中..."
   },
-
   "msgAllPromptsExist": {
     "message": "所有提示词已存在"
   },
@@ -776,7 +745,6 @@
   "errGitHubFetchFailed": {
     "message": "从 GitHub 获取最新提交失败"
   },
-
   "dlgDuplicateTitle": {
     "message": "对话已保存"
   },
@@ -797,7 +765,6 @@
   "btnOverwrite": {
     "message": "覆盖"
   },
-
   "errExtensionAPI": {
     "message": "扩展 API 不可用。请尝试重新加载页面。"
   },
@@ -820,7 +787,6 @@
       }
     }
   },
-
   "labelOpenMode": {
     "message": "打开模式"
   },

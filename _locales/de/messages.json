@@ -125,24 +125,6 @@
   "sectionChatHistory": {
     "message": "Chat-Verlauf"
   },
-  "sectionContentSending": {
-    "message": "Inhaltsversand"
-  },
-  "labelSourceUrlPlacement": {
-    "message": "Quell-URL-Platzierung"
-  },
-  "descSourceUrlPlacement": {
-    "message": "Wählen Sie, wo die Quell-URL beim Senden von ausgewähltem Text oder Seiteninhalt an KI-Anbieter platziert werden soll"
-  },
-  "urlPlacementEnd": {
-    "message": "Am Ende (nach dem Inhalt)"
-  },
-  "urlPlacementBeginning": {
-    "message": "Am Anfang (vor dem Inhalt)"
-  },
-  "urlPlacementNone": {
-    "message": "URL nicht einschließen"
-  },
   "sectionEnterBehavior": {
     "message": "Enter-Tasten-Verhalten"
   },
@@ -313,9 +295,6 @@
   },
   "msgEnterCustomizationDisabled": {
     "message": "Enter-Tasten-Anpassung deaktiviert"
-  },
-  "msgSourceUrlPlacementUpdated": {
-    "message": "Quell-URL-Platzierung aktualisiert"
   },
   "msgPresetChanged": {
     "message": "Voreinstellung geändert zu: $PRESET$",
@@ -502,9 +481,6 @@
   },
   "contextMenuSendTo": {
     "message": "An Panelize senden"
-  },
-  "contextMenuPromptLibrary": {
-    "message": "Prompt-Bibliothek"
   },
   "sidebarChatHistory": {
     "message": "Chat-Verlauf"
@@ -811,7 +787,6 @@
       }
     }
   },
-
   "labelOpenMode": {
     "message": "Öffnungsmodus"
   },

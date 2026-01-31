@@ -234,25 +234,13 @@
   }
 
   /**
-   * Format extracted content with title and source based on user preference
+   * Format extracted content with title and source
    * @param {Object} extracted - {title, content, url}
-   * @param {string} placement - 'beginning', 'end', or 'none'
    * @returns {string} Formatted content
    */
-  function formatContent(extracted, placement = 'end') {
+  function formatContent(extracted) {
     const titleLine = `[${extracted.title}]`;
-    const sourceLine = `Source: ${extracted.url}`;
-
-    if (placement === 'none') {
-      // No URL - just title and content
-      return `${titleLine}\n\n${extracted.content}`;
-    } else if (placement === 'beginning') {
-      // URL at beginning (after title)
-      return `${titleLine}\n${sourceLine}\n\n${extracted.content}`;
-    } else {
-      // Default: URL at end
-      return `${titleLine}\n\n${extracted.content}\n\nSource: ${extracted.url}`;
-    }
+    return `${titleLine}\n\n${extracted.content}\n\nSource: ${extracted.url}`;
   }
 
   // Listen for extraction requests from service worker
@@ -261,16 +249,13 @@
       try {
         const extracted = extractPageContent();
 
-        // Get user's source URL placement preference
-        chrome.storage.sync.get({ sourceUrlPlacement: 'end' }, (settings) => {
-          const formatted = formatContent(extracted, settings.sourceUrlPlacement);
+        const formatted = formatContent(extracted);
 
-          sendResponse({
-            success: true,
-            content: formatted,
-            title: extracted.title,
-            url: extracted.url
-          });
+        sendResponse({
+          success: true,
+          content: formatted,
+          title: extracted.title,
+          url: extracted.url
         });
       } catch (error) {
         console.error('[Page Extractor] Error extracting content:', error);

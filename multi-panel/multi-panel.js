@@ -136,6 +136,13 @@ async function handleMultiPanelAction(action, payload = {}) {
     return true;
   }
 
+  if (action === 'sendToPanel') {
+    if (payload.selectedText) {
+      applyPromptToInput(payload.selectedText);
+    }
+    return true;
+  }
+
   if (action === 'switchProvider') {
     if (payload.providerId && panels.length > 0) {
       await switchPanelProvider(panels[0].id, payload.providerId);
