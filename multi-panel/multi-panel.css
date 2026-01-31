@@ -70,6 +70,28 @@ body {
   border-bottom: 1px solid #e0e0e0;
   flex-shrink: 0;
   height: 52px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #c0c0c0 transparent;
+}
+
+/* Custom scrollbar for webkit browsers */
+#toolbar::-webkit-scrollbar {
+  height: 4px;
+}
+
+#toolbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#toolbar::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border-radius: 2px;
+}
+
+#toolbar::-webkit-scrollbar-thumb:hover {
+  background: #a0a0a0;
 }
 
 .toolbar-left,
@@ -77,6 +99,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .toolbar-center {
@@ -85,6 +108,7 @@ body {
   gap: 8px;
   flex: 1;
   justify-content: center;
+  min-width: 0;
 }
 
 .app-title {
@@ -177,6 +201,16 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#panel-selectors::-webkit-scrollbar {
+  display: none;
 }
 
 .panel-selector {
@@ -896,6 +930,15 @@ body {
 [data-theme="dark"] #toolbar {
   background: #2d2d2d;
   border-bottom-color: #444;
+  scrollbar-color: #555 transparent;
+}
+
+[data-theme="dark"] #toolbar::-webkit-scrollbar-thumb {
+  background: #555;
+}
+
+[data-theme="dark"] #toolbar::-webkit-scrollbar-thumb:hover {
+  background: #666;
 }
 
 [data-theme="dark"] .app-title {
