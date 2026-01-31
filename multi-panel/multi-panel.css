@@ -335,6 +335,16 @@ body {
   grid-template-rows: 1fr 1fr 1fr;
 }
 
+.layout-2x3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+}
+
+.layout-3x2 {
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
 /* 所有 1xN 布局的面板添加 scroll-snap */
 .layout-1x1 .panel-item,
 .layout-1x2 .panel-item,
@@ -863,6 +873,16 @@ body {
 .layout-1x6-preview {
   grid-template-columns: repeat(6, 1fr);
   grid-template-rows: 1fr;
+}
+
+.layout-2x3-preview {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+}
+
+.layout-3x2-preview {
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
 }
 
 /* Prompt Modal */

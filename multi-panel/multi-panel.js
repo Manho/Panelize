@@ -51,7 +51,9 @@ const LAYOUT_PANEL_COUNTS = {
   '1x6': 6,
   '2x1': 2,
   '2x2': 4,
-  '3x1': 3
+  '2x3': 6,
+  '3x1': 3,
+  '3x2': 6
 };
 
 // ===== Initialization =====
