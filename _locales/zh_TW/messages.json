@@ -89,7 +89,6 @@
   "sectionKeyboardShortcuts": {
     "message": "鍵盤快速鍵"
   },
-
   "sectionKeyboard": {
     "message": "鍵盤"
   },
@@ -504,9 +503,6 @@
   "contextMenuSendTo": {
     "message": "發送到 Panelize"
   },
-  "contextMenuPromptLibrary": {
-    "message": "提示詞庫"
-  },
   "sidebarChatHistory": {
     "message": "聊天記錄"
   },
@@ -681,7 +677,6 @@
   "labelLoading": {
     "message": "載入中..."
   },
-
   "msgAllPromptsExist": {
     "message": "所有提示詞已存在"
   },
@@ -765,7 +760,6 @@
       }
     }
   },
-
   "dlgDuplicateTitle": {
     "message": "對話已儲存"
   },
@@ -786,14 +780,12 @@
   "btnOverwrite": {
     "message": "覆寫"
   },
-
   "errVersionInfoFailed": {
     "message": "載入版本資訊失敗"
   },
   "errGitHubFetchFailed": {
     "message": "從 GitHub 取得最新提交失敗"
   },
-
   "errExtensionAPI": {
     "message": "擴充功能 API 不可用。請嘗試重新載入頁面。"
   },
@@ -816,7 +808,6 @@
       }
     }
   },
-
   "labelOpenMode": {
     "message": "開啟模式"
   },

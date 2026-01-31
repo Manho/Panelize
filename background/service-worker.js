@@ -97,7 +97,7 @@ chrome.runtime.onStartup.addListener(async () => {
   await loadOpenModeSetting();
 });
 
-// Create/update context menus dynamically based on enabled providers
+// Create/update context menus
 async function createContextMenus() {
   // Remove all existing menus
   await chrome.contextMenus.removeAll();
@@ -105,51 +105,17 @@ async function createContextMenus() {
   // Initialize language before creating menus
   await initializeLanguage();
 
-  // Get enabled providers from settings
-  const settings = await chrome.storage.sync.get({
-    enabledProviders: ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'google']
-  });
-
-  const enabledProviders = settings.enabledProviders;
-
   // Create main context menu item
   chrome.contextMenus.create({
     id: 'open-smarter-panel',
     title: t('contextMenuSendTo'),
     contexts: ['page', 'selection', 'link']
   });
-
-  // Create submenu for each enabled provider
-  const providerNames = {
-    chatgpt: 'ChatGPT',
-    claude: 'Claude',
-    gemini: 'Gemini',
-    grok: 'Grok',
-    deepseek: 'DeepSeek',
-    google: 'Google'
-  };
-
-  enabledProviders.forEach(providerId => {
-    chrome.contextMenus.create({
-      id: `provider-${providerId}`,
-      parentId: 'open-smarter-panel',
-      title: providerNames[providerId] || providerId,
-      contexts: ['page', 'selection', 'link']
-    });
-  });
-
-  // Add Prompt Library option
-  chrome.contextMenus.create({
-    id: 'open-prompt-library',
-    parentId: 'open-smarter-panel',
-    title: t('contextMenuPromptLibrary'),
-    contexts: ['page', 'selection', 'link']
-  });
 }
 
 // Listen for settings changes and update context menus
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (changes.enabledProviders || changes.language) {
+  if (changes.language) {
     createContextMenus();
   }
 
@@ -158,6 +124,51 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     openMode = changes.openMode.newValue || 'tab';
   }
 });
+
+async function formatSelectedTextWithSource(info) {
+  const settings = await chrome.storage.sync.get({ sourceUrlPlacement: 'end' });
+  const placement = settings.sourceUrlPlacement;
+
+  if (placement === 'none') {
+    return info.selectionText;
+  }
+  if (placement === 'beginning') {
+    return `Source: ${info.pageUrl}\n\n${info.selectionText}`;
+  }
+  return `${info.selectionText}\n\nSource: ${info.pageUrl}`;
+}
+
+async function getContentFromContext(info, tab) {
+  if (info.selectionText) {
+    return formatSelectedTextWithSource(info);
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      action: 'extractPageContent'
+    });
+
+    if (response && response.success) {
+      return response.content;
+    }
+  } catch (error) {
+    // Content script not ready or extraction failed
+  }
+
+  return '';
+}
+
+function dispatchToMultiPanel(action, payload) {
+  setTimeout(() => {
+    setPendingMultiPanelAction(action, payload);
+    notifyMessage({
+      action,
+      payload
+    }).catch(() => {
+      // Multi-Panel may not be ready yet, silently ignore
+    });
+  }, 500);
+}
 
 // Context menu click handler - opens Multi-Panel and sends message
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -169,144 +180,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // 先打开 Multi-Panel 窗口
     await openMultiPanel();
 
-    if (info.menuItemId.startsWith('provider-')) {
-      const providerId = info.menuItemId.replace('provider-', '');
-
-      // Get source URL placement setting
-      const settings = await chrome.storage.sync.get({ sourceUrlPlacement: 'end' });
-      const placement = settings.sourceUrlPlacement;
-
-      // Check if text is selected
-      if (info.selectionText) {
-        // Format content with source based on user preference
-        let contentToSend;
-        if (placement === 'none') {
-          contentToSend = info.selectionText;
-        } else if (placement === 'beginning') {
-          contentToSend = `Source: ${info.pageUrl}\n\n${info.selectionText}`;
-        } else {
-          // default: 'end'
-          contentToSend = `${info.selectionText}\n\nSource: ${info.pageUrl}`;
-        }
-
-      // Wait for multi-panel to load, then send message to switch provider
-      setTimeout(() => {
-        setPendingMultiPanelAction('switchProvider', { providerId, selectedText: contentToSend });
-        notifyMessage({
-          action: 'switchProvider',
-          payload: { providerId, selectedText: contentToSend }
-          }).catch(() => {
-            // Multi-Panel may not be ready yet, silently ignore
-          });
-        }, 500);
-      } else {
-        // No text selected - extract page content
-        try {
-          const response = await chrome.tabs.sendMessage(tab.id, {
-            action: 'extractPageContent'
-          });
-
-          if (response && response.success) {
-            // Send extracted content to multi-panel
-            setTimeout(() => {
-              setPendingMultiPanelAction('switchProvider', { providerId, selectedText: response.content });
-              notifyMessage({
-                action: 'switchProvider',
-                payload: { providerId, selectedText: response.content }
-              }).catch(() => {
-                // Multi-Panel may not be ready yet, silently ignore
-              });
-            }, 500);
-          } else {
-            // Extraction failed - send empty to provider
-            setTimeout(() => {
-              setPendingMultiPanelAction('switchProvider', { providerId, selectedText: '' });
-              notifyMessage({
-                action: 'switchProvider',
-                payload: { providerId, selectedText: '' }
-              }).catch(() => {});
-            }, 500);
-          }
-        } catch (error) {
-          // Content script not ready or extraction failed
-          // Send empty to provider
-          setTimeout(() => {
-            setPendingMultiPanelAction('switchProvider', { providerId, selectedText: '' });
-            notifyMessage({
-              action: 'switchProvider',
-              payload: { providerId, selectedText: '' }
-            }).catch(() => {});
-          }, 500);
-        }
-      }
-    } else if (info.menuItemId === 'open-prompt-library') {
-      // Get source URL placement setting
-      const settings = await chrome.storage.sync.get({ sourceUrlPlacement: 'end' });
-      const placement = settings.sourceUrlPlacement;
-
-      // Check if text is selected
-      if (info.selectionText) {
-        // Format content with source based on user preference
-        let contentToSend;
-        if (placement === 'none') {
-          contentToSend = info.selectionText;
-        } else if (placement === 'beginning') {
-          contentToSend = `Source: ${info.pageUrl}\n\n${info.selectionText}`;
-        } else {
-          // default: 'end'
-          contentToSend = `${info.selectionText}\n\nSource: ${info.pageUrl}`;
-        }
-
-        // Wait for multi-panel to load, then switch to prompt library
-        setTimeout(() => {
-          setPendingMultiPanelAction('openPromptLibrary', { selectedText: contentToSend });
-          notifyMessage({
-            action: 'openPromptLibrary',
-            payload: { selectedText: contentToSend }
-          }).catch(() => {
-            // Multi-Panel may not be ready yet, ignore error
-          });
-        }, 500);
-      } else {
-        // No text selected - extract page content
-        try {
-          const response = await chrome.tabs.sendMessage(tab.id, {
-            action: 'extractPageContent'
-          });
-
-          if (response && response.success) {
-            // Send extracted content to multi-panel
-            setTimeout(() => {
-              setPendingMultiPanelAction('openPromptLibrary', { selectedText: response.content });
-              notifyMessage({
-                action: 'openPromptLibrary',
-                payload: { selectedText: response.content }
-              }).catch(() => {
-                // Multi-Panel may not be ready yet, ignore error
-              });
-            }, 500);
-          } else {
-            // Extraction failed - send empty
-            setTimeout(() => {
-              setPendingMultiPanelAction('openPromptLibrary', { selectedText: '' });
-              notifyMessage({
-                action: 'openPromptLibrary',
-                payload: { selectedText: '' }
-              }).catch(() => {});
-            }, 500);
-          }
-        } catch (error) {
-          // Content script not ready or extraction failed
-          // Send empty
-          setTimeout(() => {
-            setPendingMultiPanelAction('openPromptLibrary', { selectedText: '' });
-            notifyMessage({
-              action: 'openPromptLibrary',
-              payload: { selectedText: '' }
-            }).catch(() => {});
-          }, 500);
-        }
-      }
+    if (info.menuItemId === 'open-smarter-panel') {
+      const contentToSend = await getContentFromContext(info, tab);
+      dispatchToMultiPanel('sendToPanel', { selectedText: contentToSend });
     }
   } catch (error) {
     // Silently handle context menu errors

@@ -503,9 +503,6 @@
   "contextMenuSendTo": {
     "message": "Panelize に送信"
   },
-  "contextMenuPromptLibrary": {
-    "message": "プロンプトライブラリ"
-  },
   "sidebarChatHistory": {
     "message": "チャット履歴"
   },
@@ -811,7 +808,6 @@
       }
     }
   },
-
   "labelOpenMode": {
     "message": "開くモード"
   },

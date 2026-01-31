@@ -503,9 +503,6 @@
   "contextMenuSendTo": {
     "message": "Envoyer vers Panelize"
   },
-  "contextMenuPromptLibrary": {
-    "message": "Bibliothèque de prompts"
-  },
   "sidebarChatHistory": {
     "message": "Historique des conversations"
   },
@@ -811,7 +808,6 @@
       }
     }
   },
-
   "labelOpenMode": {
     "message": "Mode d'ouverture"
   },
