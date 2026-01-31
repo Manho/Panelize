@@ -126,7 +126,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 });
 
 async function formatSelectedTextWithSource(info) {
-  const settings = await chrome.storage.sync.get({ sourceUrlPlacement: 'end' });
+  const settings = await chrome.storage.sync.get({ sourceUrlPlacement: 'none' });
   const placement = settings.sourceUrlPlacement;
 
   if (placement === 'none') {

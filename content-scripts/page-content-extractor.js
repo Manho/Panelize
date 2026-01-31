@@ -239,7 +239,7 @@
    * @param {string} placement - 'beginning', 'end', or 'none'
    * @returns {string} Formatted content
    */
-  function formatContent(extracted, placement = 'end') {
+  function formatContent(extracted, placement = 'none') {
     const titleLine = `[${extracted.title}]`;
     const sourceLine = `Source: ${extracted.url}`;
 
@@ -262,7 +262,7 @@
         const extracted = extractPageContent();
 
         // Get user's source URL placement preference
-        chrome.storage.sync.get({ sourceUrlPlacement: 'end' }, (settings) => {
+        chrome.storage.sync.get({ sourceUrlPlacement: 'none' }, (settings) => {
           const formatted = formatContent(extracted, settings.sourceUrlPlacement);
 
           sendResponse({

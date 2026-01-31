@@ -185,7 +185,7 @@ async function loadSettings() {
   // Source URL placement setting
   const sourceUrlPlacementSelect = document.getElementById('source-url-placement-select');
   if (sourceUrlPlacementSelect) {
-    sourceUrlPlacementSelect.value = settings.sourceUrlPlacement || 'end';
+    sourceUrlPlacementSelect.value = settings.sourceUrlPlacement || 'none';
   }
 
   // Open mode setting
