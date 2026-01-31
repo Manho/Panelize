@@ -6,17 +6,17 @@
   </defs>
 
   <!-- 背景：深炭黑 -->
-  <rect x="0" y="0" width="128" height="128" rx="32" fill="#1a1a1a" filter="url(#shadow)"/>
+  <rect x="0" y="0" width="128" height="128" rx="28" fill="#1a1a1a" filter="url(#shadow)"/>
 
-  <!-- P的竖线（左侧白色长条）-->
-  <rect x="23" y="32" width="28" height="64" rx="4" fill="#ffffff"/>
+  <!-- P的竖线（左侧白色长条）- 加粗加高 -->
+  <rect x="20" y="16" width="36" height="96" rx="6" fill="#ffffff"/>
 
-  <!-- P的右上（科技蓝面板）-->
-  <rect x="59" y="66" width="36" height="30" rx="8" fill="#3b82f6"/>
+  <!-- P的右上（科技蓝面板）- 放大 -->
+  <rect x="62" y="56" width="46" height="56" rx="10" fill="#3b82f6"/>
 
-  <!-- P的右下（警示红面板）-->
-  <rect x="59" y="32" width="36" height="30" rx="8" fill="#ef4444"/>
+  <!-- P的右下（警示红面板）- 放大 -->
+  <rect x="62" y="16" width="46" height="36" rx="10" fill="#ef4444"/>
 
   <!-- 分割线 -->
-  <rect x="55" y="32" width="2" height="64" fill="#374151" fill-opacity="0.6"/>
+  <rect x="56" y="16" width="4" height="96" fill="#374151" fill-opacity="0.6"/>
 </svg>
