@@ -10,12 +10,6 @@ import {
   importDefaultLibrary
 } from '../modules/prompt-manager.js';
 import {
-  getAllConversations,
-  exportConversations,
-  importConversations,
-  clearAllConversations
-} from '../modules/history-manager.js';
-import {
   loadVersionInfo,
   checkForUpdates
 } from '../modules/version-checker.js';
@@ -345,21 +339,16 @@ async function toggleProvider(providerId) {
 async function loadDataStats() {
   try {
     const prompts = await getAllPrompts();
-    const conversations = await getAllConversations();
 
     document.getElementById('stat-prompts').textContent = prompts.length;
-    document.getElementById('stat-conversations').textContent = conversations.length;
 
-    // Estimate storage size (include both prompts and conversations)
+    // Estimate storage size
     const promptsSize = JSON.stringify(prompts).length;
-    const conversationsSize = JSON.stringify(conversations).length;
-    const totalSize = promptsSize + conversationsSize;
-    const sizeKB = Math.round(totalSize / 1024);
+    const sizeKB = Math.round(promptsSize / 1024);
     document.getElementById('stat-storage').textContent = `~${sizeKB} KB`;
   } catch (error) {
     // Silently handle data stats errors
     document.getElementById('stat-prompts').textContent = '0';
-    document.getElementById('stat-conversations').textContent = '0';
     document.getElementById('stat-storage').textContent = '0 KB';
   }
 }
@@ -452,7 +441,6 @@ function setupEventListeners() {
 
   // Danger Zone - Clear buttons
   document.getElementById('clear-prompts-btn').addEventListener('click', clearPrompts);
-  document.getElementById('clear-conversations-btn').addEventListener('click', clearConversations);
   document.getElementById('reset-settings-btn').addEventListener('click', resetSettingsOnly);
 
   // Default library import button
@@ -539,9 +527,6 @@ async function exportData() {
     // Export prompts
     const promptsData = await exportPrompts();
 
-    // Export conversations (chat history)
-    const conversationsData = await exportConversations();
-
     // Export settings
     const settingsData = await exportSettings();
 
@@ -550,7 +535,6 @@ async function exportData() {
       version: '1.0',
       exportDate: new Date().toISOString(),
       prompts: promptsData.prompts,
-      conversations: conversationsData.conversations,
       settings: settingsData
     };
 
@@ -582,8 +566,7 @@ async function importData(file) {
     // Confirm import
     const confirmMsg = t('msgImportConfirm', [
       new Date(data.exportDate).toLocaleString(),
-      (data.prompts?.length || 0).toString(),
-      (data.conversations?.length || 0).toString()
+      (data.prompts?.length || 0).toString()
     ]);
 
     if (!confirm(confirmMsg)) {
@@ -594,12 +577,6 @@ async function importData(file) {
     let promptImportSummary = null;
     if (data.prompts && Array.isArray(data.prompts)) {
       promptImportSummary = await importPrompts({ prompts: data.prompts }, 'skip');
-    }
-
-    // Import conversations (chat history)
-    let conversationImportSummary = null;
-    if (data.conversations && Array.isArray(data.conversations)) {
-      conversationImportSummary = await importConversations({ conversations: data.conversations }, 'skip');
     }
 
     // Import settings (but preserve current enabled providers)
@@ -620,10 +597,6 @@ async function importData(file) {
     if (promptImportSummary) {
       const { imported = 0, skipped = 0 } = promptImportSummary;
       messages.push(t('msgPromptsImported', [imported.toString(), skipped.toString()]));
-    }
-    if (conversationImportSummary) {
-      const { imported = 0, skipped = 0 } = conversationImportSummary;
-      messages.push(t('msgConversationsImported', [imported.toString(), skipped.toString()]));
     }
 
     if (messages.length > 0) {
@@ -648,21 +621,6 @@ async function clearPrompts() {
     showStatus('success', t('msgPromptsCleared'));
   } catch (error) {
     showStatus('error', t('msgClearPromptsFailed'));
-  }
-}
-
-// Danger Zone: Clear Chat History
-async function clearConversations() {
-  if (!confirm(t('msgConfirmClearHistory'))) {
-    return;
-  }
-
-  try {
-    await clearAllConversations();
-    await loadDataStats();
-    showStatus('success', t('msgHistoryCleared'));
-  } catch (error) {
-    showStatus('error', t('msgClearHistoryFailed'));
   }
 }
 

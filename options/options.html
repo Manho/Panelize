@@ -142,7 +142,7 @@
             <div class="setting-label" data-i18n="labelDefaultShortcuts">Default Shortcuts</div>
             <div class="setting-description" data-i18n-html="descDefaultShortcuts">
               Command+Shift+E (Ctrl+Shift+E on Windows/Linux) opens Panelize.<br>
-              Command+Shift+P (Ctrl+Shift+P on Windows/Linux) opens Prompt Library.
+              Command+Shift+L (Ctrl+Shift+L on Windows/Linux) opens Prompt Library.
             </div>
           </div>
           <div class="setting-control">
@@ -245,12 +245,6 @@
 
       </section>
 
-      <!-- Chat History Settings -->
-      <section class="section">
-        <h2 class="section-title" data-i18n="sectionChatHistory">Chat History</h2>
-
-      </section>
-
       <!-- Prompt Library -->
       <section class="section">
         <h2 class="section-title" data-i18n="sectionPromptLibrary">Prompt Library</h2>
@@ -262,7 +256,7 @@
           <div class="setting-info">
             <div class="setting-label" data-i18n="labelAutoPaste">Auto-paste Clipboard to Prompt Library</div>
             <div class="setting-description" data-i18n="descAutoPaste">
-              Automatically paste clipboard content to workspace when opening Prompt Library with Command+Shift+P
+              Automatically paste clipboard content to workspace when opening Prompt Library with Command+Shift+L
             </div>
           </div>
           <div class="setting-control">
@@ -320,10 +314,6 @@
 
         <div class="data-stats" id="data-stats">
           <div class="data-stat-item">
-            <span class="data-stat-label" data-i18n="statChatHistory">Chat History</span>
-            <span class="data-stat-value" id="stat-conversations">0</span>
-          </div>
-          <div class="data-stat-item">
             <span class="data-stat-label" data-i18n="statPrompts">Prompts</span>
             <span class="data-stat-value" id="stat-prompts">0</span>
           </div>
@@ -362,16 +352,6 @@
         <p style="font-size: 14px; color: #d32f2f; margin-bottom: 16px;" data-i18n="descDangerZone">
           These actions cannot be undone. Use with caution.
         </p>
-
-        <div class="setting-item">
-          <div class="setting-info">
-            <div class="setting-label" data-i18n="labelClearHistory">Clear Chat History</div>
-            <div class="setting-description" data-i18n="descClearHistory">Delete all saved conversations</div>
-          </div>
-          <div class="setting-control">
-            <button class="btn btn-danger" id="clear-conversations-btn" data-i18n="btnClear">Clear</button>
-          </div>
-        </div>
 
         <div class="setting-item">
           <div class="setting-info">
