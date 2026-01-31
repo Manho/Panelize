@@ -125,6 +125,24 @@
   "sectionChatHistory": {
     "message": "チャット履歴"
   },
+  "sectionContentSending": {
+    "message": "コンテンツ送信"
+  },
+  "labelSourceUrlPlacement": {
+    "message": "ソース URL の配置"
+  },
+  "descSourceUrlPlacement": {
+    "message": "選択したテキストやページコンテンツを AI プロバイダーに送信する際、ソース URL を配置する場所を選択します"
+  },
+  "urlPlacementEnd": {
+    "message": "末尾（コンテンツの後）"
+  },
+  "urlPlacementBeginning": {
+    "message": "先頭（コンテンツの前）"
+  },
+  "urlPlacementNone": {
+    "message": "URL を含めない"
+  },
   "sectionEnterBehavior": {
     "message": "Enter キーの動作"
   },
@@ -295,6 +313,9 @@
   },
   "msgEnterCustomizationDisabled": {
     "message": "Enter キーのカスタマイズが無効になりました"
+  },
+  "msgSourceUrlPlacementUpdated": {
+    "message": "ソース URL の配置が更新されました"
   },
   "msgPresetChanged": {
     "message": "プリセットが次に変更されました： $PRESET$",
@@ -481,6 +502,9 @@
   },
   "contextMenuSendTo": {
     "message": "Panelize に送信"
+  },
+  "contextMenuPromptLibrary": {
+    "message": "プロンプトライブラリ"
   },
   "sidebarChatHistory": {
     "message": "チャット履歴"
@@ -787,6 +811,7 @@
       }
     }
   },
+
   "labelOpenMode": {
     "message": "開くモード"
   },

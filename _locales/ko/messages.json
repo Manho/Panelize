@@ -125,6 +125,24 @@
   "sectionChatHistory": {
     "message": "채팅 기록"
   },
+  "sectionContentSending": {
+    "message": "콘텐츠 전송"
+  },
+  "labelSourceUrlPlacement": {
+    "message": "소스 URL 배치"
+  },
+  "descSourceUrlPlacement": {
+    "message": "선택한 텍스트 또는 페이지 콘텐츠를 AI 제공자에게 전송할 때 소스 URL을 배치할 위치를 선택합니다"
+  },
+  "urlPlacementEnd": {
+    "message": "끝 부분 (콘텐츠 뒤)"
+  },
+  "urlPlacementBeginning": {
+    "message": "시작 부분 (콘텐츠 앞)"
+  },
+  "urlPlacementNone": {
+    "message": "URL 포함 안 함"
+  },
   "sectionEnterBehavior": {
     "message": "Enter 키 동작"
   },
@@ -295,6 +313,9 @@
   },
   "msgEnterCustomizationDisabled": {
     "message": "Enter 키 사용자 지정이 비활성화되었습니다"
+  },
+  "msgSourceUrlPlacementUpdated": {
+    "message": "소스 URL 배치가 업데이트되었습니다"
   },
   "msgPresetChanged": {
     "message": "사전 설정이 다음으로 변경되었습니다: $PRESET$",
@@ -481,6 +502,9 @@
   },
   "contextMenuSendTo": {
     "message": "Panelize 로 보내기"
+  },
+  "contextMenuPromptLibrary": {
+    "message": "프롬프트 라이브러리"
   },
   "sidebarChatHistory": {
     "message": "채팅 기록"
@@ -787,6 +811,7 @@
       }
     }
   },
+
   "labelOpenMode": {
     "message": "열기 모드"
   },

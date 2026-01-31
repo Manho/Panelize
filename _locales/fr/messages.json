@@ -125,6 +125,24 @@
   "sectionChatHistory": {
     "message": "Historique des conversations"
   },
+  "sectionContentSending": {
+    "message": "Envoi de contenu"
+  },
+  "labelSourceUrlPlacement": {
+    "message": "Placement de l'URL source"
+  },
+  "descSourceUrlPlacement": {
+    "message": "Choisissez où placer l'URL source lors de l'envoi de texte sélectionné ou de contenu de page aux fournisseurs IA"
+  },
+  "urlPlacementEnd": {
+    "message": "À la fin (après le contenu)"
+  },
+  "urlPlacementBeginning": {
+    "message": "Au début (avant le contenu)"
+  },
+  "urlPlacementNone": {
+    "message": "Ne pas inclure l'URL"
+  },
   "sectionEnterBehavior": {
     "message": "Comportement de la touche Entrée"
   },
@@ -295,6 +313,9 @@
   },
   "msgEnterCustomizationDisabled": {
     "message": "Personnalisation de la touche Entrée désactivée"
+  },
+  "msgSourceUrlPlacementUpdated": {
+    "message": "Placement de l'URL source mis à jour"
   },
   "msgPresetChanged": {
     "message": "Préréglage modifié en : $PRESET$",
@@ -481,6 +502,9 @@
   },
   "contextMenuSendTo": {
     "message": "Envoyer vers Panelize"
+  },
+  "contextMenuPromptLibrary": {
+    "message": "Bibliothèque de prompts"
   },
   "sidebarChatHistory": {
     "message": "Historique des conversations"
@@ -787,6 +811,7 @@
       }
     }
   },
+
   "labelOpenMode": {
     "message": "Mode d'ouverture"
   },

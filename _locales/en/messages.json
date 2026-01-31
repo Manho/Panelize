@@ -65,12 +65,14 @@
   "actionDefaultTitle": {
     "message": "Open Panelize"
   },
+
   "settingsTitle": {
     "message": "Settings: Panelize"
   },
   "settingsSubtitle": {
     "message": "Customize your multi-AI comparison experience"
   },
+
   "sectionAppearance": {
     "message": "Appearance"
   },
@@ -128,18 +130,22 @@
   "msgLanguageUpdated": {
     "message": "Language updated successfully"
   },
+
   "sectionProviders": {
     "message": "AI Providers"
   },
+
   "labelEnabledProviders": {
     "message": "Enabled Providers"
   },
   "descEnabledProviders": {
     "message": "Select which AI providers appear in your sidebar"
   },
+
   "sectionKeyboardShortcuts": {
     "message": "Keyboard Shortcuts"
   },
+
   "sectionKeyboard": {
     "message": "Keyboard"
   },
@@ -173,9 +179,31 @@
   "descAutoPaste": {
     "message": "Automatically paste clipboard content to workspace when opening Prompt Library with Command+Shift+L"
   },
+
   "sectionChatHistory": {
     "message": "Chat History"
   },
+
+
+  "sectionContentSending": {
+    "message": "Content Sending"
+  },
+  "labelSourceUrlPlacement": {
+    "message": "Source URL Placement"
+  },
+  "descSourceUrlPlacement": {
+    "message": "Choose where to place the source URL when sending selected text or page content to AI providers"
+  },
+  "urlPlacementEnd": {
+    "message": "At end (after content)"
+  },
+  "urlPlacementBeginning": {
+    "message": "At beginning (before content)"
+  },
+  "urlPlacementNone": {
+    "message": "Don't include URL"
+  },
+
   "sectionEnterBehavior": {
     "message": "Enter Key Behavior"
   },
@@ -218,6 +246,7 @@
   "labelSendMessage": {
     "message": "Send Message"
   },
+
   "sectionPromptLibrary": {
     "message": "Prompt Library"
   },
@@ -239,6 +268,7 @@
   "noteCustomImport": {
     "message": "Before importing custom prompts, please read: <code style=\"background: #f5f5f5; padding: 2px 6px; border-radius: 3px;\">data/prompt-libraries/Generate_a_Basic_Prompt_Library.md</code>"
   },
+
   "sectionDataManagement": {
     "message": "Data Management"
   },
@@ -269,6 +299,7 @@
   "btnImport": {
     "message": "Import"
   },
+
   "sectionDangerZone": {
     "message": "Danger Zone"
   },
@@ -299,6 +330,7 @@
   "btnReset": {
     "message": "Reset"
   },
+
   "sectionAbout": {
     "message": "About"
   },
@@ -320,6 +352,7 @@
   "descAbout2": {
     "message": "Built with privacy-first architecture. All data stored locally."
   },
+
   "msgThemeUpdated": {
     "message": "Theme updated"
   },
@@ -341,6 +374,11 @@
   "msgAutoPasteDisabled": {
     "message": "Auto-paste disabled"
   },
+
+  "msgSourceUrlPlacementUpdated": {
+    "message": "Source URL placement updated"
+  },
+
   "msgEnterCustomizationEnabled": {
     "message": "Enter key customization enabled"
   },
@@ -466,6 +504,7 @@
   "msgUpdateStatusError": {
     "message": "Failed to check for updates"
   },
+
   "errAtLeastOneProvider": {
     "message": "At least one provider must be enabled"
   },
@@ -507,6 +546,7 @@
       }
     }
   },
+
   "confirmImportData": {
     "message": "Import data from $DATE$?\n\nThis will add:\n- $PROMPTS$ prompts\n- $CONVERSATIONS$ conversations\n- Settings configuration\n\nExisting data will be preserved unless duplicates are found.",
     "placeholders": {
@@ -530,9 +570,14 @@
   "confirmResetSettings": {
     "message": "Are you sure you want to reset ALL settings to defaults?\n\nThis will reset:\n- Theme settings\n- Default provider\n- Keyboard shortcuts\n- All other preferences\n\nYour prompts and chat history will NOT be affected.\n\nThis action CANNOT be undone!"
   },
+
   "contextMenuSendTo": {
     "message": "Send to Panelize"
   },
+  "contextMenuPromptLibrary": {
+    "message": "Prompt Library"
+  },
+
   "sidebarChatHistory": {
     "message": "Chat History"
   },
@@ -638,6 +683,7 @@
   "loadingText": {
     "message": "Loading..."
   },
+
   "optionsPageTitle": {
     "message": "Panelize - Settings"
   },
@@ -707,6 +753,7 @@
   "labelLoading": {
     "message": "Loading..."
   },
+
   "msgAllPromptsExist": {
     "message": "All prompts already exist"
   },
@@ -796,6 +843,7 @@
   "errGitHubFetchFailed": {
     "message": "Failed to fetch latest commit from GitHub"
   },
+
   "dlgDuplicateTitle": {
     "message": "Conversation Already Saved"
   },
@@ -816,6 +864,7 @@
   "btnOverwrite": {
     "message": "Overwrite"
   },
+
   "errExtensionAPI": {
     "message": "Extension API not available. Try reloading the page."
   },
