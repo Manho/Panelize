@@ -150,7 +150,7 @@
     "message": "Personaliza cómo funcionan la tecla Enter y las teclas modificadoras al escribir en los campos de entrada de proveedores de IA."
   },
   "descEnterBehavior2": {
-    "message": "<strong>Se aplica a:</strong> ChatGPT, Claude, Gemini, Google (Modo IA), Grok, DeepSeek y Perplexity."
+    "message": "<strong>Se aplica a:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek y Google (Modo IA)."
   },
   "labelEnableEnterCustomization": {
     "message": "Habilitar Personalización de Tecla Enter"
