@@ -175,7 +175,7 @@ function registerRuntimeMessageListener() {
 async function loadSettings() {
   try {
     const settings = await chrome.storage.sync.get({
-      multiPanelLayout: '2x2',
+      multiPanelLayout: '1x3',
       multiPanelProviders: DEFAULT_PROVIDERS,
       openMode: 'tab'
     });
@@ -1407,6 +1407,9 @@ function openPromptModal() {
 function closePromptModal() {
   document.getElementById('prompt-modal').style.display = 'none';
   document.getElementById('prompt-search').value = '';
+  // Reset filters to show all prompts on next open
+  currentPromptFilter = 'all';
+  currentCategoryFilter = '';
 }
 
 // ===== Provider Switcher =====
