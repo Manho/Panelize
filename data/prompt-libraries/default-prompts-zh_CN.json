@@ -56,7 +56,7 @@
   },
   {
     "title": "对比分析矩阵",
-    "content": "为这些项目创建对比矩阵：{items}。列：标准{criteria}。行：项目。用简洁的、基于证据的说明填充。最后给出：(1) 关键权衡，(2) 针对{context}的推荐选择，(3) 一句话理由。",
+    "content": "为这些项目创建对比矩阵：{items}。列：标准（{criteria}）。行：项目。用简洁的、基于证据的说明填充。最后给出：(1) 关键权衡，(2) 针对{context}的推荐选择，(3) 一句话理由。",
     "category": "分析",
     "tags": ["对比", "决策", "权衡"],
     "variables": ["items", "criteria", "context"],
@@ -66,7 +66,7 @@
     "originalTitle": "Compare-and-Contrast Matrix"
   },
   {
-    "title": "双重解释：通俗版与技术版",
+    "title": "双重解释：通俗版与技术版（ELI5）",
     "content": "用两种方式解释「{topic}」：(1) 用通俗类比做简单解释；(2) 面向专业受众的技术解释，包括相关定义、方程或算法，以及一个小例子。",
     "category": "概念解释",
     "tags": ["通俗解释", "技术", "沟通"],
@@ -78,7 +78,7 @@
   },
   {
     "title": "逆向工程优秀作品",
-    "content": "分析这个范例作品：{exemplar}。识别其结构、模式、风格和技巧。生成一份风格指南，包含注意事项和可复用的大纲模板，用于产生类似质量的{use_case}结果。",
+    "content": "分析这个范例作品：{exemplar}。识别其结构、模式、风格和技巧。生成一份风格指南，包含应做与不应做的事项和可复用的大纲模板，用于产生类似质量的{use_case}结果。",
     "category": "写作与创作",
     "tags": ["逆向工程", "风格", "模板"],
     "variables": ["exemplar", "use_case"],
@@ -209,10 +209,10 @@
     "originalTitle": "Rubric Builder"
   },
   {
-    "title": "教学反馈测试",
-    "content": "为{audience}将「{topic}」主题作为分步小课程教授。然后提出一个5题教学反馈测验并给出理想答案。",
+    "title": "教学复盘测试",
+    "content": "为{audience}将「{topic}」主题作为分步小课程教授。然后提出一个5题教学复盘测验并给出理想答案。",
     "category": "学习与教学",
-    "tags": ["教学设计", "测验", "教学反馈"],
+    "tags": ["教学设计", "测验", "教学复盘"],
     "variables": ["topic", "audience"],
     "isFavorite": false,
     "useCount": 0,
@@ -232,7 +232,7 @@
   },
   {
     "title": "多来源综合",
-    "content": "将以下来源{sources}综合为一个连贯的摘要。提取重叠的见解、分歧和新贡献。最后给出统一的观点和2个后续研究问题。",
+    "content": "将以下来源{sources}综合为一个连贯的摘要。提取重叠的见解、分歧和新颖贡献。最后给出整合后的观点和2个后续研究问题。",
     "category": "研究与综合",
     "tags": ["综合", "文献", "对比"],
     "variables": ["sources"],
@@ -243,7 +243,7 @@
   },
   {
     "title": "格式转换为JSON Schema",
-    "content": "将以下规范转换为JSON Schema draft-2020-12，包括类型、必填字段、枚举约束和示例实例。\\n\\n规范：{description}",
+    "content": "将以下规范转换为JSON Schema draft-2020-12，包括类型、必填字段、枚举约束和示例实例。\\n\\n规范描述：{description}",
     "category": "数据与建模",
     "tags": ["json", "schema", "验证"],
     "variables": ["description"],
@@ -298,7 +298,7 @@
   },
   {
     "title": "30-60-90天计划",
-    "content": "为{role_or_goal}起草一个30-60-90天计划。包括学习目标、快速胜利、关系图、要建立的系统/流程，以及每个阶段的指标。",
+    "content": "为{role_or_goal}起草一个30-60-90天计划。包括学习目标、快速胜利、关系网络图、要建立的系统/流程，以及每个阶段的指标。",
     "category": "入职与规划",
     "tags": ["计划", "里程碑", "指标"],
     "variables": ["role_or_goal"],
@@ -352,7 +352,7 @@
     "originalTitle": "4-Week Learning Syllabus"
   },
   {
-    "title": "测试优先规范",
+    "title": "测试优先规范编写",
     "content": "为以下{language}规范先编写测试用例。包括单元测试和属性测试，明确输入/输出和边界情况。\\n\\n规范：{spec}",
     "category": "软件质量",
     "tags": ["测试", "测试驱动开发", "规范"],
@@ -385,7 +385,7 @@
     "originalTitle": "Data Cleaning Plan"
   },
   {
-    "title": "解释代码差异",
+    "title": "代码变更说明",
     "content": "总结以下差异中变更的内容及其重要性。注意风险、性能/安全影响，以及建议的后续测试。\\n\\n差异：{diff}",
     "category": "代码审查",
     "tags": ["差异", "审查", "风险"],
@@ -407,10 +407,10 @@
     "originalTitle": "Refactor Plan"
   },
   {
-    "title": "性能分析假设",
-    "content": "对于系统「{system_description}」，列出可能的性能瓶颈、假设根本原因、识别关键指标，并提出分析/基准测试计划。最后给出3个低风险优化建议。",
+    "title": "性能剖析假设",
+    "content": "对于系统「{system_description}」，列出可能的性能瓶颈、假设根本原因、识别关键指标，并提出剖析/基准测试计划。最后给出3个低风险优化建议。",
     "category": "性能工程",
-    "tags": ["分析", "优化", "指标"],
+    "tags": ["剖析", "优化", "指标"],
     "variables": ["system_description"],
     "isFavorite": false,
     "useCount": 0,
@@ -496,7 +496,7 @@
   },
   {
     "title": "提示词审计与风险检查",
-    "content": "审计此提示词的模糊性、缺失约束和潜在偏见。提出改进建议，如相关则提供更安全替代方案。\\n\\n提示词：{prompt}",
+    "content": "审计此提示词的模糊性、缺失约束和潜在偏见。提出改进建议，如有必要，提供更安全替代方案。\\n\\n提示词：{prompt}",
     "category": "提示词工程",
     "tags": ["审计", "安全", "清晰度"],
     "variables": ["prompt"],
@@ -528,7 +528,7 @@
     "originalTitle": "MVP Scope Cut & Prioritization"
   },
   {
-    "title": "知识缺口地图与阅读清单",
+    "title": "知识缺口图谱与阅读清单",
     "content": "对于主题「{topic}」，列出先决概念、当前缺口，以及分阶段阅读清单（基础 → 中级 → 高级）。包括一个「顶点」应用任务。",
     "category": "学习策略",
     "tags": ["阅读清单", "先决条件", "技能"],
@@ -539,7 +539,7 @@
     "originalTitle": "Knowledge Gaps Map & Reading List"
   },
   {
-    "title": "粗略估算计算器",
+    "title": "快速估算器（草算）",
     "content": "用粗略估算快速回答「{question}」。展示变量、大致数值、计算和合理性检查。说明主要注意事项。",
     "category": "估算",
     "tags": ["估算", "近似", "合理性检查"],
@@ -649,7 +649,7 @@
     "originalTitle": "Dataset Documentation (Data Card)"
   },
   {
-    "title": "假设到实验",
+    "title": "从假设到实验设计",
     "content": "将假设「{hypothesis}」转化为最小实验：变量、对照、测量、成功标准和时间线。添加可能的混淆因素及处理方法。",
     "category": "科学与测试",
     "tags": ["实验", "假设", "设计"],
@@ -705,9 +705,9 @@
   },
   {
     "title": "做中学项目简介",
-    "content": "设计一个实践项目来学习{skill}。描述交付物、约束、评估标准和同行评审标准。",
+    "content": "设计一个实践项目来学习{skill}。描述交付物、约束、评分标准和同行评审标准。",
     "category": "体验式学习",
-    "tags": ["项目", "学习", "标准"],
+    "tags": ["项目", "学习", "评分标准"],
     "variables": ["skill"],
     "isFavorite": false,
     "useCount": 0,
@@ -760,7 +760,7 @@
   },
   {
     "title": "证据强度评级",
-    "content": "针对这些声明{claims}，评级证据强度（高/中/低）并解释原因。建议最能改变评级的单一最佳研究或数据。",
+    "content": "针对这些声明{claims}，评级证据强度（高/中/低）并解释原因。建议最能改变评级的最佳单项研究或数据。",
     "category": "证据与评估",
     "tags": ["证据", "评估", "研究"],
     "variables": ["claims"],
