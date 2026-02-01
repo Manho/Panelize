@@ -359,13 +359,46 @@ async function loadLibraryCount() {
   if (!countElement) return;
 
   try {
-    const response = await fetch(chrome.runtime.getURL('data/prompt-libraries/default-prompts.json'));
+    const language = await getDefaultLibraryLanguage();
+    const libraryPath = getDefaultLibraryPath(language);
+    const response = await fetch(chrome.runtime.getURL(libraryPath));
     const promptsArray = await response.json();
     const count = Array.isArray(promptsArray) ? promptsArray.length : 0;
     countElement.textContent = t('msgPromptsCount', count.toString());
   } catch (error) {
     console.error('Failed to load library count:', error);
     countElement.textContent = t('msgUnknownCount');
+  }
+}
+
+// Get the appropriate default library path based on language
+function getDefaultLibraryPath(language) {
+  // Map of supported languages to their library files
+  const libraryMap = {
+    'zh_CN': 'data/prompt-libraries/default-prompts-zh_CN.json',
+    'zh_TW': 'data/prompt-libraries/default-prompts-zh_CN.json' // Fallback to Simplified Chinese
+  };
+  
+  // Return language-specific path or default to English
+  return libraryMap[language] || 'data/prompt-libraries/default-prompts.json';
+}
+
+// Get user's preferred language for default library
+async function getDefaultLibraryLanguage() {
+  try {
+    const settings = await chrome.storage.sync.get({ language: null });
+    if (settings.language) {
+      return settings.language;
+    }
+    
+    // Fallback to browser language
+    const browserLang = getCurrentLanguage();
+    if (browserLang.startsWith('zh')) {
+      return browserLang.includes('TW') || browserLang.includes('HK') ? 'zh_TW' : 'zh_CN';
+    }
+    return 'en';
+  } catch (error) {
+    return 'en';
   }
 }
 
@@ -799,8 +832,12 @@ async function importDefaultLibraryHandler() {
     button.disabled = true;
     button.textContent = t('msgImporting');
 
+    // Get user's language preference
+    const language = await getDefaultLibraryLanguage();
+    const libraryPath = getDefaultLibraryPath(language);
+
     // Fetch the default library data
-    const response = await fetch(chrome.runtime.getURL('data/prompt-libraries/default-prompts.json'));
+    const response = await fetch(chrome.runtime.getURL(libraryPath));
     const promptsArray = await response.json();
 
     // Wrap array in expected format { prompts: [...] }
