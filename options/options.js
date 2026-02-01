@@ -373,29 +373,27 @@ async function loadLibraryCount() {
 
 // Get the appropriate default library path based on language
 function getDefaultLibraryPath(language) {
-  // Map of supported languages to their library files
-  const libraryMap = {
-    'zh_CN': 'data/prompt-libraries/default-prompts-zh_CN.json',
-    'zh_TW': 'data/prompt-libraries/default-prompts-zh_CN.json' // Fallback to Simplified Chinese
-  };
+  // Only Simplified Chinese uses translated prompts
+  // All other languages fall back to English
+  if (language === 'zh_CN') {
+    return 'data/prompt-libraries/default-prompts-zh_CN.json';
+  }
   
-  // Return language-specific path or default to English
-  return libraryMap[language] || 'data/prompt-libraries/default-prompts.json';
+  // Default to English for all other languages (including zh_TW)
+  return 'data/prompt-libraries/default-prompts.json';
 }
 
 // Get user's preferred language for default library
 async function getDefaultLibraryLanguage() {
   try {
     const settings = await chrome.storage.sync.get({ language: null });
-    if (settings.language) {
-      return settings.language;
+    
+    // Only Simplified Chinese gets Chinese prompts
+    if (settings.language === 'zh_CN') {
+      return 'zh_CN';
     }
     
-    // Fallback to browser language
-    const browserLang = getCurrentLanguage();
-    if (browserLang.startsWith('zh')) {
-      return browserLang.includes('TW') || browserLang.includes('HK') ? 'zh_TW' : 'zh_CN';
-    }
+    // All other languages (including zh_TW) fall back to English
     return 'en';
   } catch (error) {
     return 'en';
