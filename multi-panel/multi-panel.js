@@ -1380,8 +1380,20 @@ function setupEventListeners() {
 
   // Input textarea
   const inputTextarea = document.getElementById('unified-input');
+  let isInputComposing = false;
   inputTextarea.addEventListener('input', resizeTextarea);
+  inputTextarea.addEventListener('compositionstart', () => {
+    isInputComposing = true;
+  });
+  inputTextarea.addEventListener('compositionend', () => {
+    isInputComposing = false;
+  });
   inputTextarea.addEventListener('keydown', (e) => {
+    const imeComposing = isInputComposing || e.isComposing || e.keyCode === 229;
+    if (imeComposing) {
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       broadcastMessage(inputTextarea.value);
