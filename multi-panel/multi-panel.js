@@ -1389,12 +1389,10 @@ function setupEventListeners() {
     isInputComposing = false;
   });
   inputTextarea.addEventListener('keydown', (e) => {
-    const imeComposing = isInputComposing || e.isComposing || e.keyCode === 229;
-    if (imeComposing) {
-      return;
-    }
-
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (isInputComposing || e.isComposing) {
+        return;
+      }
       e.preventDefault();
       broadcastMessage(inputTextarea.value);
     }
