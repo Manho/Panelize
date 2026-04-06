@@ -567,14 +567,6 @@ async function addPanel(providerId) {
   const iframe = panelEl.querySelector('iframe');
   const loadingEl = panelEl.querySelector('.panel-loading');
 
-  const cancelNewChatRestoreFromIframe = () => {
-    if (isRestoringFocusAfterNewChat) {
-      cancelUnifiedInputFocusRestore();
-    }
-  };
-  iframe.addEventListener('focus', cancelNewChatRestoreFromIframe);
-  iframe.addEventListener('pointerdown', cancelNewChatRestoreFromIframe);
-
   // Handle iframe load
   // Grace period after load to catch AI pages that auto-focus after JS init
   const LOAD_GRACE_PERIOD = 3000;

@@ -38,7 +38,7 @@ test.describe('Focus Protection E2E', () => {
   });
 
   test('Test 0: Unified input should be focused when page first opens', async () => {
-    await page.waitForTimeout(120);
+    await page.waitForFunction(() => window.getActiveElementId() === 'unified-input');
 
     let activeId = await page.evaluate(() => window.getActiveElementId());
     expect(activeId).toBe('unified-input');

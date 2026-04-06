@@ -107,17 +107,6 @@
       return true;
     }
 
-    function attachIframeFocusRestoreCancellation(iframe) {
-      const cancelNewChatRestoreFromIframe = () => {
-        if (isRestoringFocusAfterNewChat) {
-          cancelUnifiedInputFocusRestore();
-        }
-      };
-
-      iframe.addEventListener('focus', cancelNewChatRestoreFromIframe);
-      iframe.addEventListener('pointerdown', cancelNewChatRestoreFromIframe);
-    }
-
     // === Focus protection logic (identical to multi-panel.js) ===
     inputTextarea.addEventListener('blur', () => {
       if (loadingIframeCount > 0) {
@@ -182,7 +171,6 @@
       iframe.addEventListener('error', () => {
         loadingIframeCount = Math.max(0, loadingIframeCount - 1);
       });
-      attachIframeFocusRestoreCancellation(iframe);
       document.getElementById('iframe-container').appendChild(iframe);
       return iframe;
     };
@@ -202,7 +190,6 @@
           loadingIframeCount = Math.max(0, loadingIframeCount - 1);
           resolve(false);
         });
-        attachIframeFocusRestoreCancellation(iframe);
         document.getElementById('iframe-container').appendChild(iframe);
       });
     };
