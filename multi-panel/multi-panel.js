@@ -524,15 +524,21 @@ function handleProviderStatusMessage(event) {
   }
 
   const panel = panels.find(candidate => candidate.iframe?.contentWindow === event.source);
-  if (!panel || !isChatgptProvider(panel.providerId) || data.provider !== panel.providerId) {
+  if (!panel || data.provider !== panel.providerId) {
     return;
   }
 
   switch (data.type) {
     case PANELIZE_PROVIDER_BUSY:
+      if (!isChatgptProvider(panel.providerId)) {
+        return;
+      }
       handleSendFocusProviderBusy(panel, data.requestId);
       break;
     case PANELIZE_PROVIDER_IDLE:
+      if (!isChatgptProvider(panel.providerId)) {
+        return;
+      }
       handleSendFocusProviderIdle(panel, data.requestId);
       break;
     case PANELIZE_PROVIDER_USER_INTERACTION:

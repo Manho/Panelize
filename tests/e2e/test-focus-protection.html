@@ -39,6 +39,7 @@
     let sendFocusActivePanelIds = new Set();
     let sendFocusBusyDetectionTimeoutIds = new Map();
     let sendFocusHardTimeoutIds = new Map();
+    let controlledIframeProviderId = 'chatgpt';
     let newChatFocusStealDelays = [];
     let sendFocusStealDelays = [];
     let sendProviderStatusTimeline = [];
@@ -162,7 +163,7 @@
 
       return {
         id: 'chatgpt-panel',
-        providerId: 'chatgpt',
+        providerId: controlledIframeProviderId,
         iframe
       };
     }
@@ -458,6 +459,10 @@
       sendFocusStealDelays = Array.isArray(delays) ? delays.slice() : [];
     };
 
+    window.setControlledIframeProvider = function(providerId) {
+      controlledIframeProviderId = providerId || 'chatgpt';
+    };
+
     window.setSendProviderStatusTimeline = function(entries) {
       sendProviderStatusTimeline = Array.isArray(entries) ? entries.map((entry) => ({
         delay: Number(entry.delay) || 0,
@@ -487,6 +492,7 @@
       newChatFocusStealDelays = [];
       sendFocusStealDelays = [];
       sendProviderStatusTimeline = [];
+      controlledIframeProviderId = 'chatgpt';
       userIntentCancelCount = 0;
       lastUserIntentCancelTarget = null;
       cancelUnifiedInputFocusRestore();

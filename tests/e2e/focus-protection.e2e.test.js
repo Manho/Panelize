@@ -272,12 +272,14 @@ test.describe('Focus Protection E2E', () => {
   });
 
   test('Test 13: Provider interaction message should cancel send focus restore', async () => {
-    await page.evaluate(() => window.addControlledIframe());
+    await page.evaluate(() => {
+      window.setControlledIframeProvider('gemini');
+      return window.addControlledIframe();
+    });
     await page.waitForTimeout(3200);
     await page.evaluate(() => {
       window.setSendFocusStealDelays([100, 1000, 4000]);
       window.setSendProviderStatusTimeline([
-        { delay: 100, type: 'PANELIZE_PROVIDER_BUSY' },
         { delay: 300, type: 'PANELIZE_PROVIDER_USER_INTERACTION' }
       ]);
     });

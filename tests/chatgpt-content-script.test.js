@@ -161,4 +161,34 @@ describe('chatgpt content script provider status', () => {
     expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_BUSY')).toHaveLength(0);
     expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(0);
   });
+
+  it('reports user interaction for non-chatgpt providers during send tracking', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = '<div class="ql-editor" contenteditable="true"></div>';
+
+    const postMessageSpy = window.parent.postMessage;
+    const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
+
+    dispatchMultiPanelMessage({
+      type: 'TRIGGER_SEND',
+      requestId: 'req-gemini-user-interaction',
+      context: 'multi-panel',
+    });
+
+    const pointerdownHandler = addEventListenerSpy.mock.calls.find(
+      ([eventName]) => eventName === 'pointerdown'
+    )?.[1];
+
+    expect(pointerdownHandler).toBeTypeOf('function');
+
+    pointerdownHandler({ isTrusted: true });
+
+    const interactionCalls = getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_USER_INTERACTION');
+    expect(interactionCalls).toHaveLength(1);
+    expect(interactionCalls[0]).toMatchObject({
+      requestId: 'req-gemini-user-interaction',
+      provider: 'gemini',
+      phase: 'user-interaction',
+    });
+  });
 });
