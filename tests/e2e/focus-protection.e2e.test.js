@@ -208,11 +208,17 @@ test.describe('Focus Protection E2E', () => {
 
   test('Test 9: Send all button should keep unified input focused', async () => {
     await page.evaluate(() => window.addControlledIframe());
-    await page.evaluate(() => window.setSendFocusStealDelays([100, 1000, 4000, 9000]));
+    await page.evaluate(() => {
+      window.setSendFocusStealDelays([100, 1000, 4000, 9000, 12500]);
+      window.setSendProviderStatusTimeline([
+        { delay: 100, type: 'PANELIZE_PROVIDER_BUSY' },
+        { delay: 13000, type: 'PANELIZE_PROVIDER_IDLE' }
+      ]);
+    });
 
     await page.fill('#unified-input', 'hello');
     await page.click('#send-all-btn');
-    await page.waitForTimeout(10500);
+    await page.waitForTimeout(12800);
 
     const activeId = await page.evaluate(() => window.getActiveElementId());
     expect(activeId).toBe('unified-input');
@@ -263,5 +269,28 @@ test.describe('Focus Protection E2E', () => {
 
     const activeId = await page.evaluate(() => window.getActiveElementId());
     expect(activeId).not.toBe('unified-input');
+  });
+
+  test('Test 13: Provider interaction message should cancel send focus restore', async () => {
+    await page.evaluate(() => window.addControlledIframe());
+    await page.waitForTimeout(3200);
+    await page.evaluate(() => {
+      window.setSendFocusStealDelays([100, 1000, 4000]);
+      window.setSendProviderStatusTimeline([
+        { delay: 100, type: 'PANELIZE_PROVIDER_BUSY' },
+        { delay: 300, type: 'PANELIZE_PROVIDER_USER_INTERACTION' }
+      ]);
+    });
+
+    await page.fill('#unified-input', 'hello');
+    await page.click('#send-all-btn');
+    await page.waitForTimeout(4200);
+
+    const debugState = await page.evaluate(() => window.getSendRestoreDebugState());
+    expect(debugState.pendingTimerCount).toBe(0);
+    expect(debugState.activePanelCount).toBe(0);
+
+    const activeTag = await page.evaluate(() => window.getActiveElementTag());
+    expect(activeTag).toBe('IFRAME');
   });
 });

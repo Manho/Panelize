@@ -34,10 +34,23 @@
     let isRestoringFocusAfterNewChat = false;
     let sendFocusRestoreTimerIds = [];
     let isRestoringFocusAfterSend = false;
+    let activeSendFocusRequestId = null;
+    let sendFocusRequestCounter = 0;
+    let sendFocusActivePanelIds = new Set();
+    let sendFocusBusyDetectionTimeoutIds = new Map();
+    let sendFocusHardTimeoutIds = new Map();
     let newChatFocusStealDelays = [];
     let sendFocusStealDelays = [];
+    let sendProviderStatusTimeline = [];
     let userIntentCancelCount = 0;
     let lastUserIntentCancelTarget = null;
+    const SEND_FOCUS_RESTORE_DELAYS = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
+    const SEND_FOCUS_NO_BUSY_TIMEOUT_MS = 2000;
+    const SEND_FOCUS_HARD_TIMEOUT_MS = 90000;
+    const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
+    const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
+    const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
+    const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 
     function focusUnifiedInput(options = {}) {
       const force = Boolean(options.force);
@@ -69,6 +82,12 @@
     function cancelUnifiedInputFocusRestoreAfterSend() {
       sendFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
       sendFocusRestoreTimerIds = [];
+      sendFocusBusyDetectionTimeoutIds.forEach(timerId => clearTimeout(timerId));
+      sendFocusBusyDetectionTimeoutIds.clear();
+      sendFocusHardTimeoutIds.forEach(timerId => clearTimeout(timerId));
+      sendFocusHardTimeoutIds.clear();
+      sendFocusActivePanelIds.clear();
+      activeSendFocusRequestId = null;
       isRestoringFocusAfterSend = false;
     }
 
@@ -110,26 +129,122 @@
       });
     }
 
-    function restoreUnifiedInputFocusAfterSend() {
+    function createSendFocusRequestId() {
+      sendFocusRequestCounter += 1;
+      return `send-focus-${Date.now()}-${sendFocusRequestCounter}`;
+    }
+
+    function clearSendFocusProviderTimeout(timeoutMap, panelId) {
+      const timerId = timeoutMap.get(panelId);
+      if (typeof timerId === 'number') {
+        clearTimeout(timerId);
+      }
+      timeoutMap.delete(panelId);
+    }
+
+    function maybeStopSendFocusRestore() {
+      if (sendFocusRestoreTimerIds.length > 0) {
+        return;
+      }
+
+      if (sendFocusActivePanelIds.size > 0) {
+        return;
+      }
+
+      cancelUnifiedInputFocusRestoreAfterSend();
+    }
+
+    function getControlledIframePanel() {
+      const iframe = document.querySelector('#iframe-container iframe');
+      if (!iframe || !iframe.contentWindow) {
+        return null;
+      }
+
+      return {
+        id: 'chatgpt-panel',
+        providerId: 'chatgpt',
+        iframe
+      };
+    }
+
+    function scheduleSendFocusBusyDetectionTimeout(panel, requestId) {
+      clearSendFocusProviderTimeout(sendFocusBusyDetectionTimeoutIds, panel.id);
+
+      const timerId = setTimeout(() => {
+        if (activeSendFocusRequestId !== requestId) {
+          return;
+        }
+
+        sendFocusBusyDetectionTimeoutIds.delete(panel.id);
+      }, SEND_FOCUS_NO_BUSY_TIMEOUT_MS);
+
+      sendFocusBusyDetectionTimeoutIds.set(panel.id, timerId);
+    }
+
+    function scheduleSendFocusHardTimeout(panelId, requestId) {
+      clearSendFocusProviderTimeout(sendFocusHardTimeoutIds, panelId);
+
+      const timerId = setTimeout(() => {
+        if (activeSendFocusRequestId !== requestId) {
+          return;
+        }
+
+        sendFocusActivePanelIds.delete(panelId);
+        sendFocusHardTimeoutIds.delete(panelId);
+        maybeStopSendFocusRestore();
+      }, SEND_FOCUS_HARD_TIMEOUT_MS);
+
+      sendFocusHardTimeoutIds.set(panelId, timerId);
+    }
+
+    function handleSendFocusProviderBusy(panelId, requestId) {
+      if (activeSendFocusRequestId !== requestId) {
+        return;
+      }
+
+      clearSendFocusProviderTimeout(sendFocusBusyDetectionTimeoutIds, panelId);
+      sendFocusActivePanelIds.add(panelId);
+      isRestoringFocusAfterSend = true;
+      scheduleSendFocusHardTimeout(panelId, requestId);
+      focusUnifiedInput({ force: true });
+    }
+
+    function handleSendFocusProviderIdle(panelId, requestId) {
+      if (activeSendFocusRequestId !== requestId) {
+        return;
+      }
+
+      clearSendFocusProviderTimeout(sendFocusBusyDetectionTimeoutIds, panelId);
+      clearSendFocusProviderTimeout(sendFocusHardTimeoutIds, panelId);
+      sendFocusActivePanelIds.delete(panelId);
+      maybeStopSendFocusRestore();
+    }
+
+    function restoreUnifiedInputFocusAfterSend(trackedPanels = []) {
       cancelUnifiedInputFocusRestoreAfterSend();
       isRestoringFocusAfterSend = true;
+      activeSendFocusRequestId = createSendFocusRequestId();
+      trackedPanels.forEach((panel) => scheduleSendFocusBusyDetectionTimeout(panel, activeSendFocusRequestId));
 
-      const restoreDelays = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
-      restoreDelays.forEach((delay, index) => {
+      const requestId = activeSendFocusRequestId;
+      SEND_FOCUS_RESTORE_DELAYS.forEach((delay, index) => {
         const timerId = setTimeout(() => {
-          if (!isRestoringFocusAfterSend) {
+          if (!isRestoringFocusAfterSend || activeSendFocusRequestId !== requestId) {
             return;
           }
 
           focusUnifiedInput({ force: true });
 
-          if (index === restoreDelays.length - 1) {
-            cancelUnifiedInputFocusRestoreAfterSend();
+          if (index === SEND_FOCUS_RESTORE_DELAYS.length - 1) {
+            sendFocusRestoreTimerIds = [];
+            maybeStopSendFocusRestore();
           }
         }, delay);
 
         sendFocusRestoreTimerIds.push(timerId);
       });
+
+      return requestId;
     }
 
     function scheduleControlledIframeFocusSteal(delays) {
@@ -152,9 +267,35 @@
       return true;
     }
 
+    function scheduleControlledIframeProviderStatusTimeline(requestId) {
+      const panel = getControlledIframePanel();
+      if (!panel || !panel.iframe.contentWindow) {
+        return;
+      }
+
+      sendProviderStatusTimeline.forEach((entry) => {
+        const delay = Number(entry.delay) || 0;
+        const type = entry.type;
+        setTimeout(() => {
+          if (activeSendFocusRequestId !== requestId || !panel.iframe.contentWindow.reportPanelizeStatus) {
+            return;
+          }
+
+          panel.iframe.contentWindow.reportPanelizeStatus({
+            type,
+            requestId,
+            provider: panel.providerId,
+            context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
+          });
+        }, delay);
+      });
+    }
+
     function sendAll() {
-      restoreUnifiedInputFocusAfterSend();
+      const panel = getControlledIframePanel();
+      const requestId = restoreUnifiedInputFocusAfterSend(panel ? [panel] : []);
       scheduleControlledIframeFocusSteal(sendFocusStealDelays);
+      scheduleControlledIframeProviderStatusTimeline(requestId);
     }
 
     // === Focus protection logic (identical to multi-panel.js) ===
@@ -207,6 +348,26 @@
     document.addEventListener('click', cancelSendFocusRestoreOnUserIntent, true);
     document.addEventListener('focusin', cancelSendFocusRestoreOnUserIntent, true);
     document.addEventListener('keydown', cancelSendFocusRestoreOnUserIntent, true);
+
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || !data.requestId) {
+        return;
+      }
+
+      const panel = getControlledIframePanel();
+      if (!panel || event.source !== panel.iframe.contentWindow) {
+        return;
+      }
+
+      if (data.type === PANELIZE_PROVIDER_BUSY) {
+        handleSendFocusProviderBusy(panel.id, data.requestId);
+      } else if (data.type === PANELIZE_PROVIDER_IDLE) {
+        handleSendFocusProviderIdle(panel.id, data.requestId);
+      } else if (data.type === PANELIZE_PROVIDER_USER_INTERACTION && data.requestId === activeSendFocusRequestId) {
+        cancelUnifiedInputFocusRestoreAfterSend();
+      }
+    });
 
     const preserveNewChatButtonFocus = (event) => {
       event.preventDefault();
@@ -270,7 +431,11 @@
       return new Promise((resolve) => {
         loadingIframeCount++;
         const iframe = document.createElement('iframe');
-        iframe.srcdoc = `<html><body><input id="ai-input" type="text"></body></html>`;
+        iframe.srcdoc = `<html><body><input id="ai-input" type="text"><script>
+          window.reportPanelizeStatus = function(payload) {
+            window.parent.postMessage(payload, '*');
+          };
+        <\/script></body></html>`;
         iframe.addEventListener('load', () => {
           setTimeout(() => {
             loadingIframeCount = Math.max(0, loadingIframeCount - 1);
@@ -291,6 +456,13 @@
 
     window.setSendFocusStealDelays = function(delays) {
       sendFocusStealDelays = Array.isArray(delays) ? delays.slice() : [];
+    };
+
+    window.setSendProviderStatusTimeline = function(entries) {
+      sendProviderStatusTimeline = Array.isArray(entries) ? entries.map((entry) => ({
+        delay: Number(entry.delay) || 0,
+        type: entry.type
+      })) : [];
     };
 
     window.triggerSendAllWithoutText = function() {
@@ -314,6 +486,7 @@
       loadingIframeCount = 0;
       newChatFocusStealDelays = [];
       sendFocusStealDelays = [];
+      sendProviderStatusTimeline = [];
       userIntentCancelCount = 0;
       lastUserIntentCancelTarget = null;
       cancelUnifiedInputFocusRestore();
@@ -333,6 +506,8 @@
       return {
         isRestoringFocusAfterSend,
         pendingTimerCount: sendFocusRestoreTimerIds.length,
+        activePanelCount: sendFocusActivePanelIds.size,
+        activeSendFocusRequestId,
         userIntentCancelCount,
         lastUserIntentCancelTarget
       };

@@ -6,7 +6,15 @@
 
   const GOOGLE_PROVIDER_MODE_AI = 'ai';
   const GOOGLE_PROVIDER_MODE_SEARCH = 'search';
+  const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
+  const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
+  const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
+  const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
+  const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
+  const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
+  const CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS = 2000;
   let googleSearchReplaceOnNextFill = true;
+  let chatgptSendTracking = null;
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
@@ -316,6 +324,169 @@
     return normalizeGoogleProviderMode(mode) === GOOGLE_PROVIDER_MODE_SEARCH
       ? GOOGLE_SEARCH_INPUT_SELECTORS
       : GOOGLE_AI_INPUT_SELECTORS;
+  }
+
+  function postMultiPanelProviderStatus(type, requestId, phase) {
+    if (!requestId || window.parent === window) {
+      return;
+    }
+
+    window.parent.postMessage({
+      type,
+      requestId,
+      provider: 'chatgpt',
+      phase,
+      context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
+    }, '*');
+  }
+
+  function findChatgptBusyButton() {
+    return document.querySelector(CHATGPT_STOP_BUTTON_SELECTOR);
+  }
+
+  function getChatgptComposerRoot() {
+    return document.querySelector('form[data-type="unified-composer"]') ||
+      document.querySelector('#prompt-textarea')?.closest('form') ||
+      document.body;
+  }
+
+  function stopChatgptSendTracking({ reportIdle = false } = {}) {
+    const tracking = chatgptSendTracking;
+    if (!tracking) {
+      return;
+    }
+
+    if (tracking.observer) {
+      tracking.observer.disconnect();
+    }
+
+    if (typeof tracking.idleTimerId === 'number') {
+      clearTimeout(tracking.idleTimerId);
+    }
+
+    if (typeof tracking.noBusyTimerId === 'number') {
+      clearTimeout(tracking.noBusyTimerId);
+    }
+
+    if (tracking.interactionHandler) {
+      document.removeEventListener('pointerdown', tracking.interactionHandler, true);
+      document.removeEventListener('keydown', tracking.interactionHandler, true);
+    }
+
+    const { requestId, phase } = tracking;
+    chatgptSendTracking = null;
+
+    if (reportIdle) {
+      postMultiPanelProviderStatus(PANELIZE_PROVIDER_IDLE, requestId, phase);
+    }
+  }
+
+  function evaluateChatgptSendTrackingState() {
+    const tracking = chatgptSendTracking;
+    if (!tracking) {
+      return;
+    }
+
+    if (findChatgptBusyButton()) {
+      if (typeof tracking.noBusyTimerId === 'number') {
+        clearTimeout(tracking.noBusyTimerId);
+        tracking.noBusyTimerId = null;
+      }
+
+      if (typeof tracking.idleTimerId === 'number') {
+        clearTimeout(tracking.idleTimerId);
+        tracking.idleTimerId = null;
+      }
+
+      if (tracking.phase !== 'busy') {
+        tracking.phase = 'busy';
+        postMultiPanelProviderStatus(PANELIZE_PROVIDER_BUSY, tracking.requestId, tracking.phase);
+      }
+      return;
+    }
+
+    if (tracking.phase !== 'busy' || typeof tracking.idleTimerId === 'number') {
+      return;
+    }
+
+    tracking.idleTimerId = setTimeout(() => {
+      const currentTracking = chatgptSendTracking;
+      if (!currentTracking || currentTracking.requestId !== tracking.requestId) {
+        return;
+      }
+
+      currentTracking.idleTimerId = null;
+      if (findChatgptBusyButton()) {
+        evaluateChatgptSendTrackingState();
+        return;
+      }
+
+      currentTracking.phase = 'idle';
+      stopChatgptSendTracking({ reportIdle: true });
+    }, CHATGPT_SEND_TRACKING_IDLE_DELAY_MS);
+  }
+
+  function startChatgptSendTracking(requestId) {
+    if (!requestId) {
+      return;
+    }
+
+    stopChatgptSendTracking();
+
+    const tracking = {
+      requestId,
+      phase: 'pending',
+      observer: null,
+      idleTimerId: null,
+      noBusyTimerId: null,
+      interactionHandler: null
+    };
+
+    tracking.interactionHandler = (event) => {
+      if (chatgptSendTracking !== tracking || !event.isTrusted) {
+        return;
+      }
+
+      postMultiPanelProviderStatus(PANELIZE_PROVIDER_USER_INTERACTION, tracking.requestId, tracking.phase);
+      stopChatgptSendTracking();
+    };
+
+    document.addEventListener('pointerdown', tracking.interactionHandler, true);
+    document.addEventListener('keydown', tracking.interactionHandler, true);
+
+    const observerTarget = document.body || getChatgptComposerRoot();
+    if (observerTarget) {
+      tracking.observer = new MutationObserver(() => {
+        if (chatgptSendTracking !== tracking) {
+          return;
+        }
+
+        if (typeof tracking.idleTimerId === 'number' && findChatgptBusyButton()) {
+          clearTimeout(tracking.idleTimerId);
+          tracking.idleTimerId = null;
+        }
+
+        evaluateChatgptSendTrackingState();
+      });
+
+      tracking.observer.observe(observerTarget, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['data-testid', 'aria-label', 'disabled', 'aria-disabled']
+      });
+    }
+
+    tracking.noBusyTimerId = setTimeout(() => {
+      if (chatgptSendTracking !== tracking || tracking.phase !== 'pending') {
+        return;
+      }
+
+      stopChatgptSendTracking();
+    }, CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS);
+
+    chatgptSendTracking = tracking;
+    evaluateChatgptSendTrackingState();
   }
 
   function findGoogleInput(mode) {
@@ -868,7 +1039,7 @@
 
   // Handle image injection message
   async function handleImageInjection(event) {
-    const { text, images, autoSubmit } = event.data;
+    const { text, images, autoSubmit, requestId } = event.data;
     const provider = detectProvider();
     const providerMode = provider === 'google'
       ? normalizeGoogleProviderMode(event.data.providerMode)
@@ -904,6 +1075,10 @@
     console.log(`[Image Injection] Injecting ${images.length} images to ${provider}`);
 
     try {
+      if (provider === 'chatgpt' && autoSubmit && requestId) {
+        startChatgptSendTracking(requestId);
+      }
+
       // Inject images first
       for (const image of images) {
         await injectSingleImage(provider, image);
@@ -1282,6 +1457,9 @@
     // Handle CLEAR_INPUT messages
     if (event.data.type === 'CLEAR_INPUT' && event.data.context === 'multi-panel') {
       const provider = detectProvider();
+      if (provider === 'chatgpt') {
+        stopChatgptSendTracking();
+      }
       if (provider) {
         const providerMode = provider === 'google'
           ? normalizeGoogleProviderMode(event.data.providerMode)
@@ -1357,6 +1535,9 @@
         const providerMode = provider === 'google'
           ? normalizeGoogleProviderMode(event.data.providerMode)
           : null;
+        if (provider === 'chatgpt' && event.data.requestId) {
+          startChatgptSendTracking(event.data.requestId);
+        }
         console.log('[Text Injection] Triggering send for', provider);
         clickSendButton(provider, providerMode);
       }
@@ -1366,6 +1547,9 @@
     // Handle NEW_CHAT messages (create new chat)
     if (event.data.type === 'NEW_CHAT' && event.data.context === 'multi-panel') {
       const provider = detectProvider();
+      if (provider === 'chatgpt') {
+        stopChatgptSendTracking();
+      }
       const providerMode = provider === 'google'
         ? normalizeGoogleProviderMode(event.data.providerMode)
         : null;
@@ -1421,6 +1605,14 @@
     const providerMode = provider === 'google'
       ? normalizeGoogleProviderMode(event.data.providerMode)
       : null;
+
+    if (provider === 'chatgpt') {
+      if (shouldAutoSubmit && event.data.requestId) {
+        startChatgptSendTracking(event.data.requestId);
+      } else {
+        stopChatgptSendTracking();
+      }
+    }
 
     if (provider === 'google') {
       const success = handleGoogleTextInjection(text, shouldAutoSubmit, providerMode);

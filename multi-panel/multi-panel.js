@@ -38,6 +38,11 @@ let newChatFocusRestoreTimerIds = [];
 let isRestoringFocusAfterNewChat = false;
 let sendFocusRestoreTimerIds = [];
 let isRestoringFocusAfterSend = false;
+let activeSendFocusRequestId = null;
+let sendFocusRequestCounter = 0;
+let sendFocusActivePanelIds = new Set();
+let sendFocusBusyDetectionTimeoutIds = new Map();
+let sendFocusHardTimeoutIds = new Map();
 let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
 
 // 提示词编辑器状态
@@ -51,6 +56,13 @@ let isPopupWindow = false;   // 当前窗口是否为弹出窗口
 const DEFAULT_PROVIDERS = ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'kimi', 'google'];
 const MAX_PANELS = 7;
 const PENDING_MULTI_PANEL_ACTION_KEY = 'pendingMultiPanelAction';
+const SEND_FOCUS_RESTORE_DELAYS = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
+const SEND_FOCUS_NO_BUSY_TIMEOUT_MS = 2000;
+const SEND_FOCUS_HARD_TIMEOUT_MS = 90000;
+const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
+const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
+const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
+const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const LAYOUT_PANEL_COUNTS = {
   '1x1': 1,
   '1x2': 2,
@@ -131,6 +143,10 @@ function shouldPreserveUnifiedInputFocus() {
 
 function isGoogleProvider(providerId) {
   return providerId === 'google';
+}
+
+function isChatgptProvider(providerId) {
+  return providerId === 'chatgpt';
 }
 
 function getPanelProviderMode(panel) {
@@ -335,6 +351,12 @@ function cancelUnifiedInputFocusRestore() {
 function cancelUnifiedInputFocusRestoreAfterSend() {
   sendFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
   sendFocusRestoreTimerIds = [];
+  sendFocusBusyDetectionTimeoutIds.forEach(timerId => clearTimeout(timerId));
+  sendFocusBusyDetectionTimeoutIds.clear();
+  sendFocusHardTimeoutIds.forEach(timerId => clearTimeout(timerId));
+  sendFocusHardTimeoutIds.clear();
+  sendFocusActivePanelIds.clear();
+  activeSendFocusRequestId = null;
   isRestoringFocusAfterSend = false;
 }
 
@@ -376,26 +398,151 @@ function restoreUnifiedInputFocusAfterNewChat() {
   });
 }
 
-function restoreUnifiedInputFocusAfterSend() {
+function createSendFocusRequestId() {
+  sendFocusRequestCounter += 1;
+  return `send-focus-${Date.now()}-${sendFocusRequestCounter}`;
+}
+
+function clearSendFocusProviderTimeout(timeoutMap, panelId) {
+  const timerId = timeoutMap.get(panelId);
+  if (typeof timerId === 'number') {
+    clearTimeout(timerId);
+  }
+  timeoutMap.delete(panelId);
+}
+
+function maybeStopSendFocusRestore() {
+  if (sendFocusRestoreTimerIds.length > 0) {
+    return;
+  }
+
+  if (sendFocusActivePanelIds.size > 0) {
+    return;
+  }
+
+  cancelUnifiedInputFocusRestoreAfterSend();
+}
+
+function getChatgptPanelsWithFrames() {
+  return panels.filter(panel => (
+    isChatgptProvider(panel.providerId) &&
+    panel.iframe &&
+    panel.iframe.contentWindow
+  ));
+}
+
+function scheduleChatgptBusyDetectionTimeout(panel, requestId) {
+  clearSendFocusProviderTimeout(sendFocusBusyDetectionTimeoutIds, panel.id);
+
+  const timerId = setTimeout(() => {
+    if (activeSendFocusRequestId !== requestId) {
+      return;
+    }
+
+    sendFocusBusyDetectionTimeoutIds.delete(panel.id);
+  }, SEND_FOCUS_NO_BUSY_TIMEOUT_MS);
+
+  sendFocusBusyDetectionTimeoutIds.set(panel.id, timerId);
+}
+
+function scheduleChatgptHardTimeout(panelId, requestId) {
+  clearSendFocusProviderTimeout(sendFocusHardTimeoutIds, panelId);
+
+  const timerId = setTimeout(() => {
+    if (activeSendFocusRequestId !== requestId) {
+      return;
+    }
+
+    console.warn('[Multi-Panel] Releasing send focus protection after ChatGPT hard timeout:', panelId);
+    sendFocusActivePanelIds.delete(panelId);
+    sendFocusHardTimeoutIds.delete(panelId);
+    maybeStopSendFocusRestore();
+  }, SEND_FOCUS_HARD_TIMEOUT_MS);
+
+  sendFocusHardTimeoutIds.set(panelId, timerId);
+}
+
+function handleSendFocusProviderBusy(panel, requestId) {
+  if (activeSendFocusRequestId !== requestId) {
+    return;
+  }
+
+  clearSendFocusProviderTimeout(sendFocusBusyDetectionTimeoutIds, panel.id);
+  sendFocusActivePanelIds.add(panel.id);
+  isRestoringFocusAfterSend = true;
+  scheduleChatgptHardTimeout(panel.id, requestId);
+  focusUnifiedInput({ force: true });
+}
+
+function handleSendFocusProviderIdle(panel, requestId) {
+  if (activeSendFocusRequestId !== requestId) {
+    return;
+  }
+
+  clearSendFocusProviderTimeout(sendFocusBusyDetectionTimeoutIds, panel.id);
+  clearSendFocusProviderTimeout(sendFocusHardTimeoutIds, panel.id);
+  sendFocusActivePanelIds.delete(panel.id);
+  maybeStopSendFocusRestore();
+}
+
+function restoreUnifiedInputFocusAfterSend(trackedPanels = []) {
   cancelUnifiedInputFocusRestoreAfterSend();
   isRestoringFocusAfterSend = true;
+  activeSendFocusRequestId = createSendFocusRequestId();
 
-  const restoreDelays = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
-  restoreDelays.forEach((delay, index) => {
+  trackedPanels.forEach(panel => scheduleChatgptBusyDetectionTimeout(panel, activeSendFocusRequestId));
+
+  const requestId = activeSendFocusRequestId;
+  SEND_FOCUS_RESTORE_DELAYS.forEach((delay, index) => {
     const timerId = setTimeout(() => {
-      if (!isRestoringFocusAfterSend) {
+      if (!isRestoringFocusAfterSend || activeSendFocusRequestId !== requestId) {
         return;
       }
 
       focusUnifiedInput({ force: true });
 
-      if (index === restoreDelays.length - 1) {
-        cancelUnifiedInputFocusRestoreAfterSend();
+      if (index === SEND_FOCUS_RESTORE_DELAYS.length - 1) {
+        sendFocusRestoreTimerIds = [];
+        maybeStopSendFocusRestore();
       }
     }, delay);
 
     sendFocusRestoreTimerIds.push(timerId);
   });
+
+  return requestId;
+}
+
+function handleProviderStatusMessage(event) {
+  const data = event?.data;
+  if (!data || typeof data !== 'object') {
+    return;
+  }
+
+  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || !data.requestId) {
+    return;
+  }
+
+  const panel = panels.find(candidate => candidate.iframe?.contentWindow === event.source);
+  if (!panel || !isChatgptProvider(panel.providerId) || data.provider !== panel.providerId) {
+    return;
+  }
+
+  switch (data.type) {
+    case PANELIZE_PROVIDER_BUSY:
+      handleSendFocusProviderBusy(panel, data.requestId);
+      break;
+    case PANELIZE_PROVIDER_IDLE:
+      handleSendFocusProviderIdle(panel, data.requestId);
+      break;
+    case PANELIZE_PROVIDER_USER_INTERACTION:
+      if (data.requestId === activeSendFocusRequestId) {
+        cancelUnifiedInputFocusRestoreAfterSend();
+      }
+      break;
+    default:
+      break;
+  }
 }
 
 async function getPendingMultiPanelAction() {
@@ -1007,10 +1154,9 @@ async function broadcastMessage(text, autoSubmit = true) {
   // User needs to click "Send All" again to actually send
   // This gives users a chance to verify content before sending
   const shouldAutoSubmit = hasImages ? false : autoSubmit;
-
-  if (shouldAutoSubmit) {
-    restoreUnifiedInputFocusAfterSend();
-  }
+  const sendFocusRequestId = shouldAutoSubmit
+    ? restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames())
+    : null;
 
   try {
     // Disable buttons during send
@@ -1028,7 +1174,7 @@ async function broadcastMessage(text, autoSubmit = true) {
 
     // Send to all panels
     const panelResults = await Promise.allSettled(
-      panels.map(panel => sendToPanel(panel, text, imagesPayload, shouldAutoSubmit))
+      panels.map(panel => sendToPanel(panel, text, imagesPayload, shouldAutoSubmit, sendFocusRequestId))
     );
 
     // Count results (panels only)
@@ -1084,7 +1230,7 @@ async function broadcastMessage(text, autoSubmit = true) {
   }
 }
 
-async function sendToPanel(panel, text, images = [], autoSubmit = true) {
+async function sendToPanel(panel, text, images = [], autoSubmit = true, requestId = null) {
   return new Promise((resolve) => {
     try {
       if (!panel.iframe || !panel.iframe.contentWindow) {
@@ -1102,6 +1248,7 @@ async function sendToPanel(panel, text, images = [], autoSubmit = true) {
         text: text,
         images: images,
         autoSubmit: autoSubmit,
+        requestId: requestId,
         providerMode: getPanelProviderMode(panel),
         context: 'multi-panel'  // Identify this is from multi-panel
       }, '*');
@@ -1258,9 +1405,9 @@ async function triggerSendButtons() {
   const sendBtn = document.getElementById('send-all-btn');
   const fillBtn = document.getElementById('fill-input-btn');
   const statusEl = document.getElementById('send-status');
+  const sendFocusRequestId = restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames());
 
   try {
-    restoreUnifiedInputFocusAfterSend();
     sendBtn.disabled = true;
     fillBtn.disabled = true;
     statusEl.textContent = 'Sending...';
@@ -1271,6 +1418,7 @@ async function triggerSendButtons() {
       if (panel.iframe && panel.iframe.contentWindow) {
         panel.iframe.contentWindow.postMessage({
           type: 'TRIGGER_SEND',
+          requestId: sendFocusRequestId,
           providerMode: getPanelProviderMode(panel),
           context: 'multi-panel'
         }, '*');
@@ -1760,6 +1908,7 @@ function setupEventListeners() {
   document.addEventListener('click', cancelSendFocusRestoreOnUserIntent, true);
   document.addEventListener('focusin', cancelSendFocusRestoreOnUserIntent, true);
   document.addEventListener('keydown', cancelSendFocusRestoreOnUserIntent, true);
+  window.addEventListener('message', handleProviderStatusMessage);
 
   // Layout modal outside click
   document.getElementById('layout-modal').addEventListener('click', (e) => {
