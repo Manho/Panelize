@@ -56,6 +56,8 @@ test.describe('Temporary Chat E2E', () => {
     expect(newChatMessages).toHaveLength(1);
     expect(enableMessages).toHaveLength(2);
     expect(enableMessages.map(entry => entry.delay)).toEqual([1200, 2500]);
+    expect(debugState.isTemporaryChatModeEnabled).toBe(true);
+    expect(debugState.temporaryChatButtonActive).toBe(true);
     expect(debugState.pendingPanelCount).toBe(0);
     expect(debugState.temporaryChatButtonDisabled).toBe(false);
 
@@ -81,7 +83,53 @@ test.describe('Temporary Chat E2E', () => {
 
     expect(newChatMessages).toHaveLength(1);
     expect(enableMessages).toHaveLength(0);
+    expect(debugState.isTemporaryChatModeEnabled).toBe(true);
+    expect(debugState.temporaryChatButtonActive).toBe(true);
     expect(debugState.pendingPanelCount).toBe(0);
     expect(debugState.temporaryChatButtonDisabled).toBe(false);
+  });
+
+  test('clicking the temporary chat button again disables temporary mode', async () => {
+    await page.evaluate(async () => {
+      window.setControlledIframeProvider('gemini');
+      await window.addControlledIframe();
+      window.setTempChatSuccessTimeline([1200]);
+    });
+
+    await page.click('#temporary-chat-btn');
+    await page.waitForTimeout(5200);
+    await page.click('#temporary-chat-btn');
+    await page.waitForTimeout(1200);
+
+    const debugState = await page.evaluate(() => window.getTemporaryChatDebugState());
+    const disableMessages = debugState.messageLog.filter(entry => entry.type === 'DISABLE_TEMP_CHAT');
+
+    expect(debugState.isTemporaryChatModeEnabled).toBe(false);
+    expect(debugState.temporaryChatButtonActive).toBe(false);
+    expect(disableMessages).toEqual([
+      expect.objectContaining({ providerId: 'gemini', source: 'toggle' })
+    ]);
+  });
+
+  test('new chat disables temporary mode when it is active', async () => {
+    await page.evaluate(async () => {
+      window.setControlledIframeProvider('gemini');
+      await window.addControlledIframe();
+      window.setTempChatSuccessTimeline([1200]);
+    });
+
+    await page.click('#temporary-chat-btn');
+    await page.waitForTimeout(5200);
+    await page.click('#new-chat-btn');
+    await page.waitForTimeout(200);
+
+    const debugState = await page.evaluate(() => window.getTemporaryChatDebugState());
+    const disableMessages = debugState.messageLog.filter(entry => entry.type === 'DISABLE_TEMP_CHAT');
+
+    expect(debugState.isTemporaryChatModeEnabled).toBe(false);
+    expect(debugState.temporaryChatButtonActive).toBe(false);
+    expect(disableMessages).toEqual([
+      expect.objectContaining({ providerId: 'gemini', source: 'new-chat' })
+    ]);
   });
 });

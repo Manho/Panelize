@@ -15,12 +15,14 @@
   <label for="unified-input"><strong>Unified Input:</strong></label><br>
   <textarea id="unified-input" rows="2" placeholder="Type here..."></textarea>
   <br>
+  <button id="new-chat-btn" type="button">New Chat for All</button>
   <button id="temporary-chat-btn" type="button">Temporary Chat for All</button>
 
   <div id="iframe-container"></div>
 
   <script>
     const inputTextarea = document.getElementById('unified-input');
+    const newChatBtn = document.getElementById('new-chat-btn');
     const temporaryChatBtn = document.getElementById('temporary-chat-btn');
     const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
     const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
@@ -33,6 +35,7 @@
     let tempChatRetryTimerIds = new Map();
     let tempChatCleanupTimerId = null;
     let tempChatPendingPanelIds = new Set();
+    let isTemporaryChatModeEnabled = false;
     let controlledIframeProviderId = 'chatgpt';
     let tempChatSuccessTimeline = [];
     let tempChatMessageLog = [];
@@ -118,6 +121,16 @@
       temporaryChatBtn.disabled = false;
     }
 
+    function updateTemporaryChatButtonState() {
+      temporaryChatBtn.classList.toggle('active', isTemporaryChatModeEnabled);
+      temporaryChatBtn.setAttribute('aria-pressed', isTemporaryChatModeEnabled ? 'true' : 'false');
+    }
+
+    function setTemporaryChatModeEnabled(enabled) {
+      isTemporaryChatModeEnabled = Boolean(enabled);
+      updateTemporaryChatButtonState();
+    }
+
     function postNewChatToAllPanels() {
       const panel = getControlledIframePanel();
       if (!panel) {
@@ -142,6 +155,15 @@
       tempChatRetryTimerIds.set(panel.id, timerIds);
     }
 
+    function disableTemporaryChatForSupportedPanels(source) {
+      const panel = getControlledIframePanel();
+      if (!panel || !isTemporaryChatSupportedProvider(panel.providerId)) {
+        return;
+      }
+
+      tempChatMessageLog.push({ type: 'DISABLE_TEMP_CHAT', providerId: panel.providerId, source });
+    }
+
     function scheduleTempChatSuccessTimeline() {
       const panel = getControlledIframePanel();
       if (!panel || !panel.iframe.contentWindow) {
@@ -164,7 +186,20 @@
     }
 
     function temporaryChatAllProviders() {
+      if (isTemporaryChatModeEnabled) {
+        cancelTemporaryChatActivation();
+        setTemporaryChatModeEnabled(false);
+        temporaryChatBtn.disabled = true;
+        disableTemporaryChatForSupportedPanels('toggle');
+        restoreUnifiedInputFocusAfterNewChat();
+        setTimeout(() => {
+          temporaryChatBtn.disabled = false;
+        }, 1000);
+        return;
+      }
+
       cancelTemporaryChatActivation();
+      setTemporaryChatModeEnabled(true);
       temporaryChatBtn.disabled = true;
       postNewChatToAllPanels();
       restoreUnifiedInputFocusAfterNewChat();
@@ -181,6 +216,19 @@
       }, TEMP_CHAT_OPERATION_TIMEOUT_MS);
     }
 
+    function newChatAllProviders() {
+      if (isTemporaryChatModeEnabled) {
+        cancelTemporaryChatActivation();
+        setTemporaryChatModeEnabled(false);
+        disableTemporaryChatForSupportedPanels('new-chat');
+      } else {
+        postNewChatToAllPanels();
+      }
+
+      restoreUnifiedInputFocusAfterNewChat();
+    }
+
+    newChatBtn.addEventListener('click', newChatAllProviders);
     temporaryChatBtn.addEventListener('pointerdown', (event) => event.preventDefault());
     temporaryChatBtn.addEventListener('mousedown', (event) => event.preventDefault());
     temporaryChatBtn.addEventListener('click', temporaryChatAllProviders);
@@ -236,8 +284,10 @@
 
     window.getTemporaryChatDebugState = function() {
       return {
+        isTemporaryChatModeEnabled,
         pendingPanelCount: tempChatPendingPanelIds.size,
         temporaryChatButtonDisabled: temporaryChatBtn.disabled,
+        temporaryChatButtonActive: temporaryChatBtn.classList.contains('active'),
         messageLog: tempChatMessageLog.slice()
       };
     };
