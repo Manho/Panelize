@@ -82,7 +82,19 @@
     grok: [],
     deepseek: [],
     kimi: [],  // Kimi supports drag-drop for images
-    google: ['button[aria-label="Add image"]']
+    google: [
+      'button[aria-label="更多输入项"]',
+      'button[aria-label="Upload image"]',
+      'button[aria-label="上传图片"]',
+      'button[aria-label="上传文件"]',
+      'button[aria-label="Add image"]',
+      'button[aria-label="Upload image"]',
+      'button[aria-label="Add"]',
+      'button[title="Add image"]',
+      'button[title="Upload image"]',
+      'button[data-xid*="image"]',
+      'button[data-xid*="upload"]'
+    ]
   };
 
   // Provider-specific send button selectors
@@ -254,6 +266,52 @@
     return null;
   }
 
+  function getElementAccessibleText(element) {
+    return [
+      element?.getAttribute?.('aria-label') || '',
+      element?.getAttribute?.('title') || '',
+      element?.textContent || ''
+    ]
+      .join(' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function findDeepFirstVisibleElement(selectors) {
+    for (const selector of selectors) {
+      try {
+        const elements = querySelectorAllDeep(selector);
+        for (const element of elements) {
+          if (isVisibleElement(element)) {
+            return element;
+          }
+        }
+      } catch (error) {
+        console.warn('[Text Injection] Error finding deep visible element with selector:', selector, error);
+      }
+    }
+
+    return null;
+  }
+
+  function findDeepClickableElementByKeywords(keywords) {
+    const loweredKeywords = keywords.map(keyword => keyword.toLowerCase());
+    const candidates = querySelectorAllDeep('button, [role="button"], [role="menuitem"], label');
+
+    for (const candidate of candidates) {
+      if (!isVisibleElement(candidate)) {
+        continue;
+      }
+
+      const searchableText = getElementAccessibleText(candidate);
+      if (loweredKeywords.some(keyword => searchableText.includes(keyword))) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
   function getGoogleInputSelectors(mode) {
     return normalizeGoogleProviderMode(mode) === GOOGLE_PROVIDER_MODE_SEARCH
       ? GOOGLE_SEARCH_INPUT_SELECTORS
@@ -336,6 +394,100 @@
     searchUrl.searchParams.set('q', normalizedQuery);
     window.location.assign(searchUrl.toString());
     return true;
+  }
+
+  function findGoogleFileInput() {
+    const fileInputs = querySelectorAllDeep('input[type="file"]');
+    let fallbackInput = null;
+
+    for (const input of fileInputs) {
+      const accept = (input.getAttribute('accept') || '').toLowerCase();
+      if (accept && accept.includes('image') && !accept.includes('.pdf') && !accept.includes('application/pdf')) {
+        return input;
+      }
+
+      if (!fallbackInput && (!accept || accept.includes('image') || accept.includes('*'))) {
+        fallbackInput = input;
+      }
+    }
+
+    return fallbackInput;
+  }
+
+  async function openGoogleImagePicker() {
+    const uploadButton = findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.google);
+    if (uploadButton) {
+      uploadButton.click();
+      await sleep(150);
+    }
+
+    let fileInput = findGoogleFileInput();
+    if (fileInput) {
+      return fileInput;
+    }
+
+    const imageMenuAction = findDeepClickableElementByKeywords([
+      '更多输入项',
+      'add image',
+      'upload image',
+      'upload file',
+      'image',
+      'photo',
+      '上传图片',
+      '上传文件',
+      '图片',
+      '照片',
+      '图像'
+    ]);
+
+    if (imageMenuAction) {
+      imageMenuAction.click();
+      await sleep(150);
+    }
+
+    fileInput = findGoogleFileInput();
+    if (fileInput) {
+      return fileInput;
+    }
+
+    const addAction = findDeepClickableElementByKeywords([
+      'add',
+      'attach',
+      'plus',
+      '添加',
+      '附件'
+    ]);
+
+    if (addAction) {
+      addAction.click();
+      await sleep(150);
+    }
+
+    return findGoogleFileInput();
+  }
+
+  function assignFilesToInput(fileInput, files) {
+    if (!fileInput || !files || files.length === 0) {
+      return false;
+    }
+
+    try {
+      const dataTransfer = new DataTransfer();
+      files.forEach(file => dataTransfer.items.add(file));
+      fileInput.files = dataTransfer.files;
+      return true;
+    } catch (error) {
+      try {
+        Object.defineProperty(fileInput, 'files', {
+          configurable: true,
+          value: files
+        });
+        return true;
+      } catch (fallbackError) {
+        console.error('[Image Injection] Failed to assign files to input:', fallbackError);
+        return false;
+      }
+    }
   }
 
   // Find text input element by selector
@@ -936,14 +1088,18 @@
   // Google AI Mode image injection
   async function injectImageToGoogle(imageData) {
     try {
-      // Google AI Mode: find file input
-      const fileInput = document.querySelector('input[type="file"]');
+      let fileInput = findGoogleFileInput();
+      if (!fileInput) {
+        fileInput = await openGoogleImagePicker();
+      }
+
       if (fileInput) {
         const blob = await dataUrlToBlob(imageData.dataUrl);
         const file = new File([blob], imageData.name, { type: imageData.type });
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        fileInput.files = dataTransfer.files;
+        const assigned = assignFilesToInput(fileInput, [file]);
+        if (!assigned) {
+          return false;
+        }
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         console.log('[Image Injection] Google: File input triggered');
         return true;

@@ -179,12 +179,11 @@ function fitPanelSelectWidth(select) {
     (parseFloat(computedStyle.paddingRight) || 0);
   const horizontalBorder = (parseFloat(computedStyle.borderLeftWidth) || 0) +
     (parseFloat(computedStyle.borderRightWidth) || 0);
-  const indicatorAllowance = 30;
-  const safetyAllowance = 14;
+  const safetyAllowance = 6;
 
   select.style.width = `${Math.max(
     72,
-    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + indicatorAllowance + safetyAllowance)
+    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + safetyAllowance)
   )}px`;
 }
 

@@ -49,12 +49,11 @@ function fitSelectWidth(select) {
     (parseFloat(computedStyle.paddingRight) || 0);
   const horizontalBorder = (parseFloat(computedStyle.borderLeftWidth) || 0) +
     (parseFloat(computedStyle.borderRightWidth) || 0);
-  const indicatorAllowance = 34;
-  const safetyAllowance = 18;
+  const safetyAllowance = 8;
 
   select.style.width = `${Math.max(
     56,
-    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + indicatorAllowance + safetyAllowance)
+    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + safetyAllowance)
   )}px`;
 }
 

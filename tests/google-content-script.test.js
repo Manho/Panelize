@@ -47,8 +47,39 @@ function createGoogleSearchDom(initialValue = '') {
   };
 }
 
+function createGoogleAiImageUploadDom() {
+  document.body.innerHTML = `
+    <div class="google-ai-shell">
+      <textarea class="ITIRGe" aria-label="Ask anything"></textarea>
+      <button type="button" aria-label="更多输入项">+</button>
+      <button type="button" data-xid="input-plate-send-button">Send</button>
+    </div>
+  `;
+
+  const aiInput = document.querySelector('textarea.ITIRGe');
+  const addButton = document.querySelector('button[aria-label="更多输入项"]');
+  const sendButton = document.querySelector('button[data-xid="input-plate-send-button"]');
+
+  [aiInput, addButton, sendButton].forEach(markVisible);
+
+  return { aiInput, addButton, sendButton };
+}
+
 describe('google content script integration', () => {
   beforeAll(() => {
+    if (typeof DataTransfer === 'undefined') {
+      globalThis.DataTransfer = class DataTransfer {
+        constructor() {
+          this.files = [];
+          this.items = {
+            add: (file) => {
+              this.files.push(file);
+            }
+          };
+        }
+      };
+    }
+
     window.eval(contentScriptSource);
   });
 
@@ -163,5 +194,48 @@ describe('google content script integration', () => {
     });
 
     expect(searchInput.value).toBe('fresh fill');
+  });
+
+  it('opens the Google AI image picker before assigning uploaded files', async () => {
+    window.happyDOM.setURL('https://www.google.com/search?udm=50');
+    const { addButton } = createGoogleAiImageUploadDom();
+    let changeEventCount = 0;
+
+    addButton.addEventListener('click', () => {
+      if (document.querySelector('input[type="file"]')) {
+        return;
+      }
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'image/*';
+      fileInput.hidden = true;
+      fileInput.style.display = 'none';
+      fileInput.addEventListener('change', () => {
+        changeEventCount += 1;
+      });
+      document.body.appendChild(fileInput);
+    });
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      text: '',
+      images: [{
+        name: 'sample.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII='
+      }],
+      autoSubmit: false,
+      providerMode: 'ai',
+      context: 'multi-panel',
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const fileInput = document.querySelector('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    expect(changeEventCount).toBe(1);
+    expect(fileInput.files).toHaveLength(1);
+    expect(fileInput.files[0].name).toBe('sample.png');
   });
 });
