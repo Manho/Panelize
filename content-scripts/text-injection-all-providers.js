@@ -304,7 +304,7 @@
       return normalizedNext;
     }
 
-    return `${normalizedCurrent} ${normalizedNext}`.trim();
+    return `${normalizedCurrent}${normalizedNext}`.trim();
   }
 
   function clearGoogleInput(mode) {

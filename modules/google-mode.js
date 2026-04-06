@@ -47,7 +47,7 @@ export function buildGoogleSearchFillValue(currentValue, nextText, replaceOnNext
     return normalizedNext;
   }
 
-  return `${normalizedCurrent} ${normalizedNext}`.trim();
+  return `${normalizedCurrent}${normalizedNext}`.trim();
 }
 
 /**

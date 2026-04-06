@@ -98,7 +98,7 @@ describe('google content script integration', () => {
       providerMode: 'search',
       context: 'multi-panel',
     });
-    expect(searchInput.value).toBe('first fill second fill');
+    expect(searchInput.value).toBe('first fillsecond fill');
   });
 
   it('resets the search fill session after sending', () => {

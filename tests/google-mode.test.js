@@ -26,7 +26,7 @@ describe('google-mode helpers', () => {
   });
 
   it('builds search fill values by appending after the first fill', () => {
-    expect(buildGoogleSearchFillValue('first query', 'second query', false)).toBe('first query second query');
+    expect(buildGoogleSearchFillValue('first query', 'second query', false)).toBe('first querysecond query');
   });
 
   it('returns stable labels for dropdown controls', () => {
