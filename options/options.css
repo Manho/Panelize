@@ -317,6 +317,16 @@ select:focus {
   color: #333;
 }
 
+.provider-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.provider-controls .google-mode-select {
+  min-width: 120px;
+}
+
 /* Data Management Section */
 .data-stats {
   background: #f9f9f9;

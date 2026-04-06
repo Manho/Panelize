@@ -415,7 +415,19 @@ body {
 
 .panel-header-right {
   display: flex;
+  align-items: center;
   gap: 4px;
+}
+
+.panel-google-mode-select {
+  height: 24px;
+  min-width: 78px;
+  padding: 0 6px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+  font-size: 12px;
 }
 
 .panel-header-right button {
@@ -1154,6 +1166,12 @@ body {
 
 [data-theme="dark"] .panel-header-right button {
   color: #aaa;
+}
+
+[data-theme="dark"] .panel-google-mode-select {
+  background: #333;
+  border-color: #555;
+  color: #e0e0e0;
 }
 
 [data-theme="dark"] .panel-header-right button:hover {
