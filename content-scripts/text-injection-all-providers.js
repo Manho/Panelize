@@ -135,14 +135,6 @@
     ]
   };
 
-  const GOOGLE_SEARCH_BUTTON_SELECTORS = [
-    'button[aria-label="Google Search"]',
-    'button[name="btnK"]',
-    'button[aria-label="Search"]',
-    'button[type="submit"]',
-    'form button[jsname]'
-  ];
-
   // Provider-specific new chat button selectors and URLs
   const NEW_CHAT_BUTTON_SELECTORS = {
     chatgpt: [
@@ -334,6 +326,18 @@
     return true;
   }
 
+  function navigateToGoogleSearchResults(query) {
+    const normalizedQuery = (query || '').trim();
+    if (!normalizedQuery) {
+      return false;
+    }
+
+    const searchUrl = new URL('/search', window.location.origin);
+    searchUrl.searchParams.set('q', normalizedQuery);
+    window.location.assign(searchUrl.toString());
+    return true;
+  }
+
   // Find text input element by selector
   function findTextInputElement(selector) {
     if (!selector || typeof selector !== 'string') {
@@ -357,41 +361,14 @@
         console.warn('[Text Injection] Google Search input not found');
         return false;
       }
-
-      const form = input.form ||
-                   input.closest('form') ||
-                   document.querySelector('form[role="search"]') ||
-                   document.querySelector('form[action="/search"]');
-
-      const searchButton = findFirstVisibleElement(GOOGLE_SEARCH_BUTTON_SELECTORS);
-      if (searchButton && !searchButton.disabled && searchButton.getAttribute('aria-disabled') !== 'true') {
-        console.log('[Text Injection] Clicking Google search button');
-        resetGoogleSearchFillSession();
-        searchButton.click();
-        return true;
+      const query = (input.value || '').trim();
+      if (!query) {
+        return false;
       }
 
-      if (form) {
-        console.log('[Text Injection] Submitting Google search form');
-        resetGoogleSearchFillSession();
-        if (typeof form.requestSubmit === 'function') {
-          form.requestSubmit();
-        } else {
-          form.submit();
-        }
-        return true;
-      }
-
-      input.focus();
-      const events = [
-        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
-        new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
-        new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })
-      ];
-
-      events.forEach(event => input.dispatchEvent(event));
+      console.log('[Text Injection] Navigating Google Search mode to results page');
       resetGoogleSearchFillSession();
-      return true;
+      return navigateToGoogleSearchResults(query);
     }
 
     const sendButton = findFirstVisibleElement(SEND_BUTTON_SELECTORS.google);

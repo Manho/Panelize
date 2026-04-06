@@ -102,8 +102,8 @@ describe('google content script integration', () => {
   });
 
   it('resets the search fill session after sending', () => {
-    const { searchButton, searchInput } = createGoogleSearchDom('old query');
-    searchButton.click = vi.fn();
+    const { searchInput } = createGoogleSearchDom('old query');
+    const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
 
     dispatchMultiPanelMessage({
       type: 'INJECT_TEXT',
@@ -119,7 +119,8 @@ describe('google content script integration', () => {
       context: 'multi-panel',
     });
 
-    expect(searchButton.click).toHaveBeenCalledTimes(1);
+    expect(assignSpy).toHaveBeenCalledTimes(1);
+    expect(assignSpy.mock.calls[0][0]).toContain('/search?q=first+fill');
     expect(searchInput.value).toBe('first fill');
 
     dispatchMultiPanelMessage({
