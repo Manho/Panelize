@@ -36,6 +36,8 @@ let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
 let loadingIframeCount = 0; // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
 let isRestoringFocusAfterNewChat = false;
+let sendFocusRestoreTimerIds = [];
+let isRestoringFocusAfterSend = false;
 let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
 
 // 提示词编辑器状态
@@ -121,6 +123,10 @@ function focusUnifiedInput({ force = false } = {}) {
       inputTextarea.focus();
     }
   });
+}
+
+function shouldPreserveUnifiedInputFocus() {
+  return loadingIframeCount > 0 || isRestoringFocusAfterNewChat || isRestoringFocusAfterSend;
 }
 
 function isGoogleProvider(providerId) {
@@ -326,12 +332,26 @@ function cancelUnifiedInputFocusRestore() {
   isRestoringFocusAfterNewChat = false;
 }
 
+function cancelUnifiedInputFocusRestoreAfterSend() {
+  sendFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
+  sendFocusRestoreTimerIds = [];
+  isRestoringFocusAfterSend = false;
+}
+
 function isUnifiedInputOrNewChatControl(target) {
   if (!(target instanceof Element)) {
     return false;
   }
 
   return Boolean(target.closest('#unified-input, #new-chat-btn'));
+}
+
+function isUnifiedInputOrSendControl(target) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(target.closest('#unified-input, #send-all-btn'));
 }
 
 function restoreUnifiedInputFocusAfterNewChat() {
@@ -353,6 +373,28 @@ function restoreUnifiedInputFocusAfterNewChat() {
     }, delay);
 
     newChatFocusRestoreTimerIds.push(timerId);
+  });
+}
+
+function restoreUnifiedInputFocusAfterSend() {
+  cancelUnifiedInputFocusRestoreAfterSend();
+  isRestoringFocusAfterSend = true;
+
+  const restoreDelays = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
+  restoreDelays.forEach((delay, index) => {
+    const timerId = setTimeout(() => {
+      if (!isRestoringFocusAfterSend) {
+        return;
+      }
+
+      focusUnifiedInput({ force: true });
+
+      if (index === restoreDelays.length - 1) {
+        cancelUnifiedInputFocusRestoreAfterSend();
+      }
+    }, delay);
+
+    sendFocusRestoreTimerIds.push(timerId);
   });
 }
 
@@ -966,6 +1008,10 @@ async function broadcastMessage(text, autoSubmit = true) {
   // This gives users a chance to verify content before sending
   const shouldAutoSubmit = hasImages ? false : autoSubmit;
 
+  if (shouldAutoSubmit) {
+    restoreUnifiedInputFocusAfterSend();
+  }
+
   try {
     // Disable buttons during send
     sendBtn.disabled = true;
@@ -1214,6 +1260,7 @@ async function triggerSendButtons() {
   const statusEl = document.getElementById('send-status');
 
   try {
+    restoreUnifiedInputFocusAfterSend();
     sendBtn.disabled = true;
     fillBtn.disabled = true;
     statusEl.textContent = 'Sending...';
@@ -1622,8 +1669,16 @@ function setupEventListeners() {
     broadcastMessage(input.value, false);
   });
 
+  const sendAllBtn = document.getElementById('send-all-btn');
+  const preserveSendAllButtonFocus = (event) => {
+    event.preventDefault();
+  };
+
+  sendAllBtn.addEventListener('pointerdown', preserveSendAllButtonFocus);
+  sendAllBtn.addEventListener('mousedown', preserveSendAllButtonFocus);
+
   // Send All button (fill + auto-send)
-  document.getElementById('send-all-btn').addEventListener('click', () => {
+  sendAllBtn.addEventListener('click', () => {
     const input = document.getElementById('unified-input');
     broadcastMessage(input.value, true);
   });
@@ -1663,10 +1718,9 @@ function setupEventListeners() {
   });
 
   // Prevent iframes from stealing focus from unified input during page load.
-  // Only active while iframes are still loading. Once all panels are loaded,
-  // the user can freely click into any AI page's input field.
+  // Also active during post-send and post-new-chat restore windows.
   inputTextarea.addEventListener('blur', () => {
-    if (loadingIframeCount > 0) {
+    if (shouldPreserveUnifiedInputFocus()) {
       focusUnifiedInput();
     }
   });
@@ -1688,6 +1742,24 @@ function setupEventListeners() {
   document.addEventListener('click', cancelNewChatFocusRestoreOnUserIntent, true);
   document.addEventListener('focusin', cancelNewChatFocusRestoreOnUserIntent, true);
   document.addEventListener('keydown', cancelNewChatFocusRestoreOnUserIntent, true);
+
+  const cancelSendFocusRestoreOnUserIntent = (event) => {
+    if (!isRestoringFocusAfterSend) {
+      return;
+    }
+
+    if (isUnifiedInputOrSendControl(event.target)) {
+      return;
+    }
+
+    cancelUnifiedInputFocusRestoreAfterSend();
+  };
+
+  document.addEventListener('pointerdown', cancelSendFocusRestoreOnUserIntent, true);
+  document.addEventListener('mousedown', cancelSendFocusRestoreOnUserIntent, true);
+  document.addEventListener('click', cancelSendFocusRestoreOnUserIntent, true);
+  document.addEventListener('focusin', cancelSendFocusRestoreOnUserIntent, true);
+  document.addEventListener('keydown', cancelSendFocusRestoreOnUserIntent, true);
 
   // Layout modal outside click
   document.getElementById('layout-modal').addEventListener('click', (e) => {
