@@ -26,6 +26,8 @@ let currentLayout = '1x3';
 let panels = []; // Array of { id, providerId, iframe, state }
 let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
 let loadingIframeCount = 0; // Track iframes still loading, used for focus protection
+let newChatFocusRestoreTimerIds = [];
+let isRestoringFocusAfterNewChat = false;
 
 // 提示词编辑器状态
 let currentEditingPromptId = null;
@@ -108,6 +110,42 @@ function focusUnifiedInput({ force = false } = {}) {
     } catch {
       inputTextarea.focus();
     }
+  });
+}
+
+function cancelUnifiedInputFocusRestore() {
+  newChatFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
+  newChatFocusRestoreTimerIds = [];
+  isRestoringFocusAfterNewChat = false;
+}
+
+function isUnifiedInputOrNewChatControl(target) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(target.closest('#unified-input, #new-chat-btn'));
+}
+
+function restoreUnifiedInputFocusAfterNewChat() {
+  cancelUnifiedInputFocusRestore();
+  isRestoringFocusAfterNewChat = true;
+
+  const restoreDelays = [0, 80, 200, 400, 800, 1000, 1200, 1500];
+  restoreDelays.forEach((delay, index) => {
+    const timerId = setTimeout(() => {
+      if (!isRestoringFocusAfterNewChat) {
+        return;
+      }
+
+      focusUnifiedInput({ force: true });
+
+      if (index === restoreDelays.length - 1) {
+        cancelUnifiedInputFocusRestore();
+      }
+    }, delay);
+
+    newChatFocusRestoreTimerIds.push(timerId);
   });
 }
 
@@ -528,6 +566,14 @@ async function addPanel(providerId) {
   // Get iframe reference
   const iframe = panelEl.querySelector('iframe');
   const loadingEl = panelEl.querySelector('.panel-loading');
+
+  const cancelNewChatRestoreFromIframe = () => {
+    if (isRestoringFocusAfterNewChat) {
+      cancelUnifiedInputFocusRestore();
+    }
+  };
+  iframe.addEventListener('focus', cancelNewChatRestoreFromIframe);
+  iframe.addEventListener('pointerdown', cancelNewChatRestoreFromIframe);
 
   // Handle iframe load
   // Grace period after load to catch AI pages that auto-focus after JS init
@@ -956,6 +1002,7 @@ async function newChatAllProviders() {
     }
   });
 
+  restoreUnifiedInputFocusAfterNewChat();
   showToast('New chat created for all AIs');
 
   // Re-enable button
@@ -1248,7 +1295,13 @@ function setupEventListeners() {
   document.getElementById('toolbar-expand-bar').addEventListener('click', toggleToolbar);
 
   // New Chat button
-  document.getElementById('new-chat-btn').addEventListener('click', newChatAllProviders);
+  const newChatBtn = document.getElementById('new-chat-btn');
+  const preserveNewChatButtonFocus = (event) => {
+    event.preventDefault();
+  };
+  newChatBtn.addEventListener('pointerdown', preserveNewChatButtonFocus);
+  newChatBtn.addEventListener('mousedown', preserveNewChatButtonFocus);
+  newChatBtn.addEventListener('click', newChatAllProviders);
 
   // Settings button
   document.getElementById('settings-btn').addEventListener('click', () => {
@@ -1420,6 +1473,24 @@ function setupEventListeners() {
       focusUnifiedInput();
     }
   });
+
+  const cancelNewChatFocusRestoreOnUserIntent = (event) => {
+    if (!isRestoringFocusAfterNewChat) {
+      return;
+    }
+
+    if (isUnifiedInputOrNewChatControl(event.target)) {
+      return;
+    }
+
+    cancelUnifiedInputFocusRestore();
+  };
+
+  document.addEventListener('pointerdown', cancelNewChatFocusRestoreOnUserIntent, true);
+  document.addEventListener('mousedown', cancelNewChatFocusRestoreOnUserIntent, true);
+  document.addEventListener('click', cancelNewChatFocusRestoreOnUserIntent, true);
+  document.addEventListener('focusin', cancelNewChatFocusRestoreOnUserIntent, true);
+  document.addEventListener('keydown', cancelNewChatFocusRestoreOnUserIntent, true);
 
   // Layout modal outside click
   document.getElementById('layout-modal').addEventListener('click', (e) => {
