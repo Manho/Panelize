@@ -43,6 +43,9 @@ let sendFocusRequestCounter = 0;
 let sendFocusActivePanelIds = new Set();
 let sendFocusBusyDetectionTimeoutIds = new Map();
 let sendFocusHardTimeoutIds = new Map();
+let tempChatRetryTimerIds = new Map();
+let tempChatCleanupTimerId = null;
+let tempChatPendingPanelIds = new Set();
 let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
 
 // 提示词编辑器状态
@@ -63,6 +66,10 @@ const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
 const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
 const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
+const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
+const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
+const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
+const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok']);
 const LAYOUT_PANEL_COUNTS = {
   '1x1': 1,
   '1x2': 2,
@@ -147,6 +154,10 @@ function isGoogleProvider(providerId) {
 
 function isChatgptProvider(providerId) {
   return providerId === 'chatgpt';
+}
+
+function isTemporaryChatSupportedProvider(providerId) {
+  return TEMP_CHAT_SUPPORTED_PROVIDERS.has(providerId);
 }
 
 function getPanelProviderMode(panel) {
@@ -360,12 +371,42 @@ function cancelUnifiedInputFocusRestoreAfterSend() {
   isRestoringFocusAfterSend = false;
 }
 
+function setTemporaryChatButtonDisabled(disabled) {
+  const temporaryChatBtn = document.getElementById('temporary-chat-btn');
+  if (temporaryChatBtn) {
+    temporaryChatBtn.disabled = disabled;
+  }
+}
+
+function clearTemporaryChatRetriesForPanel(panelId) {
+  const timerIds = tempChatRetryTimerIds.get(panelId) || [];
+  timerIds.forEach(timerId => clearTimeout(timerId));
+  tempChatRetryTimerIds.delete(panelId);
+}
+
+function cancelTemporaryChatActivation({ restoreButton = true } = {}) {
+  tempChatRetryTimerIds.forEach((timerIds) => {
+    timerIds.forEach(timerId => clearTimeout(timerId));
+  });
+  tempChatRetryTimerIds.clear();
+  tempChatPendingPanelIds.clear();
+
+  if (typeof tempChatCleanupTimerId === 'number') {
+    clearTimeout(tempChatCleanupTimerId);
+  }
+  tempChatCleanupTimerId = null;
+
+  if (restoreButton) {
+    setTemporaryChatButtonDisabled(false);
+  }
+}
+
 function isUnifiedInputOrNewChatControl(target) {
   if (!(target instanceof Element)) {
     return false;
   }
 
-  return Boolean(target.closest('#unified-input, #new-chat-btn'));
+  return Boolean(target.closest('#unified-input, #new-chat-btn, #temporary-chat-btn'));
 }
 
 function isUnifiedInputOrSendControl(target) {
@@ -519,7 +560,8 @@ function handleProviderStatusMessage(event) {
     return;
   }
 
-  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || !data.requestId) {
+  const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
+  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage)) {
     return;
   }
 
@@ -545,6 +587,13 @@ function handleProviderStatusMessage(event) {
       if (data.requestId === activeSendFocusRequestId) {
         cancelUnifiedInputFocusRestoreAfterSend();
       }
+      break;
+    case PANELIZE_TEMP_CHAT_ENABLED:
+      if (!tempChatPendingPanelIds.has(panel.id)) {
+        return;
+      }
+      clearTemporaryChatRetriesForPanel(panel.id);
+      tempChatPendingPanelIds.delete(panel.id);
       break;
     default:
       break;
@@ -1268,6 +1317,18 @@ async function sendToPanel(panel, text, images = [], autoSubmit = true, requestI
   });
 }
 
+function postNewChatToAllPanels() {
+  panels.forEach(panel => {
+    if (panel.iframe && panel.iframe.contentWindow) {
+      panel.iframe.contentWindow.postMessage({
+        type: 'NEW_CHAT',
+        providerMode: getPanelProviderMode(panel),
+        context: 'multi-panel'
+      }, '*');
+    }
+  });
+}
+
 // Clear all input boxes (unified input + all panels)
 async function clearAllInputs() {
   // Clear unified input
@@ -1386,16 +1447,7 @@ async function newChatAllProviders() {
   // Disable button during operation
   newChatBtn.disabled = true;
 
-  // Send NEW_CHAT message to all panels
-  panels.forEach(panel => {
-    if (panel.iframe && panel.iframe.contentWindow) {
-      panel.iframe.contentWindow.postMessage({
-        type: 'NEW_CHAT',
-        providerMode: getPanelProviderMode(panel),
-        context: 'multi-panel'
-      }, '*');
-    }
-  });
+  postNewChatToAllPanels();
 
   restoreUnifiedInputFocusAfterNewChat();
   showToast('New chat created for all AIs');
@@ -1404,6 +1456,46 @@ async function newChatAllProviders() {
   setTimeout(() => {
     newChatBtn.disabled = false;
   }, 1000);
+}
+
+function scheduleTemporaryChatRetry(panel, delay) {
+  const timerId = setTimeout(() => {
+    if (!tempChatPendingPanelIds.has(panel.id) || !panel.iframe || !panel.iframe.contentWindow) {
+      return;
+    }
+
+    focusUnifiedInput({ force: true });
+    panel.iframe.contentWindow.postMessage({
+      type: 'ENABLE_TEMP_CHAT',
+      providerMode: getPanelProviderMode(panel),
+      context: 'multi-panel'
+    }, '*');
+  }, delay);
+
+  const timerIds = tempChatRetryTimerIds.get(panel.id) || [];
+  timerIds.push(timerId);
+  tempChatRetryTimerIds.set(panel.id, timerIds);
+}
+
+async function temporaryChatAllProviders() {
+  cancelTemporaryChatActivation({ restoreButton: false });
+  setTemporaryChatButtonDisabled(true);
+
+  postNewChatToAllPanels();
+  restoreUnifiedInputFocusAfterNewChat();
+
+  panels
+    .filter(panel => isTemporaryChatSupportedProvider(panel.providerId))
+    .forEach(panel => {
+      tempChatPendingPanelIds.add(panel.id);
+      TEMP_CHAT_RETRY_DELAYS.forEach(delay => scheduleTemporaryChatRetry(panel, delay));
+    });
+
+  tempChatCleanupTimerId = setTimeout(() => {
+    cancelTemporaryChatActivation();
+  }, TEMP_CHAT_OPERATION_TIMEOUT_MS);
+
+  showToast('Temporary chat enabled where supported');
 }
 
 // Trigger send buttons only (no text injection) - used after Fill
@@ -1700,6 +1792,15 @@ function setupEventListeners() {
   newChatBtn.addEventListener('pointerdown', preserveNewChatButtonFocus);
   newChatBtn.addEventListener('mousedown', preserveNewChatButtonFocus);
   newChatBtn.addEventListener('click', newChatAllProviders);
+
+  // Temporary Chat button
+  const temporaryChatBtn = document.getElementById('temporary-chat-btn');
+  const preserveTemporaryChatButtonFocus = (event) => {
+    event.preventDefault();
+  };
+  temporaryChatBtn.addEventListener('pointerdown', preserveTemporaryChatButtonFocus);
+  temporaryChatBtn.addEventListener('mousedown', preserveTemporaryChatButtonFocus);
+  temporaryChatBtn.addEventListener('click', temporaryChatAllProviders);
 
   // Settings button
   document.getElementById('settings-btn').addEventListener('click', () => {
