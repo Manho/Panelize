@@ -31,6 +31,6 @@ describe('google-mode helpers', () => {
 
   it('returns stable labels for dropdown controls', () => {
     expect(getGoogleProviderModeLabel(GOOGLE_PROVIDER_MODE_AI)).toBe('AI Mode');
-    expect(getGoogleProviderModeLabel(GOOGLE_PROVIDER_MODE_SEARCH)).toBe('Search Mode');
+    expect(getGoogleProviderModeLabel(GOOGLE_PROVIDER_MODE_SEARCH)).toBe('Search');
   });
 });

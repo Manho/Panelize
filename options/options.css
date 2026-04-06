@@ -196,7 +196,9 @@ select {
   font-size: 14px;
   background: white;
   cursor: pointer;
-  min-width: 150px;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 select:focus {
@@ -324,7 +326,7 @@ select:focus {
 }
 
 .provider-controls .google-mode-select {
-  min-width: 120px;
+  max-width: 100%;
 }
 
 /* Data Management Section */

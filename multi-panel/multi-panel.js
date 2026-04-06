@@ -146,10 +146,36 @@ function getGoogleModeSelectHtml(mode = currentGoogleProviderMode) {
   const normalizedMode = normalizeGoogleProviderMode(mode);
   return `
     <select class="panel-google-mode-select" title="Google mode">
-      <option value="${GOOGLE_PROVIDER_MODE_AI}" ${normalizedMode === GOOGLE_PROVIDER_MODE_AI ? 'selected' : ''}>AI</option>
+      <option value="${GOOGLE_PROVIDER_MODE_AI}" ${normalizedMode === GOOGLE_PROVIDER_MODE_AI ? 'selected' : ''}>AI Mode</option>
       <option value="${GOOGLE_PROVIDER_MODE_SEARCH}" ${normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH ? 'selected' : ''}>Search</option>
     </select>
   `;
+}
+
+function fitPanelSelectWidth(select) {
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const selectedOption = select.options[select.selectedIndex];
+  const text = selectedOption?.textContent || select.value || '';
+  const sizingProbe = document.createElement('span');
+  const computedStyle = window.getComputedStyle(select);
+
+  sizingProbe.textContent = text;
+  sizingProbe.style.position = 'absolute';
+  sizingProbe.style.visibility = 'hidden';
+  sizingProbe.style.whiteSpace = 'pre';
+  sizingProbe.style.font = computedStyle.font;
+  sizingProbe.style.fontSize = computedStyle.fontSize;
+  sizingProbe.style.fontWeight = computedStyle.fontWeight;
+  sizingProbe.style.letterSpacing = computedStyle.letterSpacing;
+
+  document.body.appendChild(sizingProbe);
+  const measuredWidth = Math.ceil(sizingProbe.getBoundingClientRect().width);
+  sizingProbe.remove();
+
+  select.style.width = `${Math.max(72, measuredWidth + 34)}px`;
 }
 
 function getPanelHeaderRightHtml(providerId) {
@@ -173,6 +199,7 @@ function syncGoogleModeControls() {
     if (select.value !== currentGoogleProviderMode) {
       select.value = currentGoogleProviderMode;
     }
+    fitPanelSelectWidth(select);
   });
 }
 
@@ -227,6 +254,7 @@ function bindPanelHeaderActions(panelId) {
 
   const googleModeSelect = panelEl.querySelector('.panel-google-mode-select');
   if (googleModeSelect) {
+    fitPanelSelectWidth(googleModeSelect);
     googleModeSelect.addEventListener('click', (event) => {
       event.stopPropagation();
     });
@@ -234,6 +262,7 @@ function bindPanelHeaderActions(panelId) {
       event.stopPropagation();
     });
     googleModeSelect.addEventListener('change', async (event) => {
+      fitPanelSelectWidth(event.target);
       await updateGoogleProviderMode(event.target.value, { persist: true, reloadPanels: true });
     });
   }

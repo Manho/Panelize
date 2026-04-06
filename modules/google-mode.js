@@ -57,6 +57,6 @@ export function buildGoogleSearchFillValue(currentValue, nextText, replaceOnNext
  */
 export function getGoogleProviderModeLabel(mode) {
   return normalizeGoogleProviderMode(mode) === GOOGLE_PROVIDER_MODE_SEARCH
-    ? 'Search Mode'
+    ? 'Search'
     : 'AI Mode';
 }
