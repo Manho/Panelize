@@ -175,7 +175,17 @@ function fitPanelSelectWidth(select) {
   const measuredWidth = Math.ceil(sizingProbe.getBoundingClientRect().width);
   sizingProbe.remove();
 
-  select.style.width = `${Math.max(72, measuredWidth + 34)}px`;
+  const horizontalPadding = (parseFloat(computedStyle.paddingLeft) || 0) +
+    (parseFloat(computedStyle.paddingRight) || 0);
+  const horizontalBorder = (parseFloat(computedStyle.borderLeftWidth) || 0) +
+    (parseFloat(computedStyle.borderRightWidth) || 0);
+  const indicatorAllowance = 30;
+  const safetyAllowance = 14;
+
+  select.style.width = `${Math.max(
+    72,
+    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + indicatorAllowance + safetyAllowance)
+  )}px`;
 }
 
 function getPanelHeaderRightHtml(providerId) {

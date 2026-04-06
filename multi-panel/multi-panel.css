@@ -427,6 +427,7 @@ body {
   background: #fff;
   color: #333;
   font-size: 12px;
+  box-sizing: border-box;
   width: auto;
   min-width: 0;
   max-width: 100%;

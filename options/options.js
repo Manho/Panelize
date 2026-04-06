@@ -45,7 +45,17 @@ function fitSelectWidth(select) {
   const measuredWidth = Math.ceil(sizingProbe.getBoundingClientRect().width);
   sizingProbe.remove();
 
-  select.style.width = `${Math.max(56, measuredWidth + 40)}px`;
+  const horizontalPadding = (parseFloat(computedStyle.paddingLeft) || 0) +
+    (parseFloat(computedStyle.paddingRight) || 0);
+  const horizontalBorder = (parseFloat(computedStyle.borderLeftWidth) || 0) +
+    (parseFloat(computedStyle.borderRightWidth) || 0);
+  const indicatorAllowance = 34;
+  const safetyAllowance = 18;
+
+  select.style.width = `${Math.max(
+    56,
+    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + indicatorAllowance + safetyAllowance)
+  )}px`;
 }
 
 function setupAutoSizedSelect(select) {

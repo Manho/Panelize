@@ -196,6 +196,7 @@ select {
   font-size: 14px;
   background: white;
   cursor: pointer;
+  box-sizing: border-box;
   width: auto;
   min-width: 0;
   max-width: 100%;
