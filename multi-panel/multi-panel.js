@@ -33,7 +33,7 @@ import {
 let currentLayout = '1x3';
 let panels = []; // Array of { id, providerId, iframe, state }
 let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
-let loadingIframeCount = 0; // Track iframes still loading, used for focus protection
+let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
 let isRestoringFocusAfterNewChat = false;
 let sendFocusRestoreTimerIds = [];
@@ -158,7 +158,7 @@ function focusUnifiedInput({ force = false } = {}) {
 }
 
 function shouldPreserveUnifiedInputFocus() {
-  return loadingIframeCount > 0 || isRestoringFocusAfterNewChat || isRestoringFocusAfterSend;
+  return loadingPanelIds.size > 0 || isRestoringFocusAfterNewChat || isRestoringFocusAfterSend;
 }
 
 function isGoogleProvider(providerId) {
@@ -308,7 +308,7 @@ function reloadPanelIframe(panel, overrideUrl = null) {
   }
 
   showPanelLoadingState(panelEl, provider);
-  loadingIframeCount++;
+  loadingPanelIds.add(panel.id);
   iframe.src = overrideUrl || getProviderFrameUrl(panel.providerId);
   panel.iframe = iframe;
 }
@@ -1088,20 +1088,21 @@ async function addPanel(providerId) {
   // Handle iframe load
   // Grace period after load to catch AI pages that auto-focus after JS init
   const LOAD_GRACE_PERIOD = 3000;
-  loadingIframeCount++;
+  loadingPanelIds.add(panelId);
   iframe.addEventListener('load', () => {
     loadingEl.classList.add('hidden');
-    if (isTemporaryChatModeEnabled && panel.providerId === 'gemini') {
+    const panel = panels.find(p => p.id === panelId);
+    if (isTemporaryChatModeEnabled && panel && panel.providerId === 'gemini') {
       startTemporaryChatActivationForPanel(panel);
     }
     setTimeout(() => {
-      loadingIframeCount = Math.max(0, loadingIframeCount - 1);
+      loadingPanelIds.delete(panelId);
     }, LOAD_GRACE_PERIOD);
   });
 
   iframe.addEventListener('error', () => {
     loadingEl.innerHTML = `<img src="${provider.icon}" alt="${provider.name}" class="loading-icon"><span class="loading-text">Failed to load ${provider.name}</span>`;
-    loadingIframeCount = Math.max(0, loadingIframeCount - 1);
+    loadingPanelIds.delete(panelId);
   });
 
   // Add to panels array
@@ -1131,8 +1132,9 @@ function removePanel(panelId) {
     panelEl.remove();
   }
 
-  // Remove from array
+  // Remove from arrays and sets
   panels.splice(panelIndex, 1);
+  loadingPanelIds.delete(panelId);
 
   // Auto-shrink layout if applicable
   const shrunkLayout = getAutoShrunkLayout(currentLayout, panels.length);
