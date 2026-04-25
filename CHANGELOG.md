@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 - 2026-04-25
+- Added: Doubao provider support in multi-panel.
+- Fixed: Doubao image uploads now require a rendered preview before auto-submit.
+- Fixed: Default provider migration now preserves reordered legacy provider lists while appending Doubao.
+- Changed: Refined provider icons and dark theme surfaces.
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
