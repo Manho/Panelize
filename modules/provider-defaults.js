@@ -11,6 +11,13 @@ export const LEGACY_DEFAULT_PROVIDER_IDS = [
 export const DEFAULT_PROVIDER_IDS = [
   ...LEGACY_DEFAULT_PROVIDER_IDS,
   'doubao',
+  'zai',
+  'qwen',
+];
+
+const PREVIOUS_DEFAULT_PROVIDER_IDS = [
+  ...LEGACY_DEFAULT_PROVIDER_IDS,
+  'doubao',
 ];
 
 export function migrateEnabledProvidersOnUpdate(enabledProviders, providerOrder) {
@@ -23,7 +30,8 @@ export function migrateEnabledProvidersOnUpdate(enabledProviders, providerOrder)
 
   const enabledProvidersAreLegacyDefault =
     nextEnabledProviders === null ||
-    arraysContainSameIds(nextEnabledProviders, LEGACY_DEFAULT_PROVIDER_IDS);
+    arraysContainSameIds(nextEnabledProviders, LEGACY_DEFAULT_PROVIDER_IDS) ||
+    arraysContainSameIds(nextEnabledProviders, PREVIOUS_DEFAULT_PROVIDER_IDS);
 
   if (!enabledProvidersAreLegacyDefault) {
     return null;
@@ -53,12 +61,12 @@ function buildMigratedProviderOrder(providerOrder) {
   }
 
   const filteredExistingOrder = providerOrder.filter((providerId) =>
-    LEGACY_DEFAULT_PROVIDER_IDS.includes(providerId)
+    PREVIOUS_DEFAULT_PROVIDER_IDS.includes(providerId)
   );
   const uniqueExistingOrder = [...new Set(filteredExistingOrder)];
-  const missingLegacyProviders = LEGACY_DEFAULT_PROVIDER_IDS.filter(
+  const missingLegacyProviders = PREVIOUS_DEFAULT_PROVIDER_IDS.filter(
     (providerId) => !uniqueExistingOrder.includes(providerId)
   );
 
-  return [...uniqueExistingOrder, ...missingLegacyProviders, 'doubao'];
+  return [...uniqueExistingOrder, ...missingLegacyProviders, 'zai', 'qwen'];
 }
