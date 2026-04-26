@@ -64,6 +64,22 @@ export const PROVIDERS = [
     icon: '/icons/providers/doubao.png',
     iconDark: '/icons/providers/dark/doubao.png',
     enabled: true
+  },
+  {
+    id: 'zai',
+    name: 'Z.ai',
+    url: 'https://chat.z.ai/',
+    icon: '/icons/providers/zai.png',
+    iconDark: '/icons/providers/dark/zai.png',
+    enabled: true
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen',
+    url: 'https://chat.qwen.ai/',
+    icon: '/icons/providers/qwen.png',
+    iconDark: '/icons/providers/dark/qwen.png',
+    enabled: true
   }
 ];
 

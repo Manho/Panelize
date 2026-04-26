@@ -14,7 +14,7 @@ describe('providers module', () => {
 
   describe('PROVIDERS constant', () => {
     it('should contain all expected providers', () => {
-      expect(PROVIDERS).toHaveLength(8);
+      expect(PROVIDERS).toHaveLength(10);
       const providerIds = PROVIDERS.map((p) => p.id);
       expect(providerIds).toEqual([
         'chatgpt',
@@ -25,6 +25,8 @@ describe('providers module', () => {
         'kimi',
         'google',
         'doubao',
+        'zai',
+        'qwen',
       ]);
     });
 
@@ -36,6 +38,17 @@ describe('providers module', () => {
         expect(provider).toHaveProperty('icon');
         expect(provider).toHaveProperty('iconDark');
         expect(provider).toHaveProperty('enabled');
+      });
+    });
+
+    it('should point Qwen and Z.ai to their provider icons', () => {
+      expect(getProviderById('qwen')).toMatchObject({
+        icon: '/icons/providers/qwen.png',
+        iconDark: '/icons/providers/dark/qwen.png',
+      });
+      expect(getProviderById('zai')).toMatchObject({
+        icon: '/icons/providers/zai.png',
+        iconDark: '/icons/providers/dark/zai.png',
       });
     });
   });

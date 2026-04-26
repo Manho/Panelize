@@ -58,6 +58,21 @@
       '.flow-chat-editor [contenteditable="true"]',
       '[contenteditable="true"][role="textbox"]'
     ],
+    zai: [
+      'textarea[placeholder]',
+      'textarea',
+      '.ProseMirror[contenteditable="true"]',
+      'div[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"]'
+    ],
+    qwen: [
+      'textarea.message-input-textarea',
+      'textarea[placeholder]',
+      'textarea',
+      '.ProseMirror[contenteditable="true"]',
+      'div[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"]'
+    ],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -87,6 +102,8 @@
     deepseek: true,
     kimi: true,  // Kimi supports images
     doubao: true,
+    zai: true,
+    qwen: true,
     google: true  // Google AI Mode supports images
   };
 
@@ -99,6 +116,8 @@
     deepseek: ['input[type="file"]'],
     kimi: ['input[type="file"]'],
     doubao: ['input[type="file"]'],
+    zai: ['input[type="file"]'],
+    qwen: ['input[type="file"]'],
     google: ['input[type="file"]']
   };
 
@@ -113,6 +132,8 @@
     doubao: [
       '#input-engine-container button[data-slot="dropdown-menu-trigger"][aria-haspopup="menu"]'
     ],
+    zai: [],
+    qwen: [],
     google: [
       'button[aria-label="更多输入项"]',
       'button[aria-label="Upload image"]',
@@ -181,6 +202,26 @@
       'button[aria-label="发送"]',
       'button[type="submit"]'
     ],
+    zai: [
+      'button[data-testid="send-button"]',
+      'button[data-test-id="send-button"]',
+      'button[aria-label="Send"]',
+      'button[aria-label*="Send"]',
+      'button[aria-label*="发送"]',
+      'button[type="submit"]',
+      'form button:has(svg)'
+    ],
+    qwen: [
+      'button.send-button',
+      '.chat-prompt-send-button button',
+      'button[data-testid="send-button"]',
+      'button[data-test-id="send-button"]',
+      'button[aria-label="Send"]',
+      'button[aria-label*="Send"]',
+      'button[aria-label*="发送"]',
+      'button[type="submit"]',
+      'form button:has(svg)'
+    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -237,6 +278,22 @@
       'button[aria-label*="New"]',
       'button[aria-label*="新建"]'
     ],
+    zai: [
+      'a[href="/"]',
+      'button[aria-label*="New"]',
+      'button[aria-label*="新建"]',
+      'a[href*="/new"]',
+      'button[data-testid="new-chat-button"]',
+      'button[data-test-id="new-chat-button"]'
+    ],
+    qwen: [
+      'a[href="/"]',
+      'button[aria-label*="New"]',
+      'button[aria-label*="新建"]',
+      'a[href*="/new"]',
+      'button[data-testid="new-chat-button"]',
+      'button[data-test-id="new-chat-button"]'
+    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -253,6 +310,8 @@
     deepseek: 'https://chat.deepseek.com/',
     kimi: 'https://www.kimi.com/',
     doubao: 'https://www.doubao.com/chat/',
+    zai: 'https://chat.z.ai/',
+    qwen: 'https://chat.qwen.ai/',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -286,6 +345,10 @@
       return 'kimi';
     } else if (hostname.includes('doubao.com')) {
       return 'doubao';
+    } else if (hostname === 'chat.z.ai') {
+      return 'zai';
+    } else if (hostname === 'chat.qwen.ai') {
+      return 'qwen';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
