@@ -13,9 +13,12 @@ export const PROVIDERS = [
     id: 'claude',
     name: 'Claude',
     url: 'https://claude.ai',
+    topLevelUrl: 'https://claude.ai/new',
     icon: '/icons/providers/claude.png',
     iconDark: '/icons/providers/dark/claude.png',
-    enabled: true
+    enabled: true,
+    // Claude can serve a limited model selector when embedded in an extension iframe.
+    embeddedModelSelectionLimited: true
   },
   {
     id: 'gemini',

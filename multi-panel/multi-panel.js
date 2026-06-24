@@ -80,6 +80,11 @@ function getDropdownThemePalette() {
   };
 }
 
+function getLocalizedText(key, fallback) {
+  const message = t(key);
+  return message && message !== key ? message : fallback;
+}
+
 function refreshThemeAwareProviderIcons() {
   document.querySelectorAll('img[data-provider-id]').forEach((img) => {
     const provider = getProviderById(img.dataset.providerId);
@@ -212,6 +217,15 @@ function isChatgptProvider(providerId) {
   return providerId === 'chatgpt';
 }
 
+function providerHasEmbeddedModelSelectionLimit(providerId) {
+  const provider = getProviderById(providerId);
+  return Boolean(provider && provider.embeddedModelSelectionLimited);
+}
+
+function getProviderTopLevelUrl(provider) {
+  return provider?.topLevelUrl || provider?.url || '';
+}
+
 function isTemporaryChatSupportedProvider(providerId) {
   return TEMP_CHAT_SUPPORTED_PROVIDERS.has(providerId);
 }
@@ -324,8 +338,15 @@ function getPanelHeaderRightHtml(providerId) {
     ? getGoogleModeSelectHtml()
     : '';
 
+  const openTopLevelBtn = providerHasEmbeddedModelSelectionLimit(providerId)
+    ? `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open Claude in a normal tab to use the regular model selector')}">
+      <span class="material-symbols-outlined">open_in_new</span>
+    </button>`
+    : '';
+
   return `
     ${googleModeSelect}
+    ${openTopLevelBtn}
     <button class="refresh-panel-btn" title="Refresh">
       <span class="material-symbols-outlined">refresh</span>
     </button>
@@ -333,6 +354,31 @@ function getPanelHeaderRightHtml(providerId) {
       <span class="material-symbols-outlined">swap_horiz</span>
     </button>
   `;
+}
+
+function getEmbeddedModelLimitNoticeHtml() {
+  return `<div class="embedded-model-limit-notice">
+        <span class="embedded-model-limit-notice-text">${getLocalizedText('embeddedModelLimitNotice', 'Claude may show limited model options when embedded. Open Claude in a normal tab to use the regular model selector.')}</span>
+        <button class="open-provider-top-level-inline-btn">${getLocalizedText('openProviderTopLevel', 'Open Claude')}</button>
+      </div>`;
+}
+
+// Keep the embedded model limit notice in sync when a panel's provider changes.
+function syncEmbeddedModelLimitNotice(panelEl, providerId) {
+  const container = panelEl.querySelector('.panel-iframe-container');
+  if (!container) {
+    return;
+  }
+
+  const existing = container.querySelector('.embedded-model-limit-notice');
+  if (providerHasEmbeddedModelSelectionLimit(providerId)) {
+    if (!existing) {
+      const iframe = container.querySelector('iframe');
+      iframe.insertAdjacentHTML('beforebegin', getEmbeddedModelLimitNoticeHtml());
+    }
+  } else if (existing) {
+    existing.remove();
+  }
 }
 
 function syncGoogleModeControls() {
@@ -372,11 +418,45 @@ function reloadPanelIframe(panel, overrideUrl = null) {
   panel.iframe = iframe;
 }
 
+async function openProviderTopLevel(providerId) {
+  const provider = getProviderById(providerId);
+  if (!provider) {
+    return;
+  }
+
+  const url = getProviderTopLevelUrl(provider);
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+      await chrome.tabs.create({ url });
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener');
+  } catch (error) {
+    console.error('Failed to open provider tab:', error);
+  }
+}
+
 function bindPanelHeaderActions(panelId) {
   const panel = panels.find(p => p.id === panelId);
   const panelEl = document.getElementById(panelId);
   if (!panel || !panelEl) {
     return;
+  }
+
+  const openTopLevelBtn = panelEl.querySelector('.open-provider-top-level-btn');
+  if (openTopLevelBtn) {
+    openTopLevelBtn.addEventListener('click', () => {
+      openProviderTopLevel(panel.providerId);
+    });
+  }
+
+  const openTopLevelInlineBtn = panelEl.querySelector('.open-provider-top-level-inline-btn');
+  if (openTopLevelInlineBtn) {
+    openTopLevelInlineBtn.addEventListener('click', () => {
+      openProviderTopLevel(panel.providerId);
+    });
   }
 
   const refreshBtn = panelEl.querySelector('.refresh-panel-btn');
@@ -1178,6 +1258,10 @@ async function addPanel(providerId) {
 
   const panelGrid = document.getElementById('panel-grid');
 
+  const embeddedModelLimitNotice = providerHasEmbeddedModelSelectionLimit(providerId)
+    ? getEmbeddedModelLimitNoticeHtml()
+    : '';
+
   // Create panel element
   const panelEl = document.createElement('div');
   panelEl.className = 'panel-item';
@@ -1195,6 +1279,7 @@ async function addPanel(providerId) {
         <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}">
         <span class="loading-text">Loading ${provider.name}...</span>
       </div>
+      ${embeddedModelLimitNotice}
       <iframe
         src="${getProviderFrameUrl(providerId)}"
         sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
@@ -1309,6 +1394,9 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   // Update iframe
   const iframe = panelEl.querySelector('iframe');
+
+  // Add/remove the embedded model limit notice for providers that need it.
+  syncEmbeddedModelLimitNotice(panelEl, newProviderId);
 
   // Update panel data
   panel.providerId = newProviderId;

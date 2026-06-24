@@ -50,6 +50,15 @@
   "switchToPopupModeTitle": {
     "message": "Switch to Popup Mode"
   },
+  "openProviderTopLevel": {
+    "message": "Open Claude"
+  },
+  "openProviderTopLevelTitle": {
+    "message": "Open Claude in a normal tab to use the regular model selector"
+  },
+  "embeddedModelLimitNotice": {
+    "message": "Claude may show limited model options when embedded. Open Claude in a normal tab to use the regular model selector."
+  },
   "msgOpenModeUpdated": {
     "message": "Open mode updated"
   },
