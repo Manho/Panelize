@@ -15,6 +15,18 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function waitForProviderStatusCall(postMessageSpy, type, expectedLength = 1, timeoutMs = 1200) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const calls = getProviderStatusCalls(postMessageSpy, type);
+    if (calls.length === expectedLength) {
+      return calls;
+    }
+    await wait(25);
+  }
+  return getProviderStatusCalls(postMessageSpy, type);
+}
+
 function createChatgptComposerDom({ includeSendButton = true, includeStopButton = false } = {}) {
   document.body.innerHTML = `
     <form data-type="unified-composer">
@@ -109,7 +121,7 @@ describe('chatgpt content script provider status', () => {
     getStopButton()?.remove();
     await wait(850);
 
-    const idleCalls = getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_IDLE');
+    const idleCalls = await waitForProviderStatusCall(postMessageSpy, 'PANELIZE_PROVIDER_IDLE');
     expect(idleCalls).toHaveLength(1);
     expect(idleCalls[0]).toMatchObject({
       requestId: 'req-idle',
@@ -130,7 +142,7 @@ describe('chatgpt content script provider status', () => {
 
     await wait(100);
     composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
-    await wait(50);
+    expect(await waitForProviderStatusCall(postMessageSpy, 'PANELIZE_PROVIDER_BUSY')).toHaveLength(1);
     getStopButton()?.remove();
     await wait(300);
     composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
@@ -141,7 +153,7 @@ describe('chatgpt content script provider status', () => {
     getStopButton()?.remove();
     await wait(850);
 
-    expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(1);
+    expect(await waitForProviderStatusCall(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(1);
   });
 
   it('stops tracking when busy is never observed within 2 seconds', async () => {

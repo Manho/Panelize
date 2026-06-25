@@ -14,6 +14,11 @@ import {
   getGoogleProviderUrl,
   normalizeGoogleProviderMode
 } from '../modules/google-mode.js';
+import {
+  getProviderOpenUrl,
+  isProviderAllowedUrl,
+  isProviderCurrentUrl
+} from '../modules/provider-open-url.js';
 import { saveSetting } from '../modules/settings.js';
 import { applyTheme } from '../modules/theme-manager.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
@@ -113,6 +118,7 @@ const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
 const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
+const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
 const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok']);
@@ -220,10 +226,6 @@ function isChatgptProvider(providerId) {
 function providerHasEmbeddedModelSelectionLimit(providerId) {
   const provider = getProviderById(providerId);
   return Boolean(provider && provider.embeddedModelSelectionLimited);
-}
-
-function getProviderTopLevelUrl(provider) {
-  return provider?.topLevelUrl || provider?.url || '';
 }
 
 function isTemporaryChatSupportedProvider(providerId) {
@@ -338,11 +340,9 @@ function getPanelHeaderRightHtml(providerId) {
     ? getGoogleModeSelectHtml()
     : '';
 
-  const openTopLevelBtn = providerHasEmbeddedModelSelectionLimit(providerId)
-    ? `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open Claude in a normal tab to use the regular model selector')}">
+  const openTopLevelBtn = `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open in new tab')}">
       <span class="material-symbols-outlined">open_in_new</span>
-    </button>`
-    : '';
+    </button>`;
 
   return `
     ${googleModeSelect}
@@ -414,17 +414,18 @@ function reloadPanelIframe(panel, overrideUrl = null) {
 
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
+  panel.currentUrl = null;
   iframe.src = overrideUrl || getProviderFrameUrl(panel.providerId);
   panel.iframe = iframe;
 }
 
-async function openProviderTopLevel(providerId) {
-  const provider = getProviderById(providerId);
+async function openProviderTopLevel(panel) {
+  const provider = getProviderById(panel?.providerId);
   if (!provider) {
     return;
   }
 
-  const url = getProviderTopLevelUrl(provider);
+  const url = getProviderOpenUrl(provider, panel.currentUrl, getPanelProviderMode(panel));
 
   try {
     if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
@@ -448,14 +449,14 @@ function bindPanelHeaderActions(panelId) {
   const openTopLevelBtn = panelEl.querySelector('.open-provider-top-level-btn');
   if (openTopLevelBtn) {
     openTopLevelBtn.addEventListener('click', () => {
-      openProviderTopLevel(panel.providerId);
+      openProviderTopLevel(panel);
     });
   }
 
   const openTopLevelInlineBtn = panelEl.querySelector('.open-provider-top-level-inline-btn');
   if (openTopLevelInlineBtn) {
     openTopLevelInlineBtn.addEventListener('click', () => {
-      openProviderTopLevel(panel.providerId);
+      openProviderTopLevel(panel);
     });
   }
 
@@ -822,7 +823,8 @@ function handleProviderStatusMessage(event) {
   }
 
   const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
-  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage)) {
+  const isLocationMessage = data.type === PANELIZE_PROVIDER_LOCATION;
+  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage && !isLocationMessage)) {
     return;
   }
 
@@ -832,6 +834,12 @@ function handleProviderStatusMessage(event) {
   }
 
   switch (data.type) {
+    case PANELIZE_PROVIDER_LOCATION:
+      if (!isProviderAllowedUrl(panel.providerId, data.url)) {
+        return;
+      }
+      panel.currentUrl = isProviderCurrentUrl(panel.providerId, data.url) ? data.url : null;
+      break;
     case PANELIZE_PROVIDER_BUSY:
       if (!isChatgptProvider(panel.providerId)) {
         return;
@@ -1319,6 +1327,7 @@ async function addPanel(providerId) {
     id: panelId,
     providerId,
     iframe,
+    currentUrl: null,
     state: 'loading'
   });
 
@@ -1401,6 +1410,7 @@ async function switchPanelProvider(panelId, newProviderId) {
   // Update panel data
   panel.providerId = newProviderId;
   panel.iframe = iframe;
+  panel.currentUrl = null;
   bindPanelHeaderActions(panelId);
   reloadPanelIframe(panel);
 

@@ -33,6 +33,7 @@ describe('providers module', () => {
         expect(provider).toHaveProperty('id');
         expect(provider).toHaveProperty('name');
         expect(provider).toHaveProperty('url');
+        expect(provider).toHaveProperty('topLevelUrl');
         expect(provider).toHaveProperty('icon');
         expect(provider).toHaveProperty('iconDark');
         expect(provider).toHaveProperty('enabled');

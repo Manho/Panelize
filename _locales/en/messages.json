@@ -54,7 +54,7 @@
     "message": "Open Claude"
   },
   "openProviderTopLevelTitle": {
-    "message": "Open Claude in a normal tab to use the regular model selector"
+    "message": "Open in new tab"
   },
   "embeddedModelLimitNotice": {
     "message": "Claude may show limited model options when embedded. Open Claude in a normal tab to use the regular model selector."
