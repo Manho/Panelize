@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 - 2026-06-26
+- Clarify Claude embedded model selection limitations
+- Add open-in-new-tab controls to all provider panel headers
+- Report and validate provider iframe URLs for recoverable current conversations
+- Fall back to provider default pages when current conversations cannot be confirmed
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
