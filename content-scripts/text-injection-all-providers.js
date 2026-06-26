@@ -11,6 +11,7 @@
   const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
   const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
   const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
+  const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
   const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
   const CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS = 2000;
@@ -426,6 +427,56 @@
       provider,
       context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
     }, '*');
+  }
+
+  function postProviderLocation(provider = detectProvider()) {
+    if (!provider || window.parent === window) {
+      return;
+    }
+
+    window.parent.postMessage({
+      type: PANELIZE_PROVIDER_LOCATION,
+      provider,
+      url: window.location.href,
+      context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
+    }, '*');
+  }
+
+  function setupProviderLocationReporting() {
+    let lastReportedUrl = null;
+
+    const reportIfChanged = () => {
+      const currentUrl = window.location.href;
+      if (currentUrl === lastReportedUrl) {
+        return;
+      }
+
+      lastReportedUrl = currentUrl;
+      postProviderLocation();
+    };
+
+    const wrapHistoryMethod = (methodName) => {
+      const original = window.history?.[methodName];
+      if (typeof original !== 'function') {
+        return;
+      }
+
+      try {
+        window.history[methodName] = function(...args) {
+          const result = original.apply(this, args);
+          setTimeout(reportIfChanged, 0);
+          return result;
+        };
+      } catch (error) {
+        console.warn('[Text Injection] Unable to wrap history method:', methodName, error);
+      }
+    };
+
+    wrapHistoryMethod('pushState');
+    wrapHistoryMethod('replaceState');
+    window.addEventListener('popstate', reportIfChanged);
+    window.addEventListener('hashchange', reportIfChanged);
+    reportIfChanged();
   }
 
   function stopMultiPanelUserInteractionTracking() {
@@ -2095,5 +2146,6 @@
   }
 
   // Listen for messages from the multi-panel host
+  setupProviderLocationReporting();
   window.addEventListener('message', handleTextInjection);
 })();

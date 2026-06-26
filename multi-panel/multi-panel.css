@@ -479,12 +479,65 @@ body {
   flex: 1;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-iframe-container iframe {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
   border: none;
+}
+
+.embedded-model-limit-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fff7e6;
+  border-bottom: 1px solid #ffe0a3;
+  color: #8a5a00;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.embedded-model-limit-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.embedded-model-limit-notice .open-provider-top-level-inline-btn {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid #e0a93f;
+  border-radius: 4px;
+  background: #ffefcc;
+  color: #8a5a00;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.embedded-model-limit-notice .open-provider-top-level-inline-btn:hover {
+  background: #ffe4ad;
+}
+
+[data-theme="dark"] .embedded-model-limit-notice {
+  background: #3a2f1a;
+  border-bottom-color: #5a4a26;
+  color: #f0c674;
+}
+
+[data-theme="dark"] .embedded-model-limit-notice .open-provider-top-level-inline-btn {
+  border-color: #6b572c;
+  background: #4a3c1f;
+  color: #f0c674;
+}
+
+[data-theme="dark"] .embedded-model-limit-notice .open-provider-top-level-inline-btn:hover {
+  background: #5a4a26;
 }
 
 .panel-loading {

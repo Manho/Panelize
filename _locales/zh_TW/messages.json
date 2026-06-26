@@ -799,6 +799,15 @@
   "switchToPopupModeTitle": {
     "message": "切換到彈出視窗模式"
   },
+  "openProviderTopLevel": {
+    "message": "開啟 Claude"
+  },
+  "openProviderTopLevelTitle": {
+    "message": "在新分頁中開啟"
+  },
+  "embeddedModelLimitNotice": {
+    "message": "Claude 在嵌入時可能只顯示有限模型。請在一般分頁中開啟 Claude，以使用常規模型選擇器。"
+  },
   "msgOpenModeUpdated": {
     "message": "開啟模式已更新"
   },

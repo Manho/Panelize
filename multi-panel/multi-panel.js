@@ -14,6 +14,11 @@ import {
   getGoogleProviderUrl,
   normalizeGoogleProviderMode
 } from '../modules/google-mode.js';
+import {
+  getProviderOpenUrl,
+  isProviderAllowedUrl,
+  isProviderCurrentUrl
+} from '../modules/provider-open-url.js';
 import { saveSetting } from '../modules/settings.js';
 import { applyTheme } from '../modules/theme-manager.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
@@ -80,6 +85,11 @@ function getDropdownThemePalette() {
   };
 }
 
+function getLocalizedText(key, fallback) {
+  const message = t(key);
+  return message && message !== key ? message : fallback;
+}
+
 function refreshThemeAwareProviderIcons() {
   document.querySelectorAll('img[data-provider-id]').forEach((img) => {
     const provider = getProviderById(img.dataset.providerId);
@@ -108,6 +118,7 @@ const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
 const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
+const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
 const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok']);
@@ -210,6 +221,11 @@ function isGoogleProvider(providerId) {
 
 function isChatgptProvider(providerId) {
   return providerId === 'chatgpt';
+}
+
+function providerHasEmbeddedModelSelectionLimit(providerId) {
+  const provider = getProviderById(providerId);
+  return Boolean(provider && provider.embeddedModelSelectionLimited);
 }
 
 function isTemporaryChatSupportedProvider(providerId) {
@@ -324,8 +340,13 @@ function getPanelHeaderRightHtml(providerId) {
     ? getGoogleModeSelectHtml()
     : '';
 
+  const openTopLevelBtn = `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open in new tab')}">
+      <span class="material-symbols-outlined">open_in_new</span>
+    </button>`;
+
   return `
     ${googleModeSelect}
+    ${openTopLevelBtn}
     <button class="refresh-panel-btn" title="Refresh">
       <span class="material-symbols-outlined">refresh</span>
     </button>
@@ -333,6 +354,31 @@ function getPanelHeaderRightHtml(providerId) {
       <span class="material-symbols-outlined">swap_horiz</span>
     </button>
   `;
+}
+
+function getEmbeddedModelLimitNoticeHtml() {
+  return `<div class="embedded-model-limit-notice">
+        <span class="embedded-model-limit-notice-text">${getLocalizedText('embeddedModelLimitNotice', 'Claude may show limited model options when embedded. Open Claude in a normal tab to use the regular model selector.')}</span>
+        <button class="open-provider-top-level-inline-btn">${getLocalizedText('openProviderTopLevel', 'Open Claude')}</button>
+      </div>`;
+}
+
+// Keep the embedded model limit notice in sync when a panel's provider changes.
+function syncEmbeddedModelLimitNotice(panelEl, providerId) {
+  const container = panelEl.querySelector('.panel-iframe-container');
+  if (!container) {
+    return;
+  }
+
+  const existing = container.querySelector('.embedded-model-limit-notice');
+  if (providerHasEmbeddedModelSelectionLimit(providerId)) {
+    if (!existing) {
+      const iframe = container.querySelector('iframe');
+      iframe.insertAdjacentHTML('beforebegin', getEmbeddedModelLimitNoticeHtml());
+    }
+  } else if (existing) {
+    existing.remove();
+  }
 }
 
 function syncGoogleModeControls() {
@@ -368,8 +414,29 @@ function reloadPanelIframe(panel, overrideUrl = null) {
 
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
+  panel.currentUrl = null;
   iframe.src = overrideUrl || getProviderFrameUrl(panel.providerId);
   panel.iframe = iframe;
+}
+
+async function openProviderTopLevel(panel) {
+  const provider = getProviderById(panel?.providerId);
+  if (!provider) {
+    return;
+  }
+
+  const url = getProviderOpenUrl(provider, panel.currentUrl, getPanelProviderMode(panel));
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+      await chrome.tabs.create({ url });
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener');
+  } catch (error) {
+    console.error('Failed to open provider tab:', error);
+  }
 }
 
 function bindPanelHeaderActions(panelId) {
@@ -377,6 +444,20 @@ function bindPanelHeaderActions(panelId) {
   const panelEl = document.getElementById(panelId);
   if (!panel || !panelEl) {
     return;
+  }
+
+  const openTopLevelBtn = panelEl.querySelector('.open-provider-top-level-btn');
+  if (openTopLevelBtn) {
+    openTopLevelBtn.addEventListener('click', () => {
+      openProviderTopLevel(panel);
+    });
+  }
+
+  const openTopLevelInlineBtn = panelEl.querySelector('.open-provider-top-level-inline-btn');
+  if (openTopLevelInlineBtn) {
+    openTopLevelInlineBtn.addEventListener('click', () => {
+      openProviderTopLevel(panel);
+    });
   }
 
   const refreshBtn = panelEl.querySelector('.refresh-panel-btn');
@@ -742,7 +823,8 @@ function handleProviderStatusMessage(event) {
   }
 
   const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
-  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage)) {
+  const isLocationMessage = data.type === PANELIZE_PROVIDER_LOCATION;
+  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage && !isLocationMessage)) {
     return;
   }
 
@@ -752,6 +834,12 @@ function handleProviderStatusMessage(event) {
   }
 
   switch (data.type) {
+    case PANELIZE_PROVIDER_LOCATION:
+      if (!isProviderAllowedUrl(panel.providerId, data.url)) {
+        return;
+      }
+      panel.currentUrl = isProviderCurrentUrl(panel.providerId, data.url) ? data.url : null;
+      break;
     case PANELIZE_PROVIDER_BUSY:
       if (!isChatgptProvider(panel.providerId)) {
         return;
@@ -1178,6 +1266,10 @@ async function addPanel(providerId) {
 
   const panelGrid = document.getElementById('panel-grid');
 
+  const embeddedModelLimitNotice = providerHasEmbeddedModelSelectionLimit(providerId)
+    ? getEmbeddedModelLimitNoticeHtml()
+    : '';
+
   // Create panel element
   const panelEl = document.createElement('div');
   panelEl.className = 'panel-item';
@@ -1195,6 +1287,7 @@ async function addPanel(providerId) {
         <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}">
         <span class="loading-text">Loading ${provider.name}...</span>
       </div>
+      ${embeddedModelLimitNotice}
       <iframe
         src="${getProviderFrameUrl(providerId)}"
         sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
@@ -1234,6 +1327,7 @@ async function addPanel(providerId) {
     id: panelId,
     providerId,
     iframe,
+    currentUrl: null,
     state: 'loading'
   });
 
@@ -1310,9 +1404,13 @@ async function switchPanelProvider(panelId, newProviderId) {
   // Update iframe
   const iframe = panelEl.querySelector('iframe');
 
+  // Add/remove the embedded model limit notice for providers that need it.
+  syncEmbeddedModelLimitNotice(panelEl, newProviderId);
+
   // Update panel data
   panel.providerId = newProviderId;
   panel.iframe = iframe;
+  panel.currentUrl = null;
   bindPanelHeaderActions(panelId);
   reloadPanelIframe(panel);
 
