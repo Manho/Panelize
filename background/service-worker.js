@@ -2,8 +2,7 @@ import { notifyMessage } from '../modules/messaging.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
 import { migrateEnabledProvidersOnUpdate } from '../modules/provider-defaults.js';
 import {
-  filterProvidersWithGrantedAccess,
-  syncOptionalProviderAccess
+  reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
 
 // Install event - setup context menus
@@ -111,24 +110,6 @@ async function migrateProviderSettingsForUpdate(details) {
     }
   } catch (error) {
     // Ignore storage errors during best-effort settings migration
-  }
-}
-
-async function reconcileOptionalProviderAccess() {
-  try {
-    const settings = await chrome.storage.sync.get({ enabledProviders: [] });
-    const enabledProviders = Array.isArray(settings.enabledProviders)
-      ? settings.enabledProviders
-      : [];
-    const providersWithAccess = await filterProvidersWithGrantedAccess(enabledProviders);
-
-    if (providersWithAccess.length !== enabledProviders.length) {
-      await chrome.storage.sync.set({ enabledProviders: providersWithAccess });
-    }
-
-    await syncOptionalProviderAccess(providersWithAccess);
-  } catch (error) {
-    console.error('[Background] Failed to synchronize optional provider access:', error);
   }
 }
 

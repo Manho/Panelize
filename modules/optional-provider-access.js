@@ -107,6 +107,23 @@ export async function syncOptionalProviderAccess(enabledProviderIds) {
   await syncFrameRules(configs.map(([, config]) => config), desiredConfigs);
 }
 
+/**
+ * Reconcile device-local scripts and frame rules with the synced provider preference.
+ * Missing device permissions must never overwrite the user's synced preference.
+ */
+export async function reconcileOptionalProviderAccess() {
+  try {
+    const settings = await chrome.storage.sync.get({ enabledProviders: [] });
+    const enabledProviderIds = Array.isArray(settings.enabledProviders)
+      ? settings.enabledProviders
+      : [];
+
+    await syncOptionalProviderAccess(enabledProviderIds);
+  } catch (error) {
+    console.error('[Background] Failed to synchronize optional provider access:', error);
+  }
+}
+
 async function syncContentScripts(allConfigs, desiredConfigs) {
   if (!chrome.scripting?.getRegisteredContentScripts) {
     return;

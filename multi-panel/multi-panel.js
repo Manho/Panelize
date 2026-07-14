@@ -1139,16 +1139,20 @@ async function initializePanels() {
       enabledProviders: DEFAULT_PROVIDERS,
       multiPanelProviders: DEFAULT_PROVIDERS
     });
+    const availableProviderIds = new Set(
+      (await getEnabledProviders()).map(({ id }) => id)
+    );
 
     // Use providerOrder if available (from settings page), fallback to multiPanelProviders
     let providerIds;
     if (settings.providerOrder && Array.isArray(settings.providerOrder) && settings.providerOrder.length > 0) {
       // Use providerOrder directly since it now reflects enabled providers in correct order
-      // Filter to ensure all providers in providerOrder are actually enabled
-      providerIds = settings.providerOrder.filter(id => settings.enabledProviders.includes(id));
+      // Filter to providers that are enabled and authorized on this device.
+      providerIds = settings.providerOrder.filter(id => availableProviderIds.has(id));
     } else {
       // Fallback: use enabledProviders in their stored order, or multiPanelProviders
-      providerIds = settings.enabledProviders || settings.multiPanelProviders;
+      const configuredProviderIds = settings.enabledProviders || settings.multiPanelProviders;
+      providerIds = configuredProviderIds.filter(id => availableProviderIds.has(id));
     }
 
     const panelCount = LAYOUT_PANEL_COUNTS[currentLayout] || 4;
