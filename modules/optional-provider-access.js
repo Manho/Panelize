@@ -1,16 +1,14 @@
-const QWEN_CONTENT_SCRIPT_FILES = [
-  'content-scripts/button-finder-utils.js',
-  'content-scripts/enter-behavior-utils.js',
-  null,
-  'content-scripts/text-injection-all-providers.js',
-  'content-scripts/focus-toggle.js'
-];
-
 function createContentScript(id, matches, enterBehaviorScript) {
   return {
     id,
     matches,
-    js: QWEN_CONTENT_SCRIPT_FILES.map((file) => file || enterBehaviorScript),
+    js: [
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      enterBehaviorScript,
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js'
+    ],
     runAt: 'document_start',
     allFrames: true,
     persistAcrossSessions: true
@@ -18,6 +16,7 @@ function createContentScript(id, matches, enterBehaviorScript) {
 }
 
 function createFrameRule(id, urlFilter) {
+  // Installed only for enabled providers and scoped to their embedded subframes.
   return {
     id,
     priority: 1,

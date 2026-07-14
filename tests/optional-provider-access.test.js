@@ -43,6 +43,23 @@ describe('optional provider access', () => {
     });
   });
 
+  it('places each provider-specific Enter behavior script explicitly in registration order', () => {
+    expect(OPTIONAL_PROVIDER_CONFIGS['qwen-cn'].contentScript.js).toEqual([
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      'content-scripts/enter-behavior-qwen-cn.js',
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js',
+    ]);
+    expect(OPTIONAL_PROVIDER_CONFIGS['qwen-global'].contentScript.js).toEqual([
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      'content-scripts/enter-behavior-qwen-global.js',
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js',
+    ]);
+  });
+
   it('requests only the selected provider origin', async () => {
     await expect(requestOptionalProviderPermission('qwen-cn')).resolves.toBe(true);
 

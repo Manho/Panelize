@@ -128,13 +128,6 @@
     doubao: [
       '#input-engine-container button[data-slot="dropdown-menu-trigger"][aria-haspopup="menu"]'
     ],
-    'qwen-cn': [
-      '[data-chat-input-layout="true"] button[aria-label="添加附件"]',
-      'button[aria-label="添加附件"]'
-    ],
-    'qwen-global': [
-      '.message-input-wrapper .mode-select-open'
-    ],
     google: [
       'button[aria-label="更多输入项"]',
       'button[aria-label="Upload image"]',

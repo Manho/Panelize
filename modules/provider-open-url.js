@@ -78,6 +78,7 @@ export function isProviderCurrentUrl(providerId, rawUrl) {
     case 'doubao':
       return url.pathname.startsWith('/chat/') && url.pathname !== '/chat/';
     case 'qwen-cn':
+      // Qwen China does not expose a verified stable conversation URL.
       return false;
     case 'qwen-global': {
       const conversationMatch = url.pathname.match(/^\/c\/([^/]+)\/?$/);
