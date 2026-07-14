@@ -10,10 +10,13 @@ const LAYOUT_PANEL_COUNTS = {
   '1x6': 6,
   '1x7': 7,
   '1x8': 8,
+  '1x9': 9,
+  '1x10': 10,
   '2x1': 2,
   '2x2': 4,
   '2x3': 6,
   '2x4': 8,
+  '2x5': 10,
   '3x1': 3,
   '3x2': 6,
   '3x3': 9,
@@ -22,40 +25,48 @@ const LAYOUT_PANEL_COUNTS = {
 
 // 被测试的函数（从 multi-panel.js 复制）
 function getAutoAdjustedLayout(currentLayout, newPanelCount) {
-  // 只处理 1xN 布局
-  const match = currentLayout.match(/^1x(\d)$/);
+  if (currentLayout === '4x2' && newPanelCount === 9) {
+    return '1x9';
+  }
+
+  // Only handle 1xN layouts.
+  const match = currentLayout.match(/^1x(\d+)$/);
   if (!match) return null;
   
   const currentCols = parseInt(match[1]);
   const currentCapacity = LAYOUT_PANEL_COUNTS[currentLayout];
   
-  // 如果新面板数不超过容量，无需调整
+  // Keep the current layout while the new panel still fits.
   if (newPanelCount <= currentCapacity) return null;
   
   if (currentLayout === '1x7' && newPanelCount === 8) {
     return '4x2';
   }
 
-  // 计算下一级布局
+  // Advance to the next 1xN layout.
   const nextCols = currentCols + 1;
   const nextLayout = `1x${nextCols}`;
   
-  // 1x8 remains a manual layout option; auto-expand still prefers 4x2 for the 8th panel
+  // 1x8 remains manual because auto-expand prefers 4x2 for the 8th panel.
   if (LAYOUT_PANEL_COUNTS[nextLayout]) {
     return nextLayout;
   }
   
-  return null; // 已达上限，无法自动调整
+  return null;
 }
 
 // New auto-shrink function (from multi-panel.js)
 function getAutoShrunkLayout(currentLayout, newPanelCount) {
+  if (currentLayout === '1x9' && newPanelCount === 8) {
+    return '4x2';
+  }
+
   if (currentLayout === '4x2' && newPanelCount === 7) {
     return '1x7';
   }
 
   // Only handle 1xN layouts (consistent with auto-expand behavior)
-  const match = currentLayout.match(/^1x(\d)$/);
+  const match = currentLayout.match(/^1x(\d+)$/);
   if (!match) return null;
 
   const currentCols = parseInt(match[1]);
@@ -101,6 +112,14 @@ describe('Layout Auto-Adjust', () => {
         expect(getAutoAdjustedLayout('1x7', 8)).toBe('4x2');
       });
 
+      it('should upgrade from 4x2 to 1x9 when adding 9th panel', () => {
+        expect(getAutoAdjustedLayout('4x2', 9)).toBe('1x9');
+      });
+
+      it('should upgrade from 1x9 to 1x10 when adding 10th panel', () => {
+        expect(getAutoAdjustedLayout('1x9', 10)).toBe('1x10');
+      });
+
       it('should NOT upgrade when panel count fits within capacity', () => {
         expect(getAutoAdjustedLayout('1x2', 2)).toBeNull();
         expect(getAutoAdjustedLayout('1x3', 3)).toBeNull();
@@ -119,8 +138,8 @@ describe('Layout Auto-Adjust', () => {
     });
 
     describe('upper limit', () => {
-      it('should return null when already at the 4x2 maximum', () => {
-        expect(getAutoAdjustedLayout('4x2', 9)).toBeNull();
+      it('should return null when already at the 1x10 maximum', () => {
+        expect(getAutoAdjustedLayout('1x10', 11)).toBeNull();
       });
     });
 
@@ -149,7 +168,7 @@ describe('Layout Auto-Adjust', () => {
       it('should return null for invalid layouts', () => {
         expect(getAutoAdjustedLayout('invalid', 3)).toBeNull();
         expect(getAutoAdjustedLayout('', 3)).toBeNull();
-        expect(getAutoAdjustedLayout('1x10', 11)).toBeNull();
+        expect(getAutoAdjustedLayout('1x11', 12)).toBeNull();
       });
     });
   });
@@ -186,6 +205,14 @@ describe('Layout Auto-Adjust', () => {
 
       it('should shrink from 4x2 to 1x7 when removing panel (7 panels remain)', () => {
         expect(getAutoShrunkLayout('4x2', 7)).toBe('1x7');
+      });
+
+      it('should shrink from 1x10 to 1x9 when removing panel (9 panels remain)', () => {
+        expect(getAutoShrunkLayout('1x10', 9)).toBe('1x9');
+      });
+
+      it('should shrink from 1x9 to 4x2 when removing panel (8 panels remain)', () => {
+        expect(getAutoShrunkLayout('1x9', 8)).toBe('4x2');
       });
     });
 
