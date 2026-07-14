@@ -2,7 +2,10 @@
 import { PROVIDERS, getProviderIcon } from '../modules/providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { appendProviderToOrder, normalizeProviderOrder } from '../modules/provider-order.js';
-import { requestOptionalProviderPermission } from '../modules/optional-provider-access.js';
+import {
+  hasOptionalProviderPermission,
+  requestOptionalProviderPermission
+} from '../modules/optional-provider-access.js';
 import { getSettings, getSetting, saveSettings, saveSetting, resetSettings, exportSettings, importSettings } from '../modules/settings.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
@@ -248,6 +251,7 @@ async function init() {
   await renderProviderList();
   setupEventListeners();
   setupStorageChangeListener();
+  setupPermissionChangeListeners();
   setupShortcutHelpers();
   refreshAutoSizedSelects();
 }
@@ -314,6 +318,11 @@ async function renderProviderList() {
   const googleProviderMode = getGoogleProviderModeOrDefault(settings);
   const displayOrder = getProviderDisplayOrder(settings);
   const listContainer = document.getElementById('provider-list');
+  const providerAccessEntries = await Promise.all(PROVIDERS.map(async (provider) => [
+    provider.id,
+    await hasOptionalProviderPermission(provider.id)
+  ]));
+  const providerAccess = new Map(providerAccessEntries);
 
   const orderIndex = new Map(displayOrder.map((id, index) => [id, index]));
   const sortedProviders = [...PROVIDERS].sort((a, b) => {
@@ -321,13 +330,19 @@ async function renderProviderList() {
   });
 
   listContainer.innerHTML = sortedProviders.map(provider => {
-    const isEnabled = enabledProviders.includes(provider.id);
+    const isEnabledPreference = enabledProviders.includes(provider.id);
+    const hasAccess = providerAccess.get(provider.id) !== false;
+    const isEnabled = isEnabledPreference && hasAccess;
     const googleModeControl = provider.id === 'google'
       ? renderGoogleModeSelectMarkup(googleProviderMode, isEnabled)
       : '';
 
     return `
-      <div class="provider-item ${isEnabled ? 'draggable' : ''}" data-provider-id="${provider.id}" draggable="${isEnabled}">
+      <div class="provider-item ${isEnabled ? 'draggable' : ''}"
+           data-provider-id="${provider.id}"
+           data-enabled-preference="${isEnabledPreference}"
+           data-has-access="${hasAccess}"
+           draggable="${isEnabled}">
         <div class="provider-info">
           ${isEnabled ? '<span class="drag-handle material-symbols-outlined">drag_indicator</span>' : ''}
           <div class="provider-icon">
@@ -355,7 +370,10 @@ async function renderProviderList() {
       if (!providerId) return;
 
       const provider = PROVIDERS.find(({ id }) => id === providerId);
-      if (!toggle.classList.contains('active') && provider?.optionalOrigins) {
+      const hasAccess = providerItem?.dataset.hasAccess !== 'false';
+      const isEnabledPreference = providerItem?.dataset.enabledPreference === 'true';
+
+      if (!hasAccess && provider?.optionalOrigins) {
         try {
           const permissionGranted = await requestOptionalProviderPermission(providerId);
           if (!permissionGranted) {
@@ -365,6 +383,14 @@ async function renderProviderList() {
         } catch (error) {
           console.error(`Failed to request site access for ${providerId}:`, error);
           showStatus('error', t('msgProviderPermissionRequestFailed', provider.name));
+          return;
+        }
+
+        // A synced preference can already be enabled while this device still
+        // needs permission. Granting access should activate it, not toggle it off.
+        if (isEnabledPreference) {
+          await renderProviderList();
+          showStatus('success', t('msgProviderSettingsUpdated'));
           return;
         }
       }
@@ -410,6 +436,17 @@ function setupStorageChangeListener() {
       });
     }
   });
+}
+
+function setupPermissionChangeListeners() {
+  const refreshProviders = () => {
+    renderProviderList().catch((error) => {
+      console.error('Error syncing optional provider access:', error);
+    });
+  };
+
+  chrome.permissions?.onAdded?.addListener(refreshProviders);
+  chrome.permissions?.onRemoved?.addListener(refreshProviders);
 }
 
 // Setup drag-and-drop reordering

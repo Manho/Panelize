@@ -102,6 +102,23 @@ describe('providers module', () => {
       expect(providers[1].id).toBe('claude');
     });
 
+    it('keeps synced optional preferences but excludes providers unavailable on this device', async () => {
+      chrome.storage.sync.get.mockResolvedValue({
+        enabledProviders: ['chatgpt', 'qwen-cn', 'qwen-global'],
+        providerOrder: ['chatgpt', 'qwen-cn', 'qwen-global'],
+      });
+      chrome.permissions = {
+        contains: vi.fn(({ origins }) => Promise.resolve(
+          origins.includes('https://chat.qwen.ai/*')
+        )),
+      };
+
+      const providers = await getEnabledProviders();
+
+      expect(providers.map(({ id }) => id)).toEqual(['chatgpt', 'qwen-global']);
+      expect(chrome.storage.sync.set).not.toHaveBeenCalled();
+    });
+
     it('should use default settings when not provided', async () => {
       chrome.storage.sync.get.mockImplementation((defaults) =>
         Promise.resolve(defaults)

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   OPTIONAL_PROVIDER_CONFIGS,
   filterProvidersWithGrantedAccess,
+  reconcileOptionalProviderAccess,
   requestOptionalProviderPermission,
   syncOptionalProviderAccess,
 } from '../modules/optional-provider-access.js';
@@ -22,6 +23,8 @@ describe('optional provider access', () => {
       getDynamicRules: vi.fn(() => Promise.resolve([])),
       updateDynamicRules: vi.fn(() => Promise.resolve()),
     };
+    chrome.storage.sync.get.mockImplementation((defaults) => Promise.resolve(defaults));
+    chrome.storage.sync.set.mockResolvedValue();
   });
 
   it('uses separate narrow origins and script registrations for both Qwen sites', () => {
@@ -88,6 +91,29 @@ describe('optional provider access', () => {
       'qwen-cn',
       'qwen-global',
     ])).resolves.toEqual(['chatgpt', 'qwen-global']);
+  });
+
+  it('never overwrites synced provider preferences when this device lacks permission', async () => {
+    chrome.storage.sync.get.mockResolvedValue({
+      enabledProviders: ['chatgpt', 'qwen-cn'],
+    });
+    chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
+      { id: 'qwen-cn-scripts' },
+    ]);
+    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
+      { id: 1001 },
+    ]);
+
+    await reconcileOptionalProviderAccess();
+
+    expect(chrome.storage.sync.set).not.toHaveBeenCalled();
+    expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
+      ids: ['qwen-cn-scripts'],
+    });
+    expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith({
+      removeRuleIds: [1001],
+      addRules: [],
+    });
   });
 
   it('registers scripts and frame rules only for enabled providers with access', async () => {

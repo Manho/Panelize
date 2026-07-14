@@ -1,5 +1,8 @@
 import { DEFAULT_PROVIDER_IDS } from './provider-defaults.js';
-import { OPTIONAL_PROVIDER_CONFIGS } from './optional-provider-access.js';
+import {
+  OPTIONAL_PROVIDER_CONFIGS,
+  filterProvidersWithGrantedAccess
+} from './optional-provider-access.js';
 
 export const PROVIDERS = [
   {
@@ -137,8 +140,10 @@ export async function getEnabledProviders() {
     console.warn('Failed to load provider settings, using defaults');
   }
 
-  // Filter enabled providers
-  let enabledProviders = PROVIDERS.filter(p => settings.enabledProviders.includes(p.id));
+  // Synced preferences may include optional providers that are not authorized on
+  // this device. Keep the preference intact, but do not load inaccessible panels.
+  const availableProviderIds = await filterProvidersWithGrantedAccess(settings.enabledProviders);
+  let enabledProviders = PROVIDERS.filter(p => availableProviderIds.includes(p.id));
 
   // Sort by custom order if available
   if (settings.providerOrder && Array.isArray(settings.providerOrder)) {
