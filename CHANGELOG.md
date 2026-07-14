@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2 - 2026-07-14
+- Added: Qwen (China) and Qwen (Global) providers with independent, on-demand site permissions.
+- Added: 1x9, 1x10, and 2x5 layouts for workspaces with up to ten panels.
+- Improved: Optional provider access now applies immediately without requiring an extension restart.
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
