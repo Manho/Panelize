@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3 - 2026-07-14
+- Fix Qwen providers being disabled after refresh by preserving synced provider preferences
+- Keep optional provider permissions device-local and add regression coverage
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
