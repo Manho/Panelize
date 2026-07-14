@@ -78,7 +78,7 @@ export const PROVIDERS = [
   },
   {
     id: 'qwen-cn',
-    name: 'Qwen China',
+    name: 'Qwen (China)',
     url: 'https://www.qianwen.com/',
     topLevelUrl: 'https://www.qianwen.com/',
     icon: '/icons/providers/qwen.png',
@@ -88,7 +88,7 @@ export const PROVIDERS = [
   },
   {
     id: 'qwen-global',
-    name: 'Qwen Global',
+    name: 'Qwen (Global)',
     url: 'https://chat.qwen.ai/',
     topLevelUrl: 'https://chat.qwen.ai/',
     icon: '/icons/providers/qwen.png',

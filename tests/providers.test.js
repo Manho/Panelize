@@ -32,12 +32,12 @@ describe('providers module', () => {
 
     it('defines both Qwen sites as optional providers', () => {
       expect(getProviderById('qwen-cn')).toMatchObject({
-        name: 'Qwen China',
+        name: 'Qwen (China)',
         url: 'https://www.qianwen.com/',
         optionalOrigins: ['https://www.qianwen.com/*'],
       });
       expect(getProviderById('qwen-global')).toMatchObject({
-        name: 'Qwen Global',
+        name: 'Qwen (Global)',
         url: 'https://chat.qwen.ai/',
         optionalOrigins: ['https://chat.qwen.ai/*'],
       });
