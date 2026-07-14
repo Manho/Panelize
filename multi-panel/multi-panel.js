@@ -108,7 +108,7 @@ let isPopupWindow = false;   // 当前窗口是否为弹出窗口
 
 // Default panel configuration
 const DEFAULT_PROVIDERS = DEFAULT_PROVIDER_IDS;
-const MAX_PANELS = 8;
+const MAX_PANELS = 10;
 const PENDING_MULTI_PANEL_ACTION_KEY = 'pendingMultiPanelAction';
 const SEND_FOCUS_RESTORE_DELAYS = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
 const SEND_FOCUS_NO_BUSY_TIMEOUT_MS = 2000;
@@ -143,10 +143,13 @@ const LAYOUT_PANEL_COUNTS = {
   '1x6': 6,
   '1x7': 7,
   '1x8': 8,
+  '1x9': 9,
+  '1x10': 10,
   '2x1': 2,
   '2x2': 4,
   '2x3': 6,
   '2x4': 8,
+  '2x5': 10,
   '3x1': 3,
   '3x2': 6,
   '3x3': 9,
@@ -1173,30 +1176,34 @@ async function initializePanels() {
  * @returns {string|null} - New layout name, or null if no adjustment needed
  */
 function getAutoAdjustedLayout(currentLayout, newPanelCount) {
-  // 只处理 1xN 布局
-  const match = currentLayout.match(/^1x(\d)$/);
+  if (currentLayout === '4x2' && newPanelCount === 9) {
+    return '1x9';
+  }
+
+  // Only handle 1xN layouts.
+  const match = currentLayout.match(/^1x(\d+)$/);
   if (!match) return null;
   
   const currentCols = parseInt(match[1]);
   const currentCapacity = LAYOUT_PANEL_COUNTS[currentLayout];
   
-  // 如果新面板数不超过容量，无需调整
+  // Keep the current layout while the new panel still fits.
   if (newPanelCount <= currentCapacity) return null;
   
   if (currentLayout === '1x7' && newPanelCount === 8) {
     return '4x2';
   }
 
-  // 计算下一级布局
+  // Advance to the next 1xN layout.
   const nextCols = currentCols + 1;
   const nextLayout = `1x${nextCols}`;
 
-  // 1x8 remains a manual layout option; auto-expand still prefers 4x2 for the 8th panel
+  // 1x8 remains manual because auto-expand prefers 4x2 for the 8th panel.
   if (LAYOUT_PANEL_COUNTS[nextLayout]) {
     return nextLayout;
   }
 
-  return null; // 已达上限，无法自动调整
+  return null;
 }
 
 /**
@@ -1207,12 +1214,16 @@ function getAutoAdjustedLayout(currentLayout, newPanelCount) {
  * @returns {string|null} - New layout name, or null if no adjustment needed
  */
 function getAutoShrunkLayout(currentLayout, newPanelCount) {
+  if (currentLayout === '1x9' && newPanelCount === 8) {
+    return '4x2';
+  }
+
   if (currentLayout === '4x2' && newPanelCount === 7) {
     return '1x7';
   }
 
   // Only handle 1xN layouts (consistent with auto-expand behavior)
-  const match = currentLayout.match(/^1x(\d)$/);
+  const match = currentLayout.match(/^1x(\d+)$/);
   if (!match) return null;
 
   const currentCols = parseInt(match[1]);

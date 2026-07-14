@@ -141,7 +141,7 @@
     "message": "Personaliza cómo funcionan la tecla Enter y las teclas modificadoras al escribir en los campos de entrada de proveedores de IA."
   },
   "descEnterBehavior2": {
-    "message": "<strong>Se aplica a:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao y Google (Modo IA)."
+    "message": "<strong>Se aplica a:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen (China), Qwen (Global) y Google (Modo IA)."
   },
   "labelEnableEnterCustomization": {
     "message": "Habilitar Personalización de Tecla Enter"
@@ -289,6 +289,14 @@
   },
   "msgProviderSettingsUpdated": {
     "message": "Configuración de proveedores actualizada"
+  },
+  "msgProviderPermissionRequired": {
+    "message": "Se requiere acceso al sitio para habilitar $PROVIDER$.",
+    "placeholders": { "provider": { "content": "$1" } }
+  },
+  "msgProviderPermissionRequestFailed": {
+    "message": "No se pudo solicitar acceso al sitio para $PROVIDER$.",
+    "placeholders": { "provider": { "content": "$1" } }
   },
   "msgShortcutEnabled": {
     "message": "Atajo de teclado habilitado"
