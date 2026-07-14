@@ -59,6 +59,13 @@
       '.flow-chat-editor [contenteditable="true"]',
       '[contenteditable="true"][role="textbox"]'
     ],
+    'qwen-cn': [
+      '[data-chat-input-layout="true"] [data-chat-input-body="true"] [data-slate-editor="true"][contenteditable="true"][role="textbox"]'
+    ],
+    'qwen-global': [
+      '#message-input-container textarea.message-input-textarea',
+      '.message-input-container textarea.message-input-textarea'
+    ],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -88,6 +95,8 @@
     deepseek: true,
     kimi: true,  // Kimi supports images
     doubao: true,
+    'qwen-cn': true,
+    'qwen-global': true,
     google: true  // Google AI Mode supports images
   };
 
@@ -100,6 +109,11 @@
     deepseek: ['input[type="file"]'],
     kimi: ['input[type="file"]'],
     doubao: ['input[type="file"]'],
+    'qwen-cn': ['input[type="file"][accept*="image"]'],
+    'qwen-global': [
+      '.message-input-container input#filesUpload',
+      '#dropzone-container input#filesUpload'
+    ],
     google: ['input[type="file"]']
   };
 
@@ -113,6 +127,13 @@
     kimi: [],  // Kimi supports drag-drop for images
     doubao: [
       '#input-engine-container button[data-slot="dropdown-menu-trigger"][aria-haspopup="menu"]'
+    ],
+    'qwen-cn': [
+      '[data-chat-input-layout="true"] button[aria-label="添加附件"]',
+      'button[aria-label="添加附件"]'
+    ],
+    'qwen-global': [
+      '.message-input-wrapper .mode-select-open'
     ],
     google: [
       'button[aria-label="更多输入项"]',
@@ -182,6 +203,13 @@
       'button[aria-label="发送"]',
       'button[type="submit"]'
     ],
+    'qwen-cn': [
+      '[data-chat-input-layout="true"] button[aria-label="发送消息"]'
+    ],
+    'qwen-global': [
+      '#message-input-container .chat-prompt-send-button button.send-button',
+      '.message-input-container .chat-prompt-send-button button.send-button'
+    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -238,6 +266,13 @@
       'button[aria-label*="New"]',
       'button[aria-label*="新建"]'
     ],
+    'qwen-cn': [
+      '#new-nav-tab-wrapper button:has([data-icon-type="qwpcicon-newDialogue"])'
+    ],
+    'qwen-global': [
+      'button.new-chat',
+      '[data-testid="sidebar-new-chat-button"]'
+    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -254,6 +289,8 @@
     deepseek: 'https://chat.deepseek.com/',
     kimi: 'https://www.kimi.com/',
     doubao: 'https://www.doubao.com/chat/',
+    'qwen-cn': 'https://www.qianwen.com/',
+    'qwen-global': 'https://chat.qwen.ai/c/new-chat',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -287,6 +324,10 @@
       return 'kimi';
     } else if (hostname.includes('doubao.com')) {
       return 'doubao';
+    } else if (hostname === 'www.qianwen.com') {
+      return 'qwen-cn';
+    } else if (hostname === 'chat.qwen.ai') {
+      return 'qwen-global';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
@@ -1054,7 +1095,7 @@
     }
 
     // Special handling for providers that can fall back to Enter on the editor
-    if (provider === 'kimi' || provider === 'doubao') {
+    if (provider === 'kimi' || provider === 'doubao' || provider === 'qwen-cn' || provider === 'qwen-global') {
       console.log('[Text Injection] Provider send button not found, trying Enter key on input:', provider);
       try {
         const inputSelectors = PROVIDER_SELECTORS[provider];
@@ -1250,7 +1291,7 @@
   }
 
   // Inject text into an element (textarea or contenteditable)
-  function injectTextIntoElement(element, text) {
+  function injectTextIntoElement(element, text, provider = null) {
     if (!element || !text || typeof text !== 'string' || text.trim() === '') {
       return false;
     }
@@ -1284,6 +1325,22 @@
           selection.addRange(range);
         } catch (e) {
           // Ignore selection errors in cross-origin context
+        }
+
+        if (provider === 'qwen-cn') {
+          // Qwen China uses Slate's beforeinput handler as its source of truth.
+          // A DOM-only insertion is visible but leaves the send control disabled.
+          const beforeInputEvent = new InputEvent('beforeinput', {
+            inputType: 'insertText',
+            data: text,
+            bubbles: true,
+            cancelable: true,
+            composed: true
+          });
+
+          if (!element.dispatchEvent(beforeInputEvent)) {
+            return true;
+          }
         }
 
         // Use execCommand insertText to append - works well with ProseMirror/Lexical/Quill
@@ -1361,7 +1418,7 @@
     for (const selector of selectors) {
       const element = findTextInputElement(selector);
       if (element) {
-        const success = injectTextIntoElement(element, text);
+        const success = injectTextIntoElement(element, text, provider);
         if (success) {
           console.log('[Text Injection] Text injected via injectText helper for', provider);
           if (autoSubmit) {
@@ -1479,6 +1536,9 @@
         return await tryDragDropUpload(provider, imageData);
       case 'doubao':
         return await injectImageToDoubao(imageData);
+      case 'qwen-cn':
+      case 'qwen-global':
+        return await injectImageToQwen(provider, imageData);
       case 'google':
         return await injectImageToGoogle(imageData);
       default:
@@ -1697,6 +1757,140 @@
       console.error('[Image Injection] Doubao error:', error);
       return false;
     }
+  }
+
+  async function injectImageToQwen(provider, imageData) {
+    try {
+      const blob = await dataUrlToBlob(imageData.dataUrl);
+      const file = new File([blob], imageData.name, { type: imageData.type });
+
+      if (provider === 'qwen-global') {
+        return await injectImageToQwenGlobal(file);
+      }
+
+      return await injectImageToQwenChina(file);
+    } catch (error) {
+      console.error('[Image Injection] Qwen error:', provider, error);
+      return false;
+    }
+  }
+
+  async function injectImageToQwenChina(file) {
+    const composer = document.querySelector('[data-chat-input-layout="true"]');
+    if (!composer) {
+      console.warn('[Image Injection] Qwen China composer not found');
+      return false;
+    }
+
+    const previewCount = countQwenImagePreviews('qwen-cn');
+    let fileInput = findQwenFileInput('qwen-cn');
+
+    // Qwen China mounts its hidden image input only after a drag interaction.
+    if (!fileInput) {
+      dispatchFileDragEvents(composer, file);
+      fileInput = await waitForQwenFileInput('qwen-cn', 1000);
+    }
+
+    if (!fileInput) {
+      console.warn('[Image Injection] Qwen China image input not found');
+      return false;
+    }
+
+    if (!assignFilesToInput(fileInput, [file])) {
+      return false;
+    }
+
+    fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const accepted = await waitForQwenImagePreview('qwen-cn', previewCount, 6000);
+    if (!accepted) {
+      console.warn('[Image Injection] Qwen China upload did not produce an image preview');
+    }
+    return accepted;
+  }
+
+  async function injectImageToQwenGlobal(file) {
+    const editor = document.querySelector('.message-input-textarea');
+
+    if (!editor) {
+      console.warn('[Image Injection] Qwen Global editor not found');
+      return false;
+    }
+
+    const previewCount = countQwenImagePreviews('qwen-global');
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    editor.focus();
+    editor.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer
+    }));
+
+    const accepted = await waitForQwenImagePreview('qwen-global', previewCount, 6000);
+    if (!accepted) {
+      console.warn('[Image Injection] Qwen Global upload did not produce an image preview');
+    }
+    return accepted;
+  }
+
+  function dispatchFileDragEvents(target, file) {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    ['dragenter', 'dragover', 'drop'].forEach(type => {
+      target.dispatchEvent(new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer
+      }));
+    });
+  }
+
+  function findQwenFileInput(provider) {
+    const selectors = FILE_INPUT_SELECTORS[provider] || [];
+    return selectors
+      .map(selector => document.querySelector(selector))
+      .find(Boolean) || null;
+  }
+
+  async function waitForQwenFileInput(provider, timeoutMs) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const fileInput = findQwenFileInput(provider);
+      if (fileInput) {
+        return fileInput;
+      }
+
+      await sleep(100);
+    }
+
+    return null;
+  }
+
+  function countQwenImagePreviews(provider) {
+    const selector = provider === 'qwen-cn'
+      ? '[data-chat-input-layout="true"] img[alt="avatar"]'
+      : '.vision-item-image';
+    return document.querySelectorAll(selector).length;
+  }
+
+  async function waitForQwenImagePreview(provider, previousCount, timeoutMs) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      if (countQwenImagePreviews(provider) > previousCount) {
+        console.log('[Image Injection] Qwen image preview detected for:', provider);
+        return true;
+      }
+
+      await sleep(100);
+    }
+
+    return false;
   }
 
   async function waitForDoubaoFileInput(timeoutMs = 800) {
@@ -2085,7 +2279,7 @@
     }
 
     if (element) {
-      const success = injectTextIntoElement(element, text);
+      const success = injectTextIntoElement(element, text, provider);
       if (success) {
         console.log('[Text Injection] Text injected into', provider, 'using selector:', matchedSelector);
 
@@ -2124,7 +2318,7 @@
             }
           }
           if (retryElement) {
-            const success = injectTextIntoElement(retryElement, text);
+            const success = injectTextIntoElement(retryElement, text, provider);
             if (success) {
               console.log('[Text Injection] Text injected on retry into', provider, 'using selector:', retrySelector);
               if (shouldAutoSubmit) {

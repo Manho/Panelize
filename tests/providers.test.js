@@ -14,7 +14,7 @@ describe('providers module', () => {
 
   describe('PROVIDERS constant', () => {
     it('should contain all expected providers', () => {
-      expect(PROVIDERS).toHaveLength(8);
+      expect(PROVIDERS).toHaveLength(10);
       const providerIds = PROVIDERS.map((p) => p.id);
       expect(providerIds).toEqual([
         'chatgpt',
@@ -25,7 +25,22 @@ describe('providers module', () => {
         'kimi',
         'google',
         'doubao',
+        'qwen-cn',
+        'qwen-global',
       ]);
+    });
+
+    it('defines both Qwen sites as optional providers', () => {
+      expect(getProviderById('qwen-cn')).toMatchObject({
+        name: 'Qwen China',
+        url: 'https://www.qianwen.com/',
+        optionalOrigins: ['https://www.qianwen.com/*'],
+      });
+      expect(getProviderById('qwen-global')).toMatchObject({
+        name: 'Qwen Global',
+        url: 'https://chat.qwen.ai/',
+        optionalOrigins: ['https://chat.qwen.ai/*'],
+      });
     });
 
     it('should have required properties for each provider', () => {

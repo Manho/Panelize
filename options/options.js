@@ -1,6 +1,8 @@
 // T050-T064: Settings Page Implementation
 import { PROVIDERS, getProviderIcon } from '../modules/providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
+import { appendProviderToOrder, normalizeProviderOrder } from '../modules/provider-order.js';
+import { requestOptionalProviderPermission } from '../modules/optional-provider-access.js';
 import { getSettings, getSetting, saveSettings, saveSetting, resetSettings, exportSettings, importSettings } from '../modules/settings.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
@@ -118,23 +120,8 @@ function getEnabledProvidersOrDefault(settings) {
 }
 
 function getProviderDisplayOrder(settings) {
-  const savedOrder = Array.isArray(settings.providerOrder) ? settings.providerOrder : [];
   const allIds = PROVIDERS.map(provider => provider.id);
-  const orderedIds = [];
-
-  for (const id of savedOrder) {
-    if (allIds.includes(id) && !orderedIds.includes(id)) {
-      orderedIds.push(id);
-    }
-  }
-
-  for (const id of allIds) {
-    if (!orderedIds.includes(id)) {
-      orderedIds.push(id);
-    }
-  }
-
-  return orderedIds;
+  return normalizeProviderOrder(settings.providerOrder, allIds);
 }
 
 function isEdgeBrowser() {
@@ -367,6 +354,21 @@ async function renderProviderList() {
       const providerId = providerItem?.dataset.providerId || toggle.dataset.providerId;
       if (!providerId) return;
 
+      const provider = PROVIDERS.find(({ id }) => id === providerId);
+      if (!toggle.classList.contains('active') && provider?.optionalOrigins) {
+        try {
+          const permissionGranted = await requestOptionalProviderPermission(providerId);
+          if (!permissionGranted) {
+            showStatus('error', t('msgProviderPermissionRequired', provider.name));
+            return;
+          }
+        } catch (error) {
+          console.error(`Failed to request site access for ${providerId}:`, error);
+          showStatus('error', t('msgProviderPermissionRequestFailed', provider.name));
+          return;
+        }
+      }
+
       await toggleProvider(providerId);
     });
   });
@@ -461,6 +463,11 @@ async function saveProviderOrder(container) {
 async function toggleProvider(providerId) {
   const settings = await getSettings();
   let enabledProviders = getEnabledProvidersOrDefault(settings);
+  const provider = PROVIDERS.find(({ id }) => id === providerId);
+
+  if (!provider) {
+    return;
+  }
 
   if (enabledProviders.includes(providerId)) {
     // Disable - but ensure at least one provider remains enabled
@@ -475,7 +482,14 @@ async function toggleProvider(providerId) {
     enabledProviders.push(providerId);
   }
 
-  await saveSetting('enabledProviders', enabledProviders);
+  const providerOrder = appendProviderToOrder(
+    settings.providerOrder,
+    getEnabledProvidersOrDefault(settings),
+    providerId,
+    PROVIDERS.map(({ id }) => id)
+  );
+
+  await saveSettings({ enabledProviders, providerOrder });
   await renderProviderList();
   showStatus('success', t('msgProviderSettingsUpdated'));
 }

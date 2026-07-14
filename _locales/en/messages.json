@@ -201,7 +201,7 @@
     "message": "Customize how Enter and modifier keys work when typing in AI provider input fields."
   },
   "descEnterBehavior2": {
-    "message": "<strong>Applies to:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, and Google (AI Mode)."
+    "message": "<strong>Applies to:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen China, Qwen Global, and Google (AI Mode)."
   },
   "labelEnableEnterCustomization": {
     "message": "Enable Enter Key Customization"
@@ -349,6 +349,14 @@
   },
   "msgProviderSettingsUpdated": {
     "message": "Provider settings updated"
+  },
+  "msgProviderPermissionRequired": {
+    "message": "Site access is required to enable $PROVIDER$.",
+    "placeholders": { "provider": { "content": "$1" } }
+  },
+  "msgProviderPermissionRequestFailed": {
+    "message": "Could not request site access for $PROVIDER$.",
+    "placeholders": { "provider": { "content": "$1" } }
   },
   "msgShortcutEnabled": {
     "message": "Keyboard shortcut enabled"

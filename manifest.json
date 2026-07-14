@@ -28,6 +28,10 @@
     "*://api.github.com/*",
     "*://raw.githubusercontent.com/*"
   ],
+  "optional_host_permissions": [
+    "https://www.qianwen.com/*",
+    "https://chat.qwen.ai/*"
+  ],
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"

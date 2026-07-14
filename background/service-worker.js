@@ -1,6 +1,10 @@
 import { notifyMessage } from '../modules/messaging.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
 import { migrateEnabledProvidersOnUpdate } from '../modules/provider-defaults.js';
+import {
+  filterProvidersWithGrantedAccess,
+  syncOptionalProviderAccess
+} from '../modules/optional-provider-access.js';
 
 // Install event - setup context menus
 const DEFAULT_SHORTCUT_SETTING = { keyboardShortcutEnabled: true };
@@ -110,14 +114,46 @@ async function migrateProviderSettingsForUpdate(details) {
   }
 }
 
+async function reconcileOptionalProviderAccess() {
+  try {
+    const settings = await chrome.storage.sync.get({ enabledProviders: [] });
+    const enabledProviders = Array.isArray(settings.enabledProviders)
+      ? settings.enabledProviders
+      : [];
+    const providersWithAccess = await filterProvidersWithGrantedAccess(enabledProviders);
+
+    if (providersWithAccess.length !== enabledProviders.length) {
+      await chrome.storage.sync.set({ enabledProviders: providersWithAccess });
+    }
+
+    await syncOptionalProviderAccess(providersWithAccess);
+  } catch (error) {
+    console.error('[Background] Failed to synchronize optional provider access:', error);
+  }
+}
+
+let optionalProviderReconcileQueue = Promise.resolve();
+
+function scheduleOptionalProviderReconcile() {
+  optionalProviderReconcileQueue = optionalProviderReconcileQueue
+    .then(() => reconcileOptionalProviderAccess())
+    .catch((error) => {
+      console.error('[Background] Optional provider reconciliation queue failed:', error);
+    });
+
+  return optionalProviderReconcileQueue;
+}
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   await migrateProviderSettingsForUpdate(details);
+  await scheduleOptionalProviderReconcile();
   await createContextMenus();
   await loadShortcutSetting();
   await loadOpenModeSetting();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+  await scheduleOptionalProviderReconcile();
   await loadShortcutSetting();
   await loadOpenModeSetting();
 });
@@ -148,7 +184,23 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'sync' && changes.openMode) {
     openMode = changes.openMode.newValue || 'tab';
   }
+
+  if (namespace === 'sync' && changes.enabledProviders) {
+    scheduleOptionalProviderReconcile();
+  }
 });
+
+if (chrome.permissions?.onAdded) {
+  chrome.permissions.onAdded.addListener(() => {
+    scheduleOptionalProviderReconcile();
+  });
+}
+
+if (chrome.permissions?.onRemoved) {
+  chrome.permissions.onRemoved.addListener(() => {
+    scheduleOptionalProviderReconcile();
+  });
+}
 
 async function formatSelectedTextWithSource(info) {
   const settings = await chrome.storage.sync.get({ sourceUrlPlacement: 'none' });

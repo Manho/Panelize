@@ -8,8 +8,12 @@ const PROVIDER_ALLOWED_HOSTS = {
   deepseek: new Set(['chat.deepseek.com']),
   kimi: new Set(['www.kimi.com', 'kimi.com']),
   google: new Set(['www.google.com', 'google.com']),
-  doubao: new Set(['www.doubao.com', 'doubao.com'])
+  doubao: new Set(['www.doubao.com', 'doubao.com']),
+  'qwen-cn': new Set(['www.qianwen.com']),
+  'qwen-global': new Set(['chat.qwen.ai'])
 };
+
+const QWEN_GLOBAL_NON_CONVERSATION_IDS = new Set(['new-chat', 'new-branch', 'guest']);
 
 function parseHttpUrl(url) {
   if (!url || typeof url !== 'string') {
@@ -73,6 +77,15 @@ export function isProviderCurrentUrl(providerId, rawUrl) {
       return isGenericPath(url, ['/', '/webhp', '/search']);
     case 'doubao':
       return url.pathname.startsWith('/chat/') && url.pathname !== '/chat/';
+    case 'qwen-cn':
+      return false;
+    case 'qwen-global': {
+      const conversationMatch = url.pathname.match(/^\/c\/([^/]+)\/?$/);
+      return Boolean(
+        conversationMatch &&
+        !QWEN_GLOBAL_NON_CONVERSATION_IDS.has(conversationMatch[1])
+      );
+    }
     default:
       return false;
   }

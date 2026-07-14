@@ -141,7 +141,7 @@
     "message": "Passen Sie an, wie die Enter-Taste und Modifikatortasten funktionieren, wenn Sie in KI-Anbieter-Eingabefeldern tippen."
   },
   "descEnterBehavior2": {
-    "message": "<strong>Gilt für:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao und Google (KI-Modus)."
+    "message": "<strong>Gilt für:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen China, Qwen Global und Google (KI-Modus)."
   },
   "labelEnableEnterCustomization": {
     "message": "Enter-Tasten-Anpassung aktivieren"
@@ -289,6 +289,14 @@
   },
   "msgProviderSettingsUpdated": {
     "message": "Anbietereinstellungen aktualisiert"
+  },
+  "msgProviderPermissionRequired": {
+    "message": "Websitezugriff ist erforderlich, um $PROVIDER$ zu aktivieren.",
+    "placeholders": { "provider": { "content": "$1" } }
+  },
+  "msgProviderPermissionRequestFailed": {
+    "message": "Websitezugriff für $PROVIDER$ konnte nicht angefordert werden.",
+    "placeholders": { "provider": { "content": "$1" } }
   },
   "msgShortcutEnabled": {
     "message": "Tastaturkürzel aktiviert"

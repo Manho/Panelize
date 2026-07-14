@@ -141,7 +141,7 @@
     "message": "自訂在 AI 提供者輸入欄位中輸入時 Enter 鍵和修飾鍵的工作方式。"
   },
   "descEnterBehavior2": {
-    "message": "<strong>適用於:</strong> ChatGPT、Claude、Gemini、Grok、DeepSeek、Kimi、Doubao 和 Google(AI 模式)。"
+    "message": "<strong>適用於:</strong> ChatGPT、Claude、Gemini、Grok、DeepSeek、Kimi、Doubao、Qwen China、Qwen Global 和 Google(AI 模式)。"
   },
   "labelEnableEnterCustomization": {
     "message": "啟用 Enter 鍵自訂"
@@ -289,6 +289,14 @@
   },
   "msgProviderSettingsUpdated": {
     "message": "提供者設定已更新"
+  },
+  "msgProviderPermissionRequired": {
+    "message": "需要網站存取權限才能啟用 $PROVIDER$。",
+    "placeholders": { "provider": { "content": "$1" } }
+  },
+  "msgProviderPermissionRequestFailed": {
+    "message": "無法為 $PROVIDER$ 請求網站存取權限。",
+    "placeholders": { "provider": { "content": "$1" } }
   },
   "msgShortcutEnabled": {
     "message": "鍵盤快速鍵已啟用"

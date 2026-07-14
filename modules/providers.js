@@ -1,4 +1,5 @@
 import { DEFAULT_PROVIDER_IDS } from './provider-defaults.js';
+import { OPTIONAL_PROVIDER_CONFIGS } from './optional-provider-access.js';
 
 export const PROVIDERS = [
   {
@@ -74,6 +75,26 @@ export const PROVIDERS = [
     icon: '/icons/providers/doubao.png',
     iconDark: '/icons/providers/dark/doubao.png',
     enabled: true
+  },
+  {
+    id: 'qwen-cn',
+    name: 'Qwen China',
+    url: 'https://www.qianwen.com/',
+    topLevelUrl: 'https://www.qianwen.com/',
+    icon: '/icons/providers/qwen.png',
+    iconDark: '/icons/providers/dark/qwen.png',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS['qwen-cn'].origins
+  },
+  {
+    id: 'qwen-global',
+    name: 'Qwen Global',
+    url: 'https://chat.qwen.ai/',
+    topLevelUrl: 'https://chat.qwen.ai/',
+    icon: '/icons/providers/qwen.png',
+    iconDark: '/icons/providers/dark/qwen.png',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS['qwen-global'].origins
   }
 ];
 
