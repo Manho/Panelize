@@ -814,7 +814,46 @@
     "message": "在新标签页中打开"
   },
   "embeddedModelLimitNotice": {
-    "message": "Claude 在嵌入时可能只显示有限模型。请在普通标签页中打开 Claude，以使用常规模型选择器。"
+    "message": "Claude 会限制内嵌页面中的模型选择。Panelize 可以通过实验性方式请求指定模型。"
+  },
+  "embeddedModelOverrideNotice": {
+    "message": "实验性请求：$MODEL$。是否可用取决于你的 Claude 账号。",
+    "placeholders": {
+      "model": {
+        "content": "$1"
+      }
+    }
+  },
+  "claudeModelDefault": {
+    "message": "Claude 默认模型"
+  },
+  "claudeModelExperimentalBadge": {
+    "message": "实验性"
+  },
+  "claudeModelExperimentalTitle": {
+    "message": "实验性兼容模式"
+  },
+  "claudeModelSelectTitle": {
+    "message": "Claude 模型请求"
+  },
+  "claudeModelRequestedStatus": {
+    "message": "已请求 $MODEL$",
+    "placeholders": {
+      "model": {
+        "content": "$1"
+      }
+    }
+  },
+  "claudeModelOverrideUnavailable": {
+    "message": "模型覆盖不可用，已切换到 Claude 默认模型。"
+  },
+  "claudeModelRequestRejected": {
+    "message": "模型请求被拒绝（HTTP $STATUS$），已切换到 Claude 默认模型。",
+    "placeholders": {
+      "status": {
+        "content": "$1"
+      }
+    }
   },
   "msgOpenModeUpdated": {
     "message": "打开模式已更新"

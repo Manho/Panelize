@@ -813,6 +813,26 @@
   "switchToPopupModeTitle": {
     "message": "팝업 모드로 전환"
   },
+  "openProviderTopLevel": { "message": "Claude 열기" },
+  "openProviderTopLevelTitle": { "message": "새 탭에서 열기" },
+  "embeddedModelLimitNotice": { "message": "Claude는 임베드된 화면에서 모델 선택을 제한합니다. Panelize가 실험적으로 모델을 요청할 수 있습니다." },
+  "embeddedModelOverrideNotice": {
+    "message": "실험적 요청: $MODEL$. 사용 가능 여부는 Claude 계정에 따라 달라집니다.",
+    "placeholders": { "model": { "content": "$1" } }
+  },
+  "claudeModelDefault": { "message": "Claude 기본값" },
+  "claudeModelExperimentalBadge": { "message": "실험적" },
+  "claudeModelExperimentalTitle": { "message": "실험적 호환 모드" },
+  "claudeModelSelectTitle": { "message": "Claude 모델 요청" },
+  "claudeModelRequestedStatus": {
+    "message": "$MODEL$ 요청됨",
+    "placeholders": { "model": { "content": "$1" } }
+  },
+  "claudeModelOverrideUnavailable": { "message": "모델 재정의를 사용할 수 없습니다. Claude 기본값으로 전환했습니다." },
+  "claudeModelRequestRejected": {
+    "message": "모델 요청이 거부되었습니다(HTTP $STATUS$). Claude 기본값으로 전환했습니다.",
+    "placeholders": { "status": { "content": "$1" } }
+  },
   "msgOpenModeUpdated": {
     "message": "열기 모드가 업데이트되었습니다"
   },

@@ -1,9 +1,11 @@
 import { DEFAULT_GOOGLE_PROVIDER_MODE } from './google-mode.js';
+import { DEFAULT_CLAUDE_MODEL_MODE } from './claude-model-mode.js';
 import { DEFAULT_PROVIDER_IDS } from './provider-defaults.js';
 
 const DEFAULT_SETTINGS = {
   enabledProviders: DEFAULT_PROVIDER_IDS,
   googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE,
+  claudeModelMode: DEFAULT_CLAUDE_MODEL_MODE,
   providerOrder: null,
   defaultProvider: 'chatgpt',
   lastSelectedProvider: 'chatgpt',

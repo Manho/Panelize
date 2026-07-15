@@ -813,6 +813,26 @@
   "switchToPopupModeTitle": {
     "message": "Zum Popup-Modus wechseln"
   },
+  "openProviderTopLevel": { "message": "Claude öffnen" },
+  "openProviderTopLevelTitle": { "message": "In neuem Tab öffnen" },
+  "embeddedModelLimitNotice": { "message": "Claude schränkt die Modellauswahl in eingebetteten Ansichten ein. Panelize kann experimentell ein Modell anfordern." },
+  "embeddedModelOverrideNotice": {
+    "message": "Experimentelle Anfrage: $MODEL$. Die Verfügbarkeit hängt von deinem Claude-Konto ab.",
+    "placeholders": { "model": { "content": "$1" } }
+  },
+  "claudeModelDefault": { "message": "Claude-Standard" },
+  "claudeModelExperimentalBadge": { "message": "Experimentell" },
+  "claudeModelExperimentalTitle": { "message": "Experimenteller Kompatibilitätsmodus" },
+  "claudeModelSelectTitle": { "message": "Claude-Modellanfrage" },
+  "claudeModelRequestedStatus": {
+    "message": "$MODEL$ angefordert",
+    "placeholders": { "model": { "content": "$1" } }
+  },
+  "claudeModelOverrideUnavailable": { "message": "Die Modellüberschreibung ist nicht verfügbar. Claude-Standard wurde aktiviert." },
+  "claudeModelRequestRejected": {
+    "message": "Die Modellanforderung wurde abgelehnt (HTTP $STATUS$). Claude-Standard wurde aktiviert.",
+    "placeholders": { "status": { "content": "$1" } }
+  },
   "msgOpenModeUpdated": {
     "message": "Öffnungsmodus aktualisiert"
   },
