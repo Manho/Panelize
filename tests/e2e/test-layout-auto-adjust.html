@@ -36,6 +36,8 @@
     .layout-1x8 { grid-template-columns: repeat(8, 1fr); }
     .layout-1x9 { grid-template-columns: repeat(9, 1fr); }
     .layout-1x10 { grid-template-columns: repeat(10, 1fr); }
+    .layout-1x11 { grid-template-columns: repeat(11, 1fr); }
+    .layout-1x12 { grid-template-columns: repeat(12, 1fr); }
     .layout-2x4, .layout-4x2 { grid-template-columns: repeat(4, 1fr); grid-template-rows: 1fr 1fr; }
     .layout-2x1 { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
     .layout-2x2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
@@ -115,17 +117,17 @@
   
   <div class="status">
     Current Layout: <span id="current-layout" class="current-layout">1x2</span> | 
-    Panels: <span id="panel-count">0</span>/10
+    Panels: <span id="panel-count">0</span>/11
   </div>
 
   <script>
     // LAYOUT_PANEL_COUNTS constant
     const LAYOUT_PANEL_COUNTS = {
-      '1x1': 1, '1x2': 2, '1x3': 3, '1x4': 4, '1x5': 5, '1x6': 6, '1x7': 7, '1x8': 8, '1x9': 9, '1x10': 10,
-      '2x1': 2, '2x2': 4, '2x3': 6, '2x4': 8, '2x5': 10, '3x1': 3, '3x2': 6, '4x2': 8
+      '1x1': 1, '1x2': 2, '1x3': 3, '1x4': 4, '1x5': 5, '1x6': 6, '1x7': 7, '1x8': 8, '1x9': 9, '1x10': 10, '1x11': 11, '1x12': 12,
+      '2x1': 2, '2x2': 4, '2x3': 6, '2x4': 8, '2x5': 10, '2x6': 12, '3x1': 3, '3x2': 6, '4x2': 8
     };
     
-    const MAX_PANELS = 10;
+    const MAX_PANELS = 12;
     let currentLayout = '1x2';
     let panels = [];
     
@@ -166,7 +168,7 @@
     
     function addPanel(providerId) {
       if (panels.length >= MAX_PANELS) {
-        alert('Maximum number of panels reached (10)');
+        alert('Maximum number of panels reached (11)');
         return;
       }
       
@@ -278,6 +280,14 @@
 
       test('1x9 upgrades to 1x10 for the 10th panel', () => {
         assertEqual(getAutoAdjustedLayout('1x9', 10), '1x10', 'Should upgrade to 1x10 for 10 panels');
+      });
+
+      test('1x10 upgrades to 1x11 for the 11th panel', () => {
+        assertEqual(getAutoAdjustedLayout('1x10', 11), '1x11', 'Should upgrade to 1x11 for 11 panels');
+      });
+
+      test('1x11 upgrades to 1x12 for the 12th panel', () => {
+        assertEqual(getAutoAdjustedLayout('1x11', 12), '1x12', 'Should upgrade to 1x12 for 12 panels');
       });
       
       test('No upgrade for non-1xN layouts', () => {

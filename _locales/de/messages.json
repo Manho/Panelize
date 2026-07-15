@@ -141,7 +141,7 @@
     "message": "Passen Sie an, wie die Enter-Taste und Modifikatortasten funktionieren, wenn Sie in KI-Anbieter-Eingabefeldern tippen."
   },
   "descEnterBehavior2": {
-    "message": "<strong>Gilt für:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen (China), Qwen (Global) und Google (KI-Modus)."
+    "message": "<strong>Gilt für:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen (China), Qwen (Global), Zhipu (China), Z.ai (Global) und Google (KI-Modus)."
   },
   "labelEnableEnterCustomization": {
     "message": "Enter-Tasten-Anpassung aktivieren"

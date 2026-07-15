@@ -66,6 +66,14 @@
       '#message-input-container textarea.message-input-textarea',
       '.message-input-container textarea.message-input-textarea'
     ],
+    chatglm: [
+      '#search-input-box textarea.scroll-display-none',
+      'textarea.scroll-display-none'
+    ],
+    'zai-global': [
+      'textarea[placeholder="How can I help you today?"]',
+      'textarea.input-scroll'
+    ],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -97,6 +105,8 @@
     doubao: true,
     'qwen-cn': true,
     'qwen-global': true,
+    chatglm: true,
+    'zai-global': true,
     google: true  // Google AI Mode supports images
   };
 
@@ -114,6 +124,8 @@
       '.message-input-container input#filesUpload',
       '#dropzone-container input#filesUpload'
     ],
+    chatglm: ['input.el-upload__input[type="file"]'],
+    'zai-global': ['input[type="file"][multiple][accept*=".png"]'],
     google: ['input[type="file"]']
   };
 
@@ -203,6 +215,14 @@
       '#message-input-container .chat-prompt-send-button button.send-button',
       '.message-input-container .chat-prompt-send-button button.send-button'
     ],
+    chatglm: [
+      '#search-input-box .enter.is-main-chat .enter-icon-container',
+      '#search-input-box .enter.is-main-chat',
+      '.enter.is-main-chat'
+    ],
+    'zai-global': [
+      'button.sendMessageButton'
+    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -266,6 +286,11 @@
       'button.new-chat',
       '[data-testid="sidebar-new-chat-button"]'
     ],
+    chatglm: ['.aside-subjects .new-session'],
+    'zai-global': [
+      'button[aria-label="New Chat"]',
+      'button.navNewChat'
+    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -284,6 +309,8 @@
     doubao: 'https://www.doubao.com/chat/',
     'qwen-cn': 'https://www.qianwen.com/',
     'qwen-global': 'https://chat.qwen.ai/c/new-chat',
+    chatglm: 'https://chatglm.cn/',
+    'zai-global': 'https://chat.z.ai/',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -321,6 +348,10 @@
       return 'qwen-cn';
     } else if (hostname === 'chat.qwen.ai') {
       return 'qwen-global';
+    } else if (hostname === 'chatglm.cn') {
+      return 'chatglm';
+    } else if (hostname === 'chat.z.ai') {
+      return 'zai-global';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
@@ -1051,7 +1082,18 @@
           
           if (!isDisabled) {
             console.log('[Text Injection] Clicking send button:', selector, targetElement);
-            targetElement.click();
+            if (provider === 'chatglm') {
+              // ChatGLM submits from its mousedown handler; HTMLElement.click() skips it.
+              targetElement.dispatchEvent(new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0,
+                buttons: 1
+              }));
+            } else {
+              targetElement.click();
+            }
             return true;
           } else {
             console.log('[Text Injection] Button found but disabled:', selector);
@@ -1088,7 +1130,14 @@
     }
 
     // Special handling for providers that can fall back to Enter on the editor
-    if (provider === 'kimi' || provider === 'doubao' || provider === 'qwen-cn' || provider === 'qwen-global') {
+    if (
+      provider === 'kimi' ||
+      provider === 'doubao' ||
+      provider === 'qwen-cn' ||
+      provider === 'qwen-global' ||
+      provider === 'chatglm' ||
+      provider === 'zai-global'
+    ) {
       console.log('[Text Injection] Provider send button not found, trying Enter key on input:', provider);
       try {
         const inputSelectors = PROVIDER_SELECTORS[provider];
@@ -1416,7 +1465,13 @@
           console.log('[Text Injection] Text injected via injectText helper for', provider);
           if (autoSubmit) {
             // Use longer delay for providers whose composer state updates asynchronously
-            const delay = (provider === 'deepseek' || provider === 'kimi' || provider === 'doubao') ? 800 : 500;
+            const delay = (
+              provider === 'deepseek' ||
+              provider === 'kimi' ||
+              provider === 'doubao' ||
+              provider === 'chatglm' ||
+              provider === 'zai-global'
+            ) ? 800 : 500;
             setTimeout(() => clickSendButton(provider, providerMode), delay);
           }
           return true;
@@ -1532,6 +1587,10 @@
       case 'qwen-cn':
       case 'qwen-global':
         return await injectImageToQwen(provider, imageData);
+      case 'chatglm':
+        return await injectImageToChatGLM(imageData);
+      case 'zai-global':
+        return await injectImageToZaiGlobal(imageData);
       case 'google':
         return await injectImageToGoogle(imageData);
       default:
@@ -1884,6 +1943,134 @@
     }
 
     return false;
+  }
+
+  function countChatGLMImagePreviews() {
+    const previewList = document.querySelector('.file-list-box-content-list');
+    return previewList ? previewList.children.length : 0;
+  }
+
+  async function waitForChatGLMImagePreview(previousCount, timeoutMs) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      if (countChatGLMImagePreviews() > previousCount) {
+        console.log('[Image Injection] ChatGLM image preview detected');
+        return true;
+      }
+
+      await sleep(100);
+    }
+
+    return false;
+  }
+
+  function findChatGLMFileInput() {
+    return document.querySelector('.upload-popover input.el-upload__input[type="file"]') ||
+      document.querySelector('input.el-upload__input[type="file"]');
+  }
+
+  async function waitForChatGLMFileInput(timeoutMs) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const fileInput = findChatGLMFileInput();
+      if (fileInput) {
+        return fileInput;
+      }
+
+      await sleep(100);
+    }
+
+    return null;
+  }
+
+  async function injectImageToChatGLM(imageData) {
+    try {
+      let fileInput = findChatGLMFileInput();
+
+      if (!fileInput) {
+        const uploadButton = document.querySelector('.upload-image-btn-container');
+        if (uploadButton) {
+          uploadButton.click();
+          fileInput = await waitForChatGLMFileInput(1000);
+        }
+      }
+
+      if (!fileInput) {
+        console.warn('[Image Injection] ChatGLM image input not found');
+        return false;
+      }
+
+      const previousCount = countChatGLMImagePreviews();
+      const blob = await dataUrlToBlob(imageData.dataUrl);
+      const file = new File([blob], imageData.name, { type: imageData.type });
+
+      if (!assignFilesToInput(fileInput, [file])) {
+        return false;
+      }
+
+      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      const accepted = await waitForChatGLMImagePreview(previousCount, 6000);
+      if (!accepted) {
+        console.warn('[Image Injection] ChatGLM upload did not produce an image preview');
+      }
+      return accepted;
+    } catch (error) {
+      console.error('[Image Injection] ChatGLM error:', error);
+      return false;
+    }
+  }
+
+  function countZaiGlobalImagePreviews() {
+    return document.querySelectorAll('.chip-scroll img[data-cy="image"]').length;
+  }
+
+  async function waitForZaiGlobalImagePreview(previousCount, timeoutMs) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      if (countZaiGlobalImagePreviews() > previousCount) {
+        console.log('[Image Injection] Z.ai Global image preview detected');
+        return true;
+      }
+
+      await sleep(100);
+    }
+
+    return false;
+  }
+
+  async function injectImageToZaiGlobal(imageData) {
+    try {
+      const fileInput = document.querySelector('input[type="file"][multiple][accept*=".png"]');
+      if (!fileInput) {
+        console.warn('[Image Injection] Z.ai Global image input not found');
+        return false;
+      }
+
+      const previousCount = countZaiGlobalImagePreviews();
+      const blob = await dataUrlToBlob(imageData.dataUrl);
+      const file = new File([blob], imageData.name, { type: imageData.type });
+
+      if (!assignFilesToInput(fileInput, [file])) {
+        return false;
+      }
+
+      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      const accepted = await waitForZaiGlobalImagePreview(previousCount, 6000);
+      if (!accepted) {
+        console.warn('[Image Injection] Z.ai Global upload did not produce an image preview');
+      }
+      return accepted;
+    } catch (error) {
+      console.error('[Image Injection] Z.ai Global error:', error);
+      return false;
+    }
   }
 
   async function waitForDoubaoFileInput(timeoutMs = 800) {

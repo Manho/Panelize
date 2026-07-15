@@ -52,6 +52,24 @@ export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze({
       'content-scripts/enter-behavior-qwen-global.js'
     )),
     frameRule: Object.freeze(createFrameRule(1002, 'https://chat.qwen.ai/*'))
+  }),
+  chatglm: Object.freeze({
+    origins: Object.freeze(['https://chatglm.cn/*']),
+    contentScript: Object.freeze(createContentScript(
+      'chatglm-scripts',
+      ['https://chatglm.cn/*'],
+      'content-scripts/enter-behavior-chatglm.js'
+    )),
+    frameRule: Object.freeze(createFrameRule(1003, 'https://chatglm.cn/*'))
+  }),
+  'zai-global': Object.freeze({
+    origins: Object.freeze(['https://chat.z.ai/*']),
+    contentScript: Object.freeze(createContentScript(
+      'zai-global-scripts',
+      ['https://chat.z.ai/*'],
+      'content-scripts/enter-behavior-zai-global.js'
+    )),
+    frameRule: Object.freeze(createFrameRule(1004, 'https://chat.z.ai/*'))
   })
 });
 

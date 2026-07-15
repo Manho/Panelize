@@ -124,7 +124,7 @@ let isPopupWindow = false;   // 当前窗口是否为弹出窗口
 
 // Default panel configuration
 const DEFAULT_PROVIDERS = DEFAULT_PROVIDER_IDS;
-const MAX_PANELS = 10;
+const MAX_PANELS = 12;
 const PENDING_MULTI_PANEL_ACTION_KEY = 'pendingMultiPanelAction';
 const SEND_FOCUS_RESTORE_DELAYS = [0, 80, 200, 400, 800, 1500, 2500, 4000, 6000, 8000, 10000, 12000];
 const SEND_FOCUS_NO_BUSY_TIMEOUT_MS = 2000;
@@ -162,11 +162,14 @@ const LAYOUT_PANEL_COUNTS = {
   '1x8': 8,
   '1x9': 9,
   '1x10': 10,
+  '1x11': 11,
+  '1x12': 12,
   '2x1': 2,
   '2x2': 4,
   '2x3': 6,
   '2x4': 8,
   '2x5': 10,
+  '2x6': 12,
   '3x1': 3,
   '3x2': 6,
   '3x3': 9,

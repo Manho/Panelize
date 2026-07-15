@@ -10,7 +10,9 @@ const PROVIDER_ALLOWED_HOSTS = {
   google: new Set(['www.google.com', 'google.com']),
   doubao: new Set(['www.doubao.com', 'doubao.com']),
   'qwen-cn': new Set(['www.qianwen.com']),
-  'qwen-global': new Set(['chat.qwen.ai'])
+  'qwen-global': new Set(['chat.qwen.ai']),
+  chatglm: new Set(['chatglm.cn']),
+  'zai-global': new Set(['chat.z.ai'])
 };
 
 const QWEN_GLOBAL_NON_CONVERSATION_IDS = new Set(['new-chat', 'new-branch', 'guest']);
@@ -87,6 +89,10 @@ export function isProviderCurrentUrl(providerId, rawUrl) {
         !QWEN_GLOBAL_NON_CONVERSATION_IDS.has(conversationMatch[1])
       );
     }
+    case 'chatglm':
+      return url.pathname === '/main/alltoolsdetail' && Boolean(url.searchParams.get('cid'));
+    case 'zai-global':
+      return /^\/c\/[^/]+\/?$/.test(url.pathname);
     default:
       return false;
   }

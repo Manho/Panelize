@@ -8,10 +8,10 @@ const manifest = JSON.parse(
 
 describe('manifest Qwen permission coverage', () => {
   it('declares both Qwen sites as optional host permissions', () => {
-    expect(manifest.optional_host_permissions).toEqual([
+    expect(manifest.optional_host_permissions).toEqual(expect.arrayContaining([
       'https://www.qianwen.com/*',
       'https://chat.qwen.ai/*',
-    ]);
+    ]));
   });
 
   it('does not add Qwen to required host permissions', () => {

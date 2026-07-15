@@ -47,6 +47,17 @@ function findProviderInput() {
            document.querySelector('textarea.ds-scroll-area');
   }
 
+  // ChatGLM
+  if (host === 'chatglm.cn') {
+    return document.querySelector('#search-input-box textarea.scroll-display-none');
+  }
+
+  // Z.ai Global
+  if (host === 'chat.z.ai') {
+    return document.querySelector('textarea[placeholder="How can I help you today?"]') ||
+           document.querySelector('textarea.input-scroll');
+  }
+
   // Generic fallback: find any visible textarea or contenteditable
   const textarea = document.querySelector('textarea:not([hidden])');
   if (textarea && textarea.offsetParent !== null) return textarea;

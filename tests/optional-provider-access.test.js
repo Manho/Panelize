@@ -27,7 +27,7 @@ describe('optional provider access', () => {
     chrome.storage.sync.set.mockResolvedValue();
   });
 
-  it('uses separate narrow origins and script registrations for both Qwen sites', () => {
+  it('uses separate narrow origins and script registrations for optional providers', () => {
     expect(OPTIONAL_PROVIDER_CONFIGS['qwen-cn']).toMatchObject({
       origins: ['https://www.qianwen.com/*'],
       contentScript: {
@@ -44,6 +44,22 @@ describe('optional provider access', () => {
       },
       frameRule: { id: 1002 },
     });
+    expect(OPTIONAL_PROVIDER_CONFIGS.chatglm).toMatchObject({
+      origins: ['https://chatglm.cn/*'],
+      contentScript: {
+        id: 'chatglm-scripts',
+        matches: ['https://chatglm.cn/*'],
+      },
+      frameRule: { id: 1003 },
+    });
+    expect(OPTIONAL_PROVIDER_CONFIGS['zai-global']).toMatchObject({
+      origins: ['https://chat.z.ai/*'],
+      contentScript: {
+        id: 'zai-global-scripts',
+        matches: ['https://chat.z.ai/*'],
+      },
+      frameRule: { id: 1004 },
+    });
   });
 
   it('places each provider-specific Enter behavior script explicitly in registration order', () => {
@@ -58,6 +74,20 @@ describe('optional provider access', () => {
       'content-scripts/button-finder-utils.js',
       'content-scripts/enter-behavior-utils.js',
       'content-scripts/enter-behavior-qwen-global.js',
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js',
+    ]);
+    expect(OPTIONAL_PROVIDER_CONFIGS.chatglm.contentScript.js).toEqual([
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      'content-scripts/enter-behavior-chatglm.js',
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js',
+    ]);
+    expect(OPTIONAL_PROVIDER_CONFIGS['zai-global'].contentScript.js).toEqual([
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      'content-scripts/enter-behavior-zai-global.js',
       'content-scripts/text-injection-all-providers.js',
       'content-scripts/focus-toggle.js',
     ]);
@@ -90,6 +120,8 @@ describe('optional provider access', () => {
       'chatgpt',
       'qwen-cn',
       'qwen-global',
+      'chatglm',
+      'zai-global',
     ])).resolves.toEqual(['chatgpt', 'qwen-global']);
   });
 
@@ -121,7 +153,7 @@ describe('optional provider access', () => {
       Promise.resolve(origins.includes('https://chat.qwen.ai/*'))
     );
 
-    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global']);
+    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global', 'chatglm']);
 
     expect(chrome.scripting.registerContentScripts).toHaveBeenCalledTimes(1);
     expect(chrome.scripting.registerContentScripts.mock.calls[0][0]).toEqual([
@@ -137,39 +169,47 @@ describe('optional provider access', () => {
     chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
+      { id: 'chatglm-scripts' },
+      { id: 'zai-global-scripts' },
       { id: 'unrelated-script' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
       { id: 1002 },
+      { id: 1003 },
+      { id: 1004 },
       { id: 9999 },
     ]);
 
     await syncOptionalProviderAccess([]);
 
     expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
-      ids: ['qwen-cn-scripts', 'qwen-global-scripts'],
+      ids: ['qwen-cn-scripts', 'qwen-global-scripts', 'chatglm-scripts', 'zai-global-scripts'],
     });
     expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith({
-      removeRuleIds: [1001, 1002],
+      removeRuleIds: [1001, 1002, 1003, 1004],
       addRules: [],
     });
   });
 
   it('removes only the provider whose permission was manually revoked', async () => {
     chrome.permissions.contains.mockImplementation(({ origins }) =>
-      Promise.resolve(origins.includes('https://chat.qwen.ai/*'))
+      Promise.resolve(!origins.includes('https://www.qianwen.com/*'))
     );
     chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
+      { id: 'chatglm-scripts' },
+      { id: 'zai-global-scripts' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
       { id: 1002 },
+      { id: 1003 },
+      { id: 1004 },
     ]);
 
-    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global']);
+    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global', 'chatglm', 'zai-global']);
 
     expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
       ids: ['qwen-cn-scripts'],
@@ -186,13 +226,17 @@ describe('optional provider access', () => {
     chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
+      { id: 'chatglm-scripts' },
+      { id: 'zai-global-scripts' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
       { id: 1002 },
+      { id: 1003 },
+      { id: 1004 },
     ]);
 
-    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global']);
+    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global', 'chatglm', 'zai-global']);
 
     expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();
     expect(chrome.scripting.unregisterContentScripts).not.toHaveBeenCalled();

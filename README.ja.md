@@ -40,11 +40,11 @@
 
 ### 1回の入力で同時送信
 
-統一入力欄から ChatGPT / Claude / Gemini / Grok / Doubao / DeepSeek / Kimi / Google へ同時に送信できます。
+統一入力欄から ChatGPT / Claude / Gemini / Grok / Doubao / DeepSeek / Kimi / Qwen / ChatGLM / Google へ同時に送信できます。
 
 ### 柔軟なレイアウト
 
-15種類のレイアウトを用意。素早い2モデル比較には1×2、4モデルの比較には1×4が使えます。
+21種類のレイアウトを用意。素早い2モデル比較には1×2、最大11モデルの比較には1×11または2×6が使えます。
 
 <p align="center">
   <img src="assets/screenshots/select-layout.png" alt="Layout Selection" width="600">
@@ -76,6 +76,9 @@ API キー不要。通常どおり各 AI サービスにログインしていれ
 - Doubao
 - DeepSeek
 - Kimi
+- Qwen（中国版）
+- Qwen（グローバル版）
+- ChatGLM
 - Google
 
 <p align="center">
