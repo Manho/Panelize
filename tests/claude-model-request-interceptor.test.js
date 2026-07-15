@@ -17,6 +17,7 @@ const utils = globalThis.PanelizeClaudeModelRequestUtils;
 
 function createInterceptorHarness({ fetchError = null, fetchStatus = 200, xhrStatus = 200 } = {}) {
   const messages = [];
+  const targetOrigins = [];
   const fetchCalls = [];
   const messageListeners = [];
   const xhrInstances = [];
@@ -42,8 +43,9 @@ function createInterceptorHarness({ fetchError = null, fetchStatus = 200, xhrSta
   }
 
   const parent = {
-    postMessage(message) {
+    postMessage(message, targetOrigin) {
       messages.push(message);
+      targetOrigins.push(targetOrigin);
     }
   };
   const context = {
@@ -89,6 +91,7 @@ function createInterceptorHarness({ fetchError = null, fetchStatus = 200, xhrSta
     context,
     fetchCalls,
     messages,
+    targetOrigins,
     xhrInstances
   };
 }
@@ -121,6 +124,22 @@ describe('Claude model request override', () => {
       mode,
       model
     });
+  });
+
+  it('uses exact origins after the initial iframe handshake', () => {
+    const harness = createInterceptorHarness();
+
+    expect(harness.targetOrigins).toEqual(['*']);
+    harness.configure(CLAUDE_MODEL_MODE_OPUS_4_8);
+    expect(harness.targetOrigins.at(-1)).toBe('chrome-extension://panelize-test');
+
+    const multiPanelSource = fs.readFileSync(
+      path.resolve('multi-panel/multi-panel.js'),
+      'utf8'
+    );
+    expect(multiPanelSource).toContain(
+      "createClaudeModelOverrideMessage(mode),\n    'https://claude.ai'"
+    );
   });
 
   it('accepts only the three catalog model IDs', () => {

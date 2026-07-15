@@ -449,7 +449,10 @@ function postClaudeModelOverride(panel, mode = currentClaudeModelMode) {
     return;
   }
 
-  panel.iframe.contentWindow.postMessage(createClaudeModelOverrideMessage(mode), '*');
+  panel.iframe.contentWindow.postMessage(
+    createClaudeModelOverrideMessage(mode),
+    'https://claude.ai'
+  );
 }
 
 function resetClaudeModelModeAfterFailure(panelEl, message) {

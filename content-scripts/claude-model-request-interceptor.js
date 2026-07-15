@@ -22,16 +22,17 @@
     mode: DEFAULT_MODE,
     model: ''
   };
+  let parentOrigin = '';
 
   function reportProbe(event, details = {}) {
     window.parent.postMessage({
       type: MESSAGE_PROBE,
       event,
       ...details
-    }, '*');
+    }, parentOrigin || '*');
   }
 
-  function isPanelizeParentMessage(event) {
+  function isExtensionParentMessage(event) {
     return event.source === window.parent &&
       typeof event.origin === 'string' &&
       event.origin.startsWith('chrome-extension://');
@@ -44,10 +45,11 @@
   }
 
   window.addEventListener('message', event => {
-    if (!isPanelizeParentMessage(event) || event.data?.type !== MESSAGE_OVERRIDE) {
+    if (!isExtensionParentMessage(event) || event.data?.type !== MESSAGE_OVERRIDE) {
       return;
     }
 
+    parentOrigin = event.origin;
     const mode = typeof event.data.mode === 'string' ? event.data.mode : DEFAULT_MODE;
     const expectedModel = MODELS_BY_MODE[mode] || '';
     const requestedModel = typeof event.data.model === 'string' ? event.data.model : '';
