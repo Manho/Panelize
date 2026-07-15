@@ -19,6 +19,14 @@ import {
   isProviderAllowedUrl,
   isProviderCurrentUrl
 } from '../modules/provider-open-url.js';
+import {
+  CLAUDE_MODEL_MODE_DEFAULT,
+  CLAUDE_MODEL_OPTIONS,
+  DEFAULT_CLAUDE_MODEL_MODE,
+  getClaudeModelOption,
+  normalizeClaudeModelMode,
+  createClaudeModelOverrideMessage
+} from '../modules/claude-model-mode.js';
 import { saveSetting } from '../modules/settings.js';
 import { applyTheme } from '../modules/theme-manager.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
@@ -85,9 +93,16 @@ function getDropdownThemePalette() {
   };
 }
 
-function getLocalizedText(key, fallback) {
-  const message = t(key);
-  return message && message !== key ? message : fallback;
+function getLocalizedText(key, fallback, substitutions = null) {
+  const message = t(key, substitutions);
+  const fallbackValues = substitutions === null
+    ? []
+    : (Array.isArray(substitutions) ? substitutions : [substitutions]);
+  const resolvedFallback = fallbackValues.reduce(
+    (text, value, index) => text.replaceAll(`$${index + 1}`, value),
+    fallback
+  );
+  return message && message !== key ? message : resolvedFallback;
 }
 
 function refreshThemeAwareProviderIcons() {
@@ -98,6 +113,7 @@ function refreshThemeAwareProviderIcons() {
   });
 }
 let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
+let currentClaudeModelMode = DEFAULT_CLAUDE_MODEL_MODE;
 
 // 提示词编辑器状态
 let currentEditingPromptId = null;
@@ -119,6 +135,7 @@ const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
 const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
+const PANELIZE_CLAUDE_MODEL_PROBE = 'PANELIZE_CLAUDE_MODEL_PROBE';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
 const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok']);
@@ -303,6 +320,27 @@ function getGoogleModeSelectHtml(mode = currentGoogleProviderMode) {
   `;
 }
 
+function getClaudeModelLabel(option) {
+  if (option.mode === CLAUDE_MODEL_MODE_DEFAULT) {
+    return getLocalizedText('claudeModelDefault', 'Claude default');
+  }
+  return option.label;
+}
+
+function getClaudeModelSelectHtml(mode = currentClaudeModelMode) {
+  const normalizedMode = normalizeClaudeModelMode(mode);
+  const options = CLAUDE_MODEL_OPTIONS.map(option => `
+      <option value="${option.mode}" ${normalizedMode === option.mode ? 'selected' : ''}>${getClaudeModelLabel(option)}</option>
+    `).join('');
+
+  return `
+    <span class="claude-model-experimental-badge" title="${getLocalizedText('claudeModelExperimentalTitle', 'Experimental compatibility mode')}">${getLocalizedText('claudeModelExperimentalBadge', 'Experimental')}</span>
+    <select class="panel-claude-model-select" title="${getLocalizedText('claudeModelSelectTitle', 'Claude model request')}">
+      ${options}
+    </select>
+  `;
+}
+
 function fitPanelSelectWidth(select) {
   if (!(select instanceof HTMLSelectElement)) {
     return;
@@ -342,6 +380,9 @@ function getPanelHeaderRightHtml(providerId) {
   const googleModeSelect = isGoogleProvider(providerId)
     ? getGoogleModeSelectHtml()
     : '';
+  const claudeModelSelect = providerId === 'claude'
+    ? getClaudeModelSelectHtml()
+    : '';
 
   const openTopLevelBtn = `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open in new tab')}">
       <span class="material-symbols-outlined">open_in_new</span>
@@ -349,6 +390,7 @@ function getPanelHeaderRightHtml(providerId) {
 
   return `
     ${googleModeSelect}
+    ${claudeModelSelect}
     ${openTopLevelBtn}
     <button class="refresh-panel-btn" title="Refresh">
       <span class="material-symbols-outlined">refresh</span>
@@ -359,11 +401,136 @@ function getPanelHeaderRightHtml(providerId) {
   `;
 }
 
+function getClaudeModelNoticeText(mode = currentClaudeModelMode) {
+  const option = getClaudeModelOption(mode);
+  if (option.mode === CLAUDE_MODEL_MODE_DEFAULT) {
+    return getLocalizedText(
+      'embeddedModelLimitNotice',
+      'Claude limits model selection when embedded. Panelize can experimentally request a model.'
+    );
+  }
+
+  return getLocalizedText(
+    'embeddedModelOverrideNotice',
+    'Experimental request: $1. Availability depends on your Claude account.',
+    option.label
+  );
+}
+
 function getEmbeddedModelLimitNoticeHtml() {
   return `<div class="embedded-model-limit-notice">
-        <span class="embedded-model-limit-notice-text">${getLocalizedText('embeddedModelLimitNotice', 'Claude may show limited model options when embedded. Open Claude in a normal tab to use the regular model selector.')}</span>
+        <div class="embedded-model-limit-notice-content">
+          <span class="embedded-model-limit-notice-text">${getClaudeModelNoticeText()}</span>
+          <span class="claude-model-override-status" aria-live="polite"></span>
+        </div>
         <button class="open-provider-top-level-inline-btn">${getLocalizedText('openProviderTopLevel', 'Open Claude')}</button>
       </div>`;
+}
+
+function getClaudeModelOverrideElements(panelEl) {
+  return {
+    notice: panelEl?.querySelector('.embedded-model-limit-notice-text') || null,
+    status: panelEl?.querySelector('.claude-model-override-status') || null
+  };
+}
+
+function setClaudeModelOverrideStatus(panelEl, text, state = '') {
+  const { status } = getClaudeModelOverrideElements(panelEl);
+  if (!status) {
+    return;
+  }
+
+  status.textContent = text;
+  status.dataset.state = state;
+}
+
+function postClaudeModelOverride(panel, mode = currentClaudeModelMode) {
+  if (!panel?.iframe?.contentWindow || panel.providerId !== 'claude') {
+    return;
+  }
+
+  panel.iframe.contentWindow.postMessage(
+    createClaudeModelOverrideMessage(mode),
+    'https://claude.ai'
+  );
+}
+
+function resetClaudeModelModeAfterFailure(panelEl, message) {
+  updateClaudeModelMode(CLAUDE_MODEL_MODE_DEFAULT, {
+    persist: true,
+    broadcast: true
+  }).then(() => {
+    setClaudeModelOverrideStatus(panelEl, message, 'error');
+  }).catch(error => {
+    console.error('Failed to reset Claude model mode:', error);
+    setClaudeModelOverrideStatus(panelEl, message, 'error');
+  });
+}
+
+function handleClaudeModelProbeMessage(event, data) {
+  if (data.type !== PANELIZE_CLAUDE_MODEL_PROBE || event.origin !== 'https://claude.ai') {
+    return false;
+  }
+
+  const panel = panels.find(candidate => (
+    candidate.providerId === 'claude' &&
+    candidate.iframe?.contentWindow === event.source
+  ));
+  const panelEl = panel ? document.getElementById(panel.id) : null;
+  if (!panel || !panelEl) {
+    return true;
+  }
+
+  switch (data.event) {
+    case 'probe-ready':
+      postClaudeModelOverride(panel);
+      break;
+    case 'override-configured':
+      setClaudeModelOverrideStatus(panelEl, '');
+      break;
+    case 'request-overridden': {
+      const option = getClaudeModelOption(data.mode);
+      setClaudeModelOverrideStatus(
+        panelEl,
+        getLocalizedText('claudeModelRequestedStatus', 'Requested $1', option.label),
+        'active'
+      );
+      break;
+    }
+    case 'override-request-accepted': {
+      const option = getClaudeModelOption(data.mode);
+      setClaudeModelOverrideStatus(
+        panelEl,
+        getLocalizedText('claudeModelRequestedStatus', 'Requested $1', option.label),
+        'success'
+      );
+      break;
+    }
+    case 'override-config-rejected':
+    case 'override-schema-unsupported':
+      resetClaudeModelModeAfterFailure(
+        panelEl,
+        getLocalizedText(
+          'claudeModelOverrideUnavailable',
+          'Model override is unavailable. Switched to Claude default.'
+        )
+      );
+      break;
+    case 'override-request-rejected':
+      resetClaudeModelModeAfterFailure(
+        panelEl,
+        getLocalizedText(
+          'claudeModelRequestRejected',
+          'Model request was rejected (HTTP $1). Switched to Claude default.',
+          String(data.status || '')
+        )
+      );
+      break;
+    default:
+      break;
+  }
+
+  return true;
 }
 
 // Keep the embedded model limit notice in sync when a panel's provider changes.
@@ -378,6 +545,11 @@ function syncEmbeddedModelLimitNotice(panelEl, providerId) {
     if (!existing) {
       const iframe = container.querySelector('iframe');
       iframe.insertAdjacentHTML('beforebegin', getEmbeddedModelLimitNoticeHtml());
+    } else {
+      const { notice } = getClaudeModelOverrideElements(panelEl);
+      if (notice) {
+        notice.textContent = getClaudeModelNoticeText();
+      }
     }
   } else if (existing) {
     existing.remove();
@@ -390,6 +562,22 @@ function syncGoogleModeControls() {
       select.value = currentGoogleProviderMode;
     }
     fitPanelSelectWidth(select);
+  });
+}
+
+function syncClaudeModelControls() {
+  document.querySelectorAll('.panel-claude-model-select').forEach(select => {
+    if (select.value !== currentClaudeModelMode) {
+      select.value = currentClaudeModelMode;
+    }
+    fitPanelSelectWidth(select);
+  });
+
+  document.querySelectorAll('.panel-item').forEach(panelEl => {
+    const { notice } = getClaudeModelOverrideElements(panelEl);
+    if (notice) {
+      notice.textContent = getClaudeModelNoticeText();
+    }
   });
 }
 
@@ -491,6 +679,24 @@ function bindPanelHeaderActions(panelId) {
       await updateGoogleProviderMode(event.target.value, { persist: true, reloadPanels: true });
     });
   }
+
+  const claudeModelSelect = panelEl.querySelector('.panel-claude-model-select');
+  if (claudeModelSelect) {
+    fitPanelSelectWidth(claudeModelSelect);
+    claudeModelSelect.addEventListener('click', event => {
+      event.stopPropagation();
+    });
+    claudeModelSelect.addEventListener('mousedown', event => {
+      event.stopPropagation();
+    });
+    claudeModelSelect.addEventListener('change', async event => {
+      fitPanelSelectWidth(event.target);
+      await updateClaudeModelMode(event.target.value, {
+        persist: true,
+        broadcast: true
+      });
+    });
+  }
 }
 
 async function updateGoogleProviderMode(mode, { persist = false, reloadPanels = false } = {}) {
@@ -510,6 +716,21 @@ async function updateGoogleProviderMode(mode, { persist = false, reloadPanels = 
   }
 }
 
+async function updateClaudeModelMode(mode, { persist = false, broadcast = false } = {}) {
+  currentClaudeModelMode = normalizeClaudeModelMode(mode);
+  syncClaudeModelControls();
+
+  if (broadcast) {
+    panels
+      .filter(panel => panel.providerId === 'claude')
+      .forEach(panel => postClaudeModelOverride(panel));
+  }
+
+  if (persist) {
+    await saveSetting('claudeModelMode', currentClaudeModelMode);
+  }
+}
+
 function registerStorageChangeListener() {
   if (!chrome?.storage?.onChanged?.addListener) {
     return;
@@ -520,19 +741,27 @@ function registerStorageChangeListener() {
       return;
     }
 
-    if (!changes.googleProviderMode || !changes.googleProviderMode.newValue) {
-      return;
+    if (changes.googleProviderMode?.newValue) {
+      const nextMode = normalizeGoogleProviderMode(changes.googleProviderMode.newValue);
+      if (nextMode === currentGoogleProviderMode) {
+        syncGoogleModeControls();
+      } else {
+        updateGoogleProviderMode(nextMode, { reloadPanels: true }).catch((error) => {
+          console.error('Error syncing Google provider mode:', error);
+        });
+      }
     }
 
-    const nextMode = normalizeGoogleProviderMode(changes.googleProviderMode.newValue);
-    if (nextMode === currentGoogleProviderMode) {
-      syncGoogleModeControls();
-      return;
+    if (changes.claudeModelMode) {
+      const nextMode = normalizeClaudeModelMode(changes.claudeModelMode.newValue);
+      if (nextMode === currentClaudeModelMode) {
+        syncClaudeModelControls();
+      } else {
+        updateClaudeModelMode(nextMode, { broadcast: true }).catch(error => {
+          console.error('Error syncing Claude model mode:', error);
+        });
+      }
     }
-
-    updateGoogleProviderMode(nextMode, { reloadPanels: true }).catch((error) => {
-      console.error('Error syncing Google provider mode:', error);
-    });
   });
 }
 
@@ -825,6 +1054,10 @@ function handleProviderStatusMessage(event) {
     return;
   }
 
+  if (handleClaudeModelProbeMessage(event, data)) {
+    return;
+  }
+
   const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
   const isLocationMessage = data.type === PANELIZE_PROVIDER_LOCATION;
   if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage && !isLocationMessage)) {
@@ -967,12 +1200,14 @@ async function loadSettings() {
       multiPanelLayout: '1x3',
       multiPanelProviders: DEFAULT_PROVIDERS,
       openMode: 'tab',
-      googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE
+      googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE,
+      claudeModelMode: DEFAULT_CLAUDE_MODEL_MODE
     });
 
     currentLayout = normalizeLayout(settings.multiPanelLayout);
     currentOpenMode = settings.openMode || 'tab';
     currentGoogleProviderMode = normalizeGoogleProviderMode(settings.googleProviderMode);
+    currentClaudeModelMode = normalizeClaudeModelMode(settings.claudeModelMode);
 
     // Apply layout
     const panelGrid = document.getElementById('panel-grid');
@@ -1028,6 +1263,7 @@ function collectCurrentState() {
       providerId: p.providerId
     })),
     googleProviderMode: currentGoogleProviderMode,
+    claudeModelMode: currentClaudeModelMode,
     timestamp: Date.now()
   };
   return state;
@@ -1120,6 +1356,12 @@ async function restoreStateIfNeeded() {
       if (state.googleProviderMode) {
         await chrome.storage.sync.set({
           googleProviderMode: normalizeGoogleProviderMode(state.googleProviderMode)
+        });
+      }
+
+      if (state.claudeModelMode) {
+        await chrome.storage.sync.set({
+          claudeModelMode: normalizeClaudeModelMode(state.claudeModelMode)
         });
       }
 
@@ -1324,6 +1566,9 @@ async function addPanel(providerId) {
   iframe.addEventListener('load', () => {
     loadingEl.classList.add('hidden');
     const panel = panels.find(p => p.id === panelId);
+    if (panel?.providerId === 'claude') {
+      postClaudeModelOverride(panel);
+    }
     if (isTemporaryChatModeEnabled && panel && requiresTemporaryChatActivationRetry(panel.providerId)) {
       startTemporaryChatActivationForPanel(panel);
     }
@@ -1404,6 +1649,9 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();
+  }
+  if (newProviderId === 'claude') {
+    syncClaudeModelControls();
   }
 
   // Update panel header

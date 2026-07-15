@@ -1,20 +1,20 @@
 # Privacy Policy for Panelize
 
-**Last Updated: February 3, 2026**
+**Last Updated: July 15, 2026**
 
 ## Overview
 
 Panelize is committed to protecting your privacy. This privacy policy explains what data the extension collects, how it's used, and your control over it.
 
-**In short:** Panelize stores all data locally on your device. We do not collect, transmit, or sell any of your personal information to third parties or external servers.
+**In short:** Panelize stores extension data in browser-managed storage. Chrome may synchronize supported preferences across your signed-in browsers when browser sync is enabled. We do not collect, transmit, or sell your personal information through Panelize-operated servers.
 
 ---
 
 ## What Data We Collect and Store
 
-### 1. Data Stored Locally on Your Device
+### 1. Data Stored in Your Browser
 
-All of the following data is stored **exclusively in your browser's local storage** and never leaves your device:
+The following data is stored in browser-managed storage. Prompt library data remains local to the browser profile. Supported preferences may use Chrome's sync storage and therefore may be synchronized by Chrome according to your browser account and sync settings:
 
 #### Prompt Library Data
 - Prompt titles, content, categories, and tags you create
@@ -31,6 +31,7 @@ All of the following data is stored **exclusively in your browser's local storag
 - Enter key behavior preferences
 - Source URL placement preferences
 - Language preferences
+- Experimental Claude model preference
 
 **Purpose:** To maintain your personalized extension configuration.
 
@@ -73,9 +74,11 @@ All data collected by Panelize is used solely for providing extension functional
 
 ### AI Provider Websites
 
-Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, and Google AI Mode) inside embedded panels. These providers operate under their own privacy policies.
+Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen, and Google AI Mode) inside embedded panels. These providers operate under their own privacy policies.
 
-When you interact with these AI providers through Panelize, you are subject to their respective privacy policies. Panelize does not intercept or store the content of your conversations with these services.
+When you interact with these AI providers through Panelize, you are subject to their respective privacy policies. Panelize does not collect or store the content of your conversations with these services.
+
+If you explicitly select an experimental Claude model in Panelize, the extension locally processes Claude's outgoing completion request only to insert or replace its top-level model identifier. This processing happens in your browser. Panelize does not log, store, collect, or send the request body or conversation content to Panelize developers or Panelize-operated servers. The modified request continues directly to Claude as part of the chat you initiated. Selecting **Claude default** disables this request modification.
 
 ### Cookie Access
 
@@ -93,16 +96,16 @@ Panelize loads the Material Symbols font from Google Fonts for UI icons. This re
 
 ## Data Storage and Security
 
-### Local Storage Only
+### Browser-Managed Storage
 
 All extension data is stored in your browser using:
 - **Chrome Storage API:** For settings and preferences
 - **IndexedDB:** For prompts
 
 This data:
-- Remains on your device
+- Is managed by your browser; supported preferences may sync through Chrome when browser sync is enabled
 - Is not accessible to websites you visit
-- Is not transmitted over the network
+- Is not transmitted to Panelize-operated servers
 - Is protected by browser security mechanisms
 
 ### Data Retention
@@ -213,6 +216,7 @@ If you are a California resident:
 - Store your prompts and settings locally on your device
 - Use local browser storage to remember your preferences
 - Temporarily process selected text or page content on-device when you use the context menu
+- Locally set Claude's requested model when you explicitly enable experimental model selection
 - Load AI provider websites inside embedded panels
 - Check for updates on GitHub
 

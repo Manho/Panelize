@@ -71,6 +71,18 @@
   "content_scripts": [
     {
       "matches": [
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "content-scripts/claude-model-request-utils.js",
+        "content-scripts/claude-model-request-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
