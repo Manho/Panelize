@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.4 - 2026-07-15
+- Add experimental embedded Claude model selection for Opus 4.8, Sonnet 5, and Haiku 4.5.
+- Keep Claude default unchanged and safely fall back after incompatible or rejected model requests without resending messages.
+- Improve model selector synchronization, responsive light and dark styling, message origin restrictions, regression coverage, and privacy documentation.
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
