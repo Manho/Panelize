@@ -104,8 +104,8 @@ export const PROVIDERS = [
     name: 'Zhipu (China)',
     url: 'https://chatglm.cn/',
     topLevelUrl: 'https://chatglm.cn/',
-    icon: '/icons/providers/chatglm.svg',
-    iconDark: '/icons/providers/dark/chatglm.svg',
+    icon: '/icons/providers/zhipu.svg',
+    iconDark: '/icons/providers/dark/zhipu.svg',
     enabled: true,
     optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.chatglm.origins
   },
@@ -114,8 +114,8 @@ export const PROVIDERS = [
     name: 'Z.ai (Global)',
     url: 'https://chat.z.ai/',
     topLevelUrl: 'https://chat.z.ai/',
-    icon: '/icons/providers/chatglm.svg',
-    iconDark: '/icons/providers/dark/chatglm.svg',
+    icon: '/icons/providers/zhipu.svg',
+    iconDark: '/icons/providers/dark/zhipu.svg',
     enabled: true,
     optionalOrigins: OPTIONAL_PROVIDER_CONFIGS['zai-global'].origins
   }

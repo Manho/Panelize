@@ -32,7 +32,7 @@ describe('providers module', () => {
       ]);
     });
 
-    it('defines Qwen and ChatGLM sites as optional providers', () => {
+    it('defines Qwen, Zhipu, and Z.ai sites as optional providers', () => {
       expect(getProviderById('qwen-cn')).toMatchObject({
         name: 'Qwen (China)',
         url: 'https://www.qianwen.com/',
@@ -46,11 +46,15 @@ describe('providers module', () => {
       expect(getProviderById('chatglm')).toMatchObject({
         name: 'Zhipu (China)',
         url: 'https://chatglm.cn/',
+        icon: '/icons/providers/zhipu.svg',
+        iconDark: '/icons/providers/dark/zhipu.svg',
         optionalOrigins: ['https://chatglm.cn/*'],
       });
       expect(getProviderById('zai-global')).toMatchObject({
         name: 'Z.ai (Global)',
         url: 'https://chat.z.ai/',
+        icon: '/icons/providers/zhipu.svg',
+        iconDark: '/icons/providers/dark/zhipu.svg',
         optionalOrigins: ['https://chat.z.ai/*'],
       });
     });
