@@ -158,22 +158,26 @@ test.describe('Layout Auto-Adjust E2E', () => {
     expect(finalResult.panels).toBe(8);
   });
 
-  test('Test 6: should continue to 1x10 and stop at 10 panels', async () => {
-    // Add 10 panels
-    for (let i = 0; i < 10; i++) {
+  test('Test 6: should continue to 1x12 and stop at 12 panels', async ({}, testInfo) => {
+    // Add 12 panels
+    for (let i = 0; i < 12; i++) {
       await page.click('#add-panel-btn');
       await page.waitForTimeout(300);
     }
     
-    // Verify at 1x10 with 10 panels
+    // Verify at 1x12 with 12 panels
     let result = await page.evaluate(() => ({
       layout: window.getCurrentLayout(),
       panels: window.getPanelCount()
     }));
-    expect(result.layout).toBe('1x10');
-    expect(result.panels).toBe(10);
+    expect(result.layout).toBe('1x12');
+    expect(result.panels).toBe(12);
+    await page.screenshot({
+      path: testInfo.outputPath('layout-1x12.png'),
+      fullPage: true,
+    });
     
-    // Try to add 11th panel (should fail with alert)
+    // Try to add 13th panel (should fail with alert)
     page.on('dialog', async dialog => {
       expect(dialog.message()).toContain('Maximum');
       await dialog.accept();
@@ -182,13 +186,13 @@ test.describe('Layout Auto-Adjust E2E', () => {
     await page.click('#add-panel-btn');
     await page.waitForTimeout(500);
     
-    // Should still be 1x10 with 10 panels
+    // Should still be 1x12 with 12 panels
     result = await page.evaluate(() => ({
       layout: window.getCurrentLayout(),
       panels: window.getPanelCount()
     }));
-    expect(result.layout).toBe('1x10');
-    expect(result.panels).toBe(10);
+    expect(result.layout).toBe('1x12');
+    expect(result.panels).toBe(12);
   });
 
   test('Test 7: clear should reset to 1x2', async () => {

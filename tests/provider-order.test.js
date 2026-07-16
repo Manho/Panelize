@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { appendProviderToOrder, normalizeProviderOrder } from '../modules/provider-order.js';
 
-const ALL_PROVIDER_IDS = ['chatgpt', 'claude', 'qwen-cn', 'qwen-global'];
+const ALL_PROVIDER_IDS = ['chatgpt', 'claude', 'qwen-cn', 'qwen-global', 'chatglm', 'zai-global'];
 
 describe('provider order', () => {
   it('appends newly available providers without changing the saved order', () => {
@@ -35,5 +35,23 @@ describe('provider order', () => {
       'qwen-global',
       ALL_PROVIDER_IDS
     )).toEqual(['chatgpt', 'claude', 'qwen-global']);
+  });
+
+  it('appends ChatGLM without changing an existing provider order', () => {
+    expect(appendProviderToOrder(
+      ['claude', 'chatgpt'],
+      ['chatgpt', 'claude'],
+      'chatglm',
+      ALL_PROVIDER_IDS
+    )).toEqual(['claude', 'chatgpt', 'chatglm']);
+  });
+
+  it('appends Z.ai Global without changing an existing provider order', () => {
+    expect(appendProviderToOrder(
+      ['claude', 'chatgpt'],
+      ['chatgpt', 'claude'],
+      'zai-global',
+      ALL_PROVIDER_IDS
+    )).toEqual(['claude', 'chatgpt', 'zai-global']);
   });
 });

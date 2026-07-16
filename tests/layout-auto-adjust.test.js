@@ -12,11 +12,14 @@ const LAYOUT_PANEL_COUNTS = {
   '1x8': 8,
   '1x9': 9,
   '1x10': 10,
+  '1x11': 11,
+  '1x12': 12,
   '2x1': 2,
   '2x2': 4,
   '2x3': 6,
   '2x4': 8,
   '2x5': 10,
+  '2x6': 12,
   '3x1': 3,
   '3x2': 6,
   '3x3': 9,
@@ -120,6 +123,14 @@ describe('Layout Auto-Adjust', () => {
         expect(getAutoAdjustedLayout('1x9', 10)).toBe('1x10');
       });
 
+      it('should upgrade from 1x10 to 1x11 when adding 11th panel', () => {
+        expect(getAutoAdjustedLayout('1x10', 11)).toBe('1x11');
+      });
+
+      it('should upgrade from 1x11 to 1x12 when adding 12th panel', () => {
+        expect(getAutoAdjustedLayout('1x11', 12)).toBe('1x12');
+      });
+
       it('should NOT upgrade when panel count fits within capacity', () => {
         expect(getAutoAdjustedLayout('1x2', 2)).toBeNull();
         expect(getAutoAdjustedLayout('1x3', 3)).toBeNull();
@@ -138,8 +149,8 @@ describe('Layout Auto-Adjust', () => {
     });
 
     describe('upper limit', () => {
-      it('should return null when already at the 1x10 maximum', () => {
-        expect(getAutoAdjustedLayout('1x10', 11)).toBeNull();
+      it('should return null when already at the 1x12 maximum', () => {
+        expect(getAutoAdjustedLayout('1x12', 13)).toBeNull();
       });
     });
 
@@ -168,7 +179,7 @@ describe('Layout Auto-Adjust', () => {
       it('should return null for invalid layouts', () => {
         expect(getAutoAdjustedLayout('invalid', 3)).toBeNull();
         expect(getAutoAdjustedLayout('', 3)).toBeNull();
-        expect(getAutoAdjustedLayout('1x11', 12)).toBeNull();
+        expect(getAutoAdjustedLayout('1x12', 13)).toBeNull();
       });
     });
   });
@@ -209,6 +220,14 @@ describe('Layout Auto-Adjust', () => {
 
       it('should shrink from 1x10 to 1x9 when removing panel (9 panels remain)', () => {
         expect(getAutoShrunkLayout('1x10', 9)).toBe('1x9');
+      });
+
+      it('should shrink from 1x11 to 1x10 when removing panel (10 panels remain)', () => {
+        expect(getAutoShrunkLayout('1x11', 10)).toBe('1x10');
+      });
+
+      it('should shrink from 1x12 to 1x11 when removing panel (11 panels remain)', () => {
+        expect(getAutoShrunkLayout('1x12', 11)).toBe('1x11');
       });
 
       it('should shrink from 1x9 to 4x2 when removing panel (8 panels remain)', () => {

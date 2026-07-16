@@ -19,6 +19,7 @@ describe('provider defaults', () => {
       'doubao',
     ]);
     expect(LEGACY_DEFAULT_PROVIDER_IDS).not.toContain('doubao');
+    expect(DEFAULT_PROVIDER_IDS).not.toContain('chatglm');
   });
 
   it('migrates untouched legacy defaults to include doubao', () => {

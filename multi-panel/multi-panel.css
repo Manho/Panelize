@@ -349,6 +349,16 @@ body {
   grid-template-rows: 1fr;
 }
 
+.layout-1x11 {
+  grid-template-columns: repeat(11, minmax(320px, 1fr));
+  grid-template-rows: 1fr;
+}
+
+.layout-1x12 {
+  grid-template-columns: repeat(12, minmax(320px, 1fr));
+  grid-template-rows: 1fr;
+}
+
 .layout-2x1 {
   grid-template-columns: 1fr;
   grid-template-rows: 1fr 1fr;
@@ -379,6 +389,11 @@ body {
   grid-template-rows: 1fr 1fr;
 }
 
+.layout-2x6 {
+  grid-template-columns: repeat(6, 1fr);
+  grid-template-rows: 1fr 1fr;
+}
+
 .layout-3x2 {
   grid-template-columns: 1fr 1fr 1fr;
   grid-template-rows: 1fr 1fr;
@@ -404,7 +419,9 @@ body {
 .layout-1x7 .panel-item,
 .layout-1x8 .panel-item,
 .layout-1x9 .panel-item,
-.layout-1x10 .panel-item {
+.layout-1x10 .panel-item,
+.layout-1x11 .panel-item,
+.layout-1x12 .panel-item {
   scroll-snap-align: start;
 }
 
@@ -1210,6 +1227,16 @@ body {
   grid-template-rows: 1fr;
 }
 
+.layout-1x11-preview {
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: 1fr;
+}
+
+.layout-1x12-preview {
+  grid-template-columns: repeat(12, 1fr);
+  grid-template-rows: 1fr;
+}
+
 .layout-2x3-preview {
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr 1fr;
@@ -1222,6 +1249,11 @@ body {
 
 .layout-2x5-preview {
   grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: 1fr 1fr;
+}
+
+.layout-2x6-preview {
+  grid-template-columns: repeat(6, 1fr);
   grid-template-rows: 1fr 1fr;
 }
 

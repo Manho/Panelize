@@ -14,7 +14,7 @@ describe('providers module', () => {
 
   describe('PROVIDERS constant', () => {
     it('should contain all expected providers', () => {
-      expect(PROVIDERS).toHaveLength(10);
+      expect(PROVIDERS).toHaveLength(12);
       const providerIds = PROVIDERS.map((p) => p.id);
       expect(providerIds).toEqual([
         'chatgpt',
@@ -27,10 +27,12 @@ describe('providers module', () => {
         'doubao',
         'qwen-cn',
         'qwen-global',
+        'chatglm',
+        'zai-global',
       ]);
     });
 
-    it('defines both Qwen sites as optional providers', () => {
+    it('defines Qwen, Zhipu, and Z.ai sites as optional providers', () => {
       expect(getProviderById('qwen-cn')).toMatchObject({
         name: 'Qwen (China)',
         url: 'https://www.qianwen.com/',
@@ -40,6 +42,20 @@ describe('providers module', () => {
         name: 'Qwen (Global)',
         url: 'https://chat.qwen.ai/',
         optionalOrigins: ['https://chat.qwen.ai/*'],
+      });
+      expect(getProviderById('chatglm')).toMatchObject({
+        name: 'Zhipu (China)',
+        url: 'https://chatglm.cn/',
+        icon: '/icons/providers/zhipu.svg',
+        iconDark: '/icons/providers/dark/zhipu.svg',
+        optionalOrigins: ['https://chatglm.cn/*'],
+      });
+      expect(getProviderById('zai-global')).toMatchObject({
+        name: 'Z.ai (Global)',
+        url: 'https://chat.z.ai/',
+        icon: '/icons/providers/zhipu.svg',
+        iconDark: '/icons/providers/dark/zhipu.svg',
+        optionalOrigins: ['https://chat.z.ai/*'],
       });
     });
 

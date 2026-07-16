@@ -98,6 +98,26 @@ export const PROVIDERS = [
     iconDark: '/icons/providers/dark/qwen.png',
     enabled: true,
     optionalOrigins: OPTIONAL_PROVIDER_CONFIGS['qwen-global'].origins
+  },
+  {
+    id: 'chatglm',
+    name: 'Zhipu (China)',
+    url: 'https://chatglm.cn/',
+    topLevelUrl: 'https://chatglm.cn/',
+    icon: '/icons/providers/zhipu.svg',
+    iconDark: '/icons/providers/dark/zhipu.svg',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.chatglm.origins
+  },
+  {
+    id: 'zai-global',
+    name: 'Z.ai (Global)',
+    url: 'https://chat.z.ai/',
+    topLevelUrl: 'https://chat.z.ai/',
+    icon: '/icons/providers/zhipu.svg',
+    iconDark: '/icons/providers/dark/zhipu.svg',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS['zai-global'].origins
   }
 ];
 

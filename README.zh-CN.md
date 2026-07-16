@@ -40,11 +40,11 @@
 
 ### 一次提问，同时对比
 
-在统一输入框中输入一次内容，就能同时发送到 ChatGPT、Claude、Gemini、Grok、Doubao、DeepSeek、Kimi、Google。
+在统一输入框中输入一次内容，就能同时发送到 ChatGPT、Claude、Gemini、Grok、Doubao、DeepSeek、Kimi、Qwen、Zhipu (China)、Z.ai (Global)、Google。
 
 ### 灵活布局
 
-支持 15 种布局。快速双模型对比可用 1×2，四模型深入分析可用 1×4。
+支持 22 种布局。快速双模型对比可用 1×2，最多可用 1×12 或 2×6 同时对比 12 个模型。
 
 <p align="center">
   <img src="assets/screenshots/select-layout.png" alt="布局选择" width="600">
@@ -76,6 +76,10 @@
 - Doubao
 - DeepSeek
 - Kimi
+- Qwen（中国版）
+- Qwen（海外版）
+- Zhipu (China)
+- Z.ai (Global)
 - Google
 
 <p align="center">

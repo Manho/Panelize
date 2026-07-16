@@ -18,6 +18,8 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('kimi', 'https://www.kimi.com/chat/abc123')).toBe(true);
     expect(isProviderCurrentUrl('doubao', 'https://www.doubao.com/chat/abc123')).toBe(true);
     expect(isProviderCurrentUrl('qwen-global', 'https://chat.qwen.ai/c/abc123')).toBe(true);
+    expect(isProviderCurrentUrl('chatglm', 'https://chatglm.cn/main/alltoolsdetail?lang=zh&cid=abc123')).toBe(true);
+    expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/c/abc123')).toBe(true);
   });
 
   it('accepts current Google pages for both AI Mode and Search', () => {
@@ -39,6 +41,11 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('qwen-global', 'https://chat.qwen.ai/c/new-chat')).toBe(false);
     expect(isProviderCurrentUrl('qwen-global', 'https://chat.qwen.ai/c/new-chat/')).toBe(false);
     expect(isProviderCurrentUrl('qwen-global', 'https://chat.qwen.ai/c/abc123/unknown')).toBe(false);
+    expect(isProviderCurrentUrl('chatglm', 'https://chatglm.cn/')).toBe(false);
+    expect(isProviderCurrentUrl('chatglm', 'https://chatglm.cn/main/alltoolsdetail?lang=zh')).toBe(false);
+    expect(isProviderCurrentUrl('chatglm', 'https://www.chatglm.cn/main/alltoolsdetail?cid=abc123')).toBe(false);
+    expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/')).toBe(false);
+    expect(isProviderAllowedUrl('zai-global', 'https://evil.example/chat')).toBe(false);
   });
 
   it('opens the reported current URL when it is valid', () => {
@@ -53,5 +60,7 @@ describe('provider open URL helpers', () => {
     expect(getProviderOpenUrl(getProviderById('google'), null, 'search')).toBe('https://www.google.com/');
     expect(getProviderFallbackUrl(getProviderById('google'), 'ai')).toBe('https://www.google.com/search?udm=50');
     expect(getProviderOpenUrl(getProviderById('qwen-cn'), 'https://www.qianwen.com/chat/abc123')).toBe('https://www.qianwen.com/');
+    expect(getProviderOpenUrl(getProviderById('chatglm'), 'https://chatglm.cn/')).toBe('https://chatglm.cn/');
+    expect(getProviderOpenUrl(getProviderById('zai-global'), 'https://z.ai/chat')).toBe('https://chat.z.ai/');
   });
 });
