@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.5 - 2026-07-16
+- Added Zhipu (China) and Z.ai (Global) providers with unified text sending, image attachments, Enter key behavior, and provider controls.
+- Expanded Panelize to 12 simultaneous panels with new 1x12 and 2x6 layouts.
+- Updated official Zhipu branding, provider naming, localization, documentation, and regression coverage.
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
