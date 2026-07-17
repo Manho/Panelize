@@ -224,6 +224,8 @@ async function hideUpdateCheckingIfNeeded() {
       }
     }
   }
+
+  return isFromStore;
 }
 
 function updateShortcutHelperVisibility(isEnabled) {
@@ -246,8 +248,8 @@ async function init() {
   await loadSettings();
   await loadDataStats();
   await loadLibraryCount();  // Load default library count
-  await loadVersionDisplay();  // T073: Load and display version info
-  await hideUpdateCheckingIfNeeded();  // Hide update checking for web store installations
+  const isFromWebStore = await hideUpdateCheckingIfNeeded();
+  await loadVersionDisplay(!isFromWebStore);  // T073: Load and display version info
   await renderProviderList();
   setupEventListeners();
   setupStorageChangeListener();
@@ -1208,7 +1210,7 @@ async function saveCustomEnterSettings() {
 }
 
 // T073: Version Check Functions
-async function loadVersionDisplay() {
+async function loadVersionDisplay(shouldCheckForUpdates = true) {
   const versionInfo = await loadVersionInfo();
   if (!versionInfo) {
     document.getElementById('version').textContent = t('msgVersionUnknown');
@@ -1223,13 +1225,15 @@ async function loadVersionDisplay() {
     commitHashEl.style.display = 'none';
   }
 
-  // Automatically check for updates on page load
-  await performVersionCheck();
+  if (shouldCheckForUpdates) {
+    await performVersionCheck();
+  }
 }
 
 async function performVersionCheck() {
   const button = document.getElementById('check-updates-btn');
   const statusDiv = document.getElementById('update-status');
+  const downloadLink = document.getElementById('download-latest-link');
 
   try {
     button.disabled = true;
@@ -1237,6 +1241,10 @@ async function performVersionCheck() {
     statusDiv.style.display = 'none';
 
     const result = await checkForUpdates();
+
+    if (downloadLink) {
+      downloadLink.href = result.downloadUrl || result.releaseUrl;
+    }
 
     if (result.error) {
       statusDiv.textContent = result.error;

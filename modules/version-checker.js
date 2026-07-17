@@ -2,8 +2,27 @@
 // Checks for updates by comparing manifest version with GitHub
 
 import { t } from './i18n.js';
+import { compareVersions } from './version-utils.js';
 
-const GITHUB_MANIFEST_URL = 'https://raw.githubusercontent.com/Manho/Panelize/main/manifest.json';
+const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/Manho/Panelize/releases/latest';
+const GITHUB_RELEASES_URL = 'https://github.com/Manho/Panelize/releases/latest';
+
+/**
+ * @typedef {Object} LatestReleaseInfo
+ * @property {string} version
+ * @property {string} releaseUrl
+ * @property {string} downloadUrl
+ */
+
+/**
+ * @typedef {Object} UpdateCheckResult
+ * @property {boolean} updateAvailable
+ * @property {string|null} currentVersion
+ * @property {string|null} latestVersion
+ * @property {string} releaseUrl
+ * @property {string} downloadUrl
+ * @property {string|null} error
+ */
 
 /**
  * Load local manifest version
@@ -23,14 +42,16 @@ export async function loadVersionInfo() {
 }
 
 /**
- * Fetch latest manifest from GitHub
- * @returns {Promise<Object|null>} Latest manifest or null on error
+ * Fetch the latest published release from GitHub.
+ *
+ * @returns {Promise<LatestReleaseInfo|null>} Latest release or null on error.
  */
-export async function fetchLatestManifest() {
+export async function fetchLatestRelease() {
   try {
-    const response = await fetch(GITHUB_MANIFEST_URL, {
+    const response = await fetch(GITHUB_LATEST_RELEASE_URL, {
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
       }
     });
 
@@ -38,82 +59,77 @@ export async function fetchLatestManifest() {
       throw new Error(`GitHub fetch error: ${response.status}`);
     }
 
-    const manifest = await response.json();
-    return manifest;
+    const release = await response.json();
+    const versionMatch = /^v?(\d+\.\d+\.\d+)$/.exec(release.tag_name ?? '');
+
+    if (!versionMatch || typeof release.html_url !== 'string') {
+      throw new Error('GitHub release metadata is invalid');
+    }
+
+    const version = versionMatch[1];
+    const expectedAssetName = `panelize-${version}-release.zip`;
+    const releaseAsset = Array.isArray(release.assets)
+      ? release.assets.find(asset => asset?.name === expectedAssetName)
+      : null;
+
+    return {
+      version,
+      releaseUrl: release.html_url,
+      downloadUrl: releaseAsset?.browser_download_url || release.html_url
+    };
   } catch (error) {
-    console.error('Error fetching latest manifest:', error);
+    console.error('Error fetching latest GitHub release:', error);
     return null;
   }
 }
 
 /**
- * Compare two version strings (e.g., "1.0.0" vs "1.1.0")
- * @param {string} current - Current version
- * @param {string} latest - Latest version
- * @returns {number} -1 if current < latest, 0 if equal, 1 if current > latest
- */
-function compareVersions(current, latest) {
-  const currentParts = current.split('.').map(Number);
-  const latestParts = latest.split('.').map(Number);
-  
-  const maxLength = Math.max(currentParts.length, latestParts.length);
-  
-  for (let i = 0; i < maxLength; i++) {
-    const currentPart = currentParts[i] || 0;
-    const latestPart = latestParts[i] || 0;
-    
-    if (currentPart < latestPart) return -1;
-    if (currentPart > latestPart) return 1;
-  }
-  
-  return 0;
-}
-
-/**
  * Check if an update is available
- * @returns {Promise<Object>} Update status
+ * @returns {Promise<UpdateCheckResult>} Update status.
  */
 export async function checkForUpdates() {
   const localInfo = await loadVersionInfo();
   if (!localInfo) {
     return {
       updateAvailable: false,
+      currentVersion: null,
+      latestVersion: null,
+      releaseUrl: GITHUB_RELEASES_URL,
+      downloadUrl: GITHUB_RELEASES_URL,
       error: t('errVersionInfoFailed')
     };
   }
 
-  const latestManifest = await fetchLatestManifest();
-  if (!latestManifest) {
+  const latestRelease = await fetchLatestRelease();
+  if (!latestRelease) {
     return {
       updateAvailable: false,
       currentVersion: localInfo.version,
-      error: t('errGitHubFetchFailed')
+      latestVersion: null,
+      releaseUrl: GITHUB_RELEASES_URL,
+      downloadUrl: GITHUB_RELEASES_URL,
+      error: t('msgCheckUpdatesFailed')
     };
   }
 
-  const comparison = compareVersions(localInfo.version, latestManifest.version);
+  const comparison = compareVersions(localInfo.version, latestRelease.version);
   const updateAvailable = comparison < 0;
 
   return {
     updateAvailable,
     currentVersion: localInfo.version,
-    latestVersion: latestManifest.version,
+    latestVersion: latestRelease.version,
+    releaseUrl: latestRelease.releaseUrl,
+    downloadUrl: latestRelease.downloadUrl,
     error: null
   };
 }
 
 /**
- * Get the download URL for the latest version
- * @returns {string} GitHub zip download URL
+ * Get the latest releases page URL.
+ *
+ * @returns {string} GitHub releases URL.
  */
-export function getDownloadUrl() {
-  return 'https://github.com/Manho/Panelize/archive/refs/heads/main.zip';
-}
-
-/**
- * Get the GitHub repository URL
- * @returns {string} GitHub repository URL
- */
-export function getRepositoryUrl() {
-  return 'https://github.com/Manho/Panelize';
+export function getReleasesUrl() {
+  return GITHUB_RELEASES_URL;
 }
