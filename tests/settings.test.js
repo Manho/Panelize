@@ -4,12 +4,12 @@ import {
   getSetting,
   saveSetting,
   saveSettings,
+  removeDeprecatedClaudeModelMode,
   resetSettings,
   exportSettings,
   importSettings,
 } from '../modules/settings.js';
 import { DEFAULT_GOOGLE_PROVIDER_MODE } from '../modules/google-mode.js';
-import { DEFAULT_CLAUDE_MODEL_MODE } from '../modules/claude-model-mode.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 
 describe('settings module', () => {
@@ -17,9 +17,11 @@ describe('settings module', () => {
     vi.clearAllMocks();
     chrome.storage.sync.get.mockImplementation((keys) => Promise.resolve(typeof keys === 'object' ? keys : {}));
     chrome.storage.sync.set.mockResolvedValue();
+    chrome.storage.sync.remove.mockResolvedValue();
     chrome.storage.sync.clear.mockResolvedValue();
     chrome.storage.local.get.mockImplementation((keys) => Promise.resolve(typeof keys === 'object' ? keys : {}));
     chrome.storage.local.set.mockResolvedValue();
+    chrome.storage.local.remove.mockResolvedValue();
     chrome.storage.local.clear.mockResolvedValue();
   });
 
@@ -48,13 +50,12 @@ describe('settings module', () => {
       expect(chrome.storage.local.get).toHaveBeenCalled();
     });
 
-    it('should expose the default provider modes', async () => {
+    it('should expose the default Google provider mode', async () => {
       chrome.storage.sync.get.mockImplementation(async (defaults) => defaults);
 
       const result = await getSettings();
 
       expect(result.googleProviderMode).toBe(DEFAULT_GOOGLE_PROVIDER_MODE);
-      expect(result.claudeModelMode).toBe(DEFAULT_CLAUDE_MODEL_MODE);
       expect(result.enabledProviders).toEqual(DEFAULT_PROVIDER_IDS);
     });
   });
@@ -92,11 +93,22 @@ describe('settings module', () => {
 
       expect(chrome.storage.sync.set).toHaveBeenCalledWith({ googleProviderMode: 'search' });
     });
+  });
 
-    it('should save the Claude model mode', async () => {
-      await saveSetting('claudeModelMode', 'opus-4-8');
+  describe('deprecated settings cleanup', () => {
+    it('should remove the retired Claude model mode from sync and local storage', async () => {
+      await removeDeprecatedClaudeModelMode();
 
-      expect(chrome.storage.sync.set).toHaveBeenCalledWith({ claudeModelMode: 'opus-4-8' });
+      expect(chrome.storage.sync.remove).toHaveBeenCalledWith('claudeModelMode');
+      expect(chrome.storage.local.remove).toHaveBeenCalledWith('claudeModelMode');
+    });
+
+    it('should continue cleaning local storage when sync storage is unavailable', async () => {
+      chrome.storage.sync.remove.mockRejectedValue(new Error('Sync unavailable'));
+
+      await expect(removeDeprecatedClaudeModelMode()).resolves.toBeUndefined();
+
+      expect(chrome.storage.local.remove).toHaveBeenCalledWith('claudeModelMode');
     });
   });
 
@@ -122,7 +134,6 @@ describe('settings module', () => {
         expect.objectContaining({
           enabledProviders: expect.any(Array),
           googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE,
-          claudeModelMode: DEFAULT_CLAUDE_MODEL_MODE,
           defaultProvider: 'chatgpt',
           theme: 'auto',
         })

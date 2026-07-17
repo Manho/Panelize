@@ -1,11 +1,9 @@
 import { DEFAULT_GOOGLE_PROVIDER_MODE } from './google-mode.js';
-import { DEFAULT_CLAUDE_MODEL_MODE } from './claude-model-mode.js';
 import { DEFAULT_PROVIDER_IDS } from './provider-defaults.js';
 
 const DEFAULT_SETTINGS = {
   enabledProviders: DEFAULT_PROVIDER_IDS,
   googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE,
-  claudeModelMode: DEFAULT_CLAUDE_MODEL_MODE,
   providerOrder: null,
   defaultProvider: 'chatgpt',
   lastSelectedProvider: 'chatgpt',
@@ -89,6 +87,31 @@ export async function saveSettings(settings) {
       console.warn('chrome.storage.local also unavailable');
     }
   }
+}
+
+/**
+ * Remove the retired Claude model override preference from browser storage.
+ *
+ * This is a best-effort upgrade cleanup. Each storage area is handled
+ * independently so one unavailable area does not prevent cleaning the other.
+ *
+ * @returns {Promise<void>}
+ */
+export async function removeDeprecatedClaudeModelMode() {
+  if (!isChromeApiAvailable()) {
+    return;
+  }
+
+  const storageAreas = [chrome.storage.sync, chrome.storage.local]
+    .filter(area => typeof area?.remove === 'function');
+
+  await Promise.all(storageAreas.map(async area => {
+    try {
+      await area.remove('claudeModelMode');
+    } catch {
+      // Ignore storage errors during best-effort upgrade cleanup.
+    }
+  }));
 }
 
 export async function resetSettings() {

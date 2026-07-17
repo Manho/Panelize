@@ -813,26 +813,7 @@
   "switchToPopupModeTitle": {
     "message": "ポップアップモードに切り替え"
   },
-  "openProviderTopLevel": { "message": "Claude を開く" },
   "openProviderTopLevelTitle": { "message": "新しいタブで開く" },
-  "embeddedModelLimitNotice": { "message": "埋め込み表示では Claude のモデル選択が制限されます。Panelize から実験的にモデルを指定できます。" },
-  "embeddedModelOverrideNotice": {
-    "message": "実験的なリクエスト：$MODEL$。利用可否は Claude アカウントによって異なります。",
-    "placeholders": { "model": { "content": "$1" } }
-  },
-  "claudeModelDefault": { "message": "Claude のデフォルト" },
-  "claudeModelExperimentalBadge": { "message": "実験的" },
-  "claudeModelExperimentalTitle": { "message": "実験的な互換モード" },
-  "claudeModelSelectTitle": { "message": "Claude モデルのリクエスト" },
-  "claudeModelRequestedStatus": {
-    "message": "$MODEL$ をリクエストしました",
-    "placeholders": { "model": { "content": "$1" } }
-  },
-  "claudeModelOverrideUnavailable": { "message": "モデル指定を利用できません。Claude のデフォルトに戻しました。" },
-  "claudeModelRequestRejected": {
-    "message": "モデルのリクエストが拒否されました（HTTP $STATUS$）。Claude のデフォルトに戻しました。",
-    "placeholders": { "status": { "content": "$1" } }
-  },
   "msgOpenModeUpdated": {
     "message": "開くモードを更新しました"
   },

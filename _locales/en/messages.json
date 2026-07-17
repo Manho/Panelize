@@ -50,53 +50,8 @@
   "switchToPopupModeTitle": {
     "message": "Switch to Popup Mode"
   },
-  "openProviderTopLevel": {
-    "message": "Open Claude"
-  },
   "openProviderTopLevelTitle": {
     "message": "Open in new tab"
-  },
-  "embeddedModelLimitNotice": {
-    "message": "Claude limits model selection when embedded. Panelize can experimentally request a model."
-  },
-  "embeddedModelOverrideNotice": {
-    "message": "Experimental request: $MODEL$. Availability depends on your Claude account.",
-    "placeholders": {
-      "model": {
-        "content": "$1"
-      }
-    }
-  },
-  "claudeModelDefault": {
-    "message": "Claude default"
-  },
-  "claudeModelExperimentalBadge": {
-    "message": "Experimental"
-  },
-  "claudeModelExperimentalTitle": {
-    "message": "Experimental compatibility mode"
-  },
-  "claudeModelSelectTitle": {
-    "message": "Claude model request"
-  },
-  "claudeModelRequestedStatus": {
-    "message": "Requested $MODEL$",
-    "placeholders": {
-      "model": {
-        "content": "$1"
-      }
-    }
-  },
-  "claudeModelOverrideUnavailable": {
-    "message": "Model override is unavailable. Switched to Claude default."
-  },
-  "claudeModelRequestRejected": {
-    "message": "Model request was rejected (HTTP $STATUS$). Switched to Claude default.",
-    "placeholders": {
-      "status": {
-        "content": "$1"
-      }
-    }
   },
   "msgOpenModeUpdated": {
     "message": "Open mode updated"

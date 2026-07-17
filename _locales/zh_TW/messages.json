@@ -807,53 +807,8 @@
   "switchToPopupModeTitle": {
     "message": "切換到彈出視窗模式"
   },
-  "openProviderTopLevel": {
-    "message": "開啟 Claude"
-  },
   "openProviderTopLevelTitle": {
     "message": "在新分頁中開啟"
-  },
-  "embeddedModelLimitNotice": {
-    "message": "Claude 會限制內嵌頁面中的模型選擇。Panelize 可以透過實驗性方式請求指定模型。"
-  },
-  "embeddedModelOverrideNotice": {
-    "message": "實驗性請求：$MODEL$。是否可用取決於你的 Claude 帳號。",
-    "placeholders": {
-      "model": {
-        "content": "$1"
-      }
-    }
-  },
-  "claudeModelDefault": {
-    "message": "Claude 預設模型"
-  },
-  "claudeModelExperimentalBadge": {
-    "message": "實驗性"
-  },
-  "claudeModelExperimentalTitle": {
-    "message": "實驗性相容模式"
-  },
-  "claudeModelSelectTitle": {
-    "message": "Claude 模型請求"
-  },
-  "claudeModelRequestedStatus": {
-    "message": "已請求 $MODEL$",
-    "placeholders": {
-      "model": {
-        "content": "$1"
-      }
-    }
-  },
-  "claudeModelOverrideUnavailable": {
-    "message": "模型覆寫不可用，已切換至 Claude 預設模型。"
-  },
-  "claudeModelRequestRejected": {
-    "message": "模型請求遭到拒絕（HTTP $STATUS$），已切換至 Claude 預設模型。",
-    "placeholders": {
-      "status": {
-        "content": "$1"
-      }
-    }
   },
   "msgOpenModeUpdated": {
     "message": "開啟模式已更新"

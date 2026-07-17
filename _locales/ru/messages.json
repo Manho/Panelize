@@ -813,26 +813,7 @@
   "switchToPopupModeTitle": {
     "message": "Переключиться в режим всплывающего окна"
   },
-  "openProviderTopLevel": { "message": "Открыть Claude" },
   "openProviderTopLevelTitle": { "message": "Открыть в новой вкладке" },
-  "embeddedModelLimitNotice": { "message": "Claude ограничивает выбор моделей во встроенном режиме. Panelize может экспериментально запросить определённую модель." },
-  "embeddedModelOverrideNotice": {
-    "message": "Экспериментальный запрос: $MODEL$. Доступность зависит от вашей учётной записи Claude.",
-    "placeholders": { "model": { "content": "$1" } }
-  },
-  "claudeModelDefault": { "message": "Модель Claude по умолчанию" },
-  "claudeModelExperimentalBadge": { "message": "Экспериментально" },
-  "claudeModelExperimentalTitle": { "message": "Экспериментальный режим совместимости" },
-  "claudeModelSelectTitle": { "message": "Запрос модели Claude" },
-  "claudeModelRequestedStatus": {
-    "message": "Запрошена модель $MODEL$",
-    "placeholders": { "model": { "content": "$1" } }
-  },
-  "claudeModelOverrideUnavailable": { "message": "Переопределение модели недоступно. Выбрана модель Claude по умолчанию." },
-  "claudeModelRequestRejected": {
-    "message": "Запрос модели отклонён (HTTP $STATUS$). Выбрана модель Claude по умолчанию.",
-    "placeholders": { "status": { "content": "$1" } }
-  },
   "msgOpenModeUpdated": {
     "message": "Режим открытия обновлен"
   },
