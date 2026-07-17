@@ -11,12 +11,6 @@ on:
         description: 'Release bullets separated with literal \n sequences'
         required: true
         type: string
-      base_ref:
-        description: 'Base branch or ref to prepare the release from'
-        required: false
-        default: 'main'
-        type: string
-
 permissions:
   contents: write
 
@@ -30,13 +24,13 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_CHANGELOG: ${{ inputs.changelog }}
-      RELEASE_BASE_REF: ${{ inputs.base_ref }}
+      RELEASE_BASE_REF: main
 
     steps:
-      - name: Checkout base ref
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.base_ref }}
+          ref: main
           fetch-depth: 0
 
       - name: Set up Node
@@ -86,3 +80,12 @@ jobs:
           git add manifest.json package.json package-lock.json data/version-info.json CHANGELOG.md
           git commit -m "chore: bump version to ${RELEASE_VERSION}"
           git push origin "release/${RELEASE_VERSION}"
+
+      - name: Write release pull request summary
+        run: |
+          {
+            echo "## Release branch ready"
+            echo
+            echo "Open and merge the release PR before publishing:"
+            echo "https://github.com/${GITHUB_REPOSITORY}/compare/main...release/${RELEASE_VERSION}?expand=1"
+          } >> "$GITHUB_STEP_SUMMARY"

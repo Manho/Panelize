@@ -1,0 +1,148 @@
+name: Release Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (x.y.z)'
+        required: true
+        type: string
+      pull_request:
+        description: 'Merged release pull request number'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-publish-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release_sha: ${{ steps.release_gate.outputs.release_sha }}
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_PR_NUMBER: ${{ inputs.pull_request }}
+
+    steps:
+      - name: Require main workflow ref
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Release Publish must be dispatched from main"
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate merged release pull request
+        id: release_gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/validate-release-publish.js
+
+      - name: Run unit tests
+        run: npx vitest run --exclude='tests/e2e/**'
+
+      - name: Build release packages
+        run: npm run release:package
+
+      - name: Create release notes
+        run: node scripts/write-release-notes.js
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: panelize-${{ inputs.version }}-publish
+          path: |
+            dist/release-${{ inputs.version }}/panelize-${{ inputs.version }}-release.zip
+            dist/release-${{ inputs.version }}/panelize-${{ inputs.version }}-cws.zip
+            dist/release-${{ inputs.version }}/release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_SHA: ${{ needs.validate.outputs.release_sha }}
+
+    steps:
+      - name: Checkout validated release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: panelize-${{ inputs.version }}-publish
+          path: dist/release-${{ inputs.version }}
+
+      - name: Revalidate release target
+        run: |
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+
+          TAG="v${RELEASE_VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists"
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG} already exists"
+            exit 1
+          fi
+
+      - name: Create annotated release tag
+        run: |
+          TAG="v${RELEASE_VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$RELEASE_SHA" -m "Panelize ${RELEASE_VERSION}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Create GitHub Release
+        run: |
+          TAG="v${RELEASE_VERSION}"
+          RELEASE_DIR="dist/release-${RELEASE_VERSION}"
+          gh release create "$TAG" \
+            "${RELEASE_DIR}/panelize-${RELEASE_VERSION}-release.zip" \
+            "${RELEASE_DIR}/panelize-${RELEASE_VERSION}-cws.zip" \
+            --verify-tag \
+            --title "Panelize ${RELEASE_VERSION}" \
+            --notes-file "${RELEASE_DIR}/release-notes.md"
+
+      - name: Write publish summary
+        run: |
+          {
+            echo "## Panelize ${RELEASE_VERSION} published"
+            echo
+            echo "Tag: v${RELEASE_VERSION}"
+            echo "Commit: ${RELEASE_SHA}"
+            echo "Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${RELEASE_VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"
