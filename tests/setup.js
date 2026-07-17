@@ -16,11 +16,13 @@ global.chrome = {
     sync: {
       get: vi.fn((keys) => Promise.resolve(typeof keys === 'object' ? keys : {})),
       set: vi.fn(() => Promise.resolve()),
+      remove: vi.fn(() => Promise.resolve()),
       clear: vi.fn(() => Promise.resolve()),
     },
     local: {
       get: vi.fn((keys) => Promise.resolve(typeof keys === 'object' ? keys : {})),
       set: vi.fn(() => Promise.resolve()),
+      remove: vi.fn(() => Promise.resolve()),
       clear: vi.fn(() => Promise.resolve()),
     },
     onChanged: {

@@ -813,26 +813,7 @@
   "switchToPopupModeTitle": {
     "message": "Passer au mode fenêtre popup"
   },
-  "openProviderTopLevel": { "message": "Ouvrir Claude" },
   "openProviderTopLevelTitle": { "message": "Ouvrir dans un nouvel onglet" },
-  "embeddedModelLimitNotice": { "message": "Claude limite la sélection des modèles lorsqu’il est intégré. Panelize peut demander un modèle de manière expérimentale." },
-  "embeddedModelOverrideNotice": {
-    "message": "Demande expérimentale : $MODEL$. La disponibilité dépend de votre compte Claude.",
-    "placeholders": { "model": { "content": "$1" } }
-  },
-  "claudeModelDefault": { "message": "Modèle Claude par défaut" },
-  "claudeModelExperimentalBadge": { "message": "Expérimental" },
-  "claudeModelExperimentalTitle": { "message": "Mode de compatibilité expérimental" },
-  "claudeModelSelectTitle": { "message": "Demande de modèle Claude" },
-  "claudeModelRequestedStatus": {
-    "message": "$MODEL$ demandé",
-    "placeholders": { "model": { "content": "$1" } }
-  },
-  "claudeModelOverrideUnavailable": { "message": "La sélection expérimentale n’est pas disponible. Retour au modèle Claude par défaut." },
-  "claudeModelRequestRejected": {
-    "message": "La demande de modèle a été refusée (HTTP $STATUS$). Retour au modèle Claude par défaut.",
-    "placeholders": { "status": { "content": "$1" } }
-  },
   "msgOpenModeUpdated": {
     "message": "Mode d'ouverture mis à jour"
   },

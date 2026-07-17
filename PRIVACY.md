@@ -1,6 +1,6 @@
 # Privacy Policy for Panelize
 
-**Last Updated: July 15, 2026**
+**Last Updated: July 17, 2026**
 
 ## Overview
 
@@ -31,7 +31,6 @@ The following data is stored in browser-managed storage. Prompt library data rem
 - Enter key behavior preferences
 - Source URL placement preferences
 - Language preferences
-- Experimental Claude model preference
 
 **Purpose:** To maintain your personalized extension configuration.
 
@@ -77,8 +76,6 @@ All data collected by Panelize is used solely for providing extension functional
 Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen, ChatGLM, and Google AI Mode) inside embedded panels. These providers operate under their own privacy policies.
 
 When you interact with these AI providers through Panelize, you are subject to their respective privacy policies. Panelize does not collect or store the content of your conversations with these services.
-
-If you explicitly select an experimental Claude model in Panelize, the extension locally processes Claude's outgoing completion request only to insert or replace its top-level model identifier. This processing happens in your browser. Panelize does not log, store, collect, or send the request body or conversation content to Panelize developers or Panelize-operated servers. The modified request continues directly to Claude as part of the chat you initiated. Selecting **Claude default** disables this request modification.
 
 ### Cookie Access
 
@@ -216,7 +213,6 @@ If you are a California resident:
 - Store your prompts and settings locally on your device
 - Use local browser storage to remember your preferences
 - Temporarily process selected text or page content on-device when you use the context menu
-- Locally set Claude's requested model when you explicitly enable experimental model selection
 - Load AI provider websites inside embedded panels
 - Check for updates on GitHub
 

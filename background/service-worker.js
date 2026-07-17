@@ -1,6 +1,7 @@
 import { notifyMessage } from '../modules/messaging.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
 import { migrateEnabledProvidersOnUpdate } from '../modules/provider-defaults.js';
+import { removeDeprecatedClaudeModelMode } from '../modules/settings.js';
 import {
   reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
@@ -127,6 +128,9 @@ function scheduleOptionalProviderReconcile() {
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await migrateProviderSettingsForUpdate(details);
+  if (details?.reason === 'update') {
+    await removeDeprecatedClaudeModelMode();
+  }
   await scheduleOptionalProviderReconcile();
   await createContextMenus();
   await loadShortcutSetting();
