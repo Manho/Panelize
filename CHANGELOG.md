@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.7 - 2026-07-17
+- Removed the experimental Claude model override now that Claude provides native model selection when embedded.
+- Added upgrade cleanup and regression coverage for the retired Claude model preference.
+
 ## 1.2.6 - 2026-07-17
 - Fixed update checks for GitHub-installed extensions using GitHub Releases.
 - Added a guarded release workflow that publishes only after the release branch is merged into main.
