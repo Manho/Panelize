@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.6 - 2026-07-17
+- Fixed update checks for GitHub-installed extensions using GitHub Releases.
+- Added a guarded release workflow that publishes only after the release branch is merged into main.
+
 ## 1.1.1 - 2026-04-13
 - Fixed: New Chat for All now preserves temporary chat mode for supported providers.
 - Fixed: Gemini and Grok temporary or private chat activation no longer toggles off when already active.
