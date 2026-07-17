@@ -97,15 +97,16 @@ export function assertMergedReleasePullRequest(pullRequest, targetVersion) {
 }
 
 /**
- * Require the merged release PR to be the current main commit.
+ * Require the merged release PR commit to remain in the current main history.
  *
  * @param {string} mergeCommitSha Release PR merge commit.
  * @param {string} mainCommitSha Current main commit.
+ * @param {boolean} isAncestor Whether the release merge commit is an ancestor of main.
  */
-export function assertReleaseCommitIsCurrentMain(mergeCommitSha, mainCommitSha) {
-  if (mergeCommitSha !== mainCommitSha) {
+export function assertReleaseCommitIsInMainHistory(mergeCommitSha, mainCommitSha, isAncestor) {
+  if (!isAncestor) {
     throw new Error(
-      `Release PR merge commit ${mergeCommitSha} must be the current main commit ${mainCommitSha}`
+      `Release PR merge commit ${mergeCommitSha} is not in main history at ${mainCommitSha}`
     );
   }
 }

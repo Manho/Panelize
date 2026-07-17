@@ -4,7 +4,7 @@ import { BUMP_COMMIT_FILES } from '../scripts/release-utils.js';
 import {
   assertMergedReleasePullRequest,
   assertReleaseChangedFiles,
-  assertReleaseCommitIsCurrentMain,
+  assertReleaseCommitIsInMainHistory,
   assertReleaseMetadata,
   assertReleaseTargetsMissing,
   buildReleaseNotes,
@@ -72,10 +72,10 @@ describe('release gate', () => {
     )).toThrow(/base must be main/);
   });
 
-  it('requires the release PR merge to remain at the tip of main', () => {
-    expect(() => assertReleaseCommitIsCurrentMain('merge-sha', 'merge-sha')).not.toThrow();
-    expect(() => assertReleaseCommitIsCurrentMain('merge-sha', 'newer-sha'))
-      .toThrow(/must be the current main commit/);
+  it('requires the release PR merge to remain in main history', () => {
+    expect(() => assertReleaseCommitIsInMainHistory('merge-sha', 'newer-sha', true)).not.toThrow();
+    expect(() => assertReleaseCommitIsInMainHistory('merge-sha', 'newer-sha', false))
+      .toThrow(/not in main history/);
   });
 
   it('rejects existing release targets', () => {

@@ -11,7 +11,7 @@ import {
 import {
   assertMergedReleasePullRequest,
   assertReleaseChangedFiles,
-  assertReleaseCommitIsCurrentMain,
+  assertReleaseCommitIsInMainHistory,
   assertReleaseMetadata,
   assertReleaseTargetsMissing
 } from './release-gate.js';
@@ -35,14 +35,12 @@ async function githubRequest(repository, path, token, { allowNotFound = false } 
   return response.json();
 }
 
-function assertCommitIsAncestor(repoRoot, ancestor, descendant) {
+function isCommitAncestor(repoRoot, ancestor, descendant) {
   const result = spawnSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
     cwd: repoRoot,
     stdio: 'ignore'
   });
-  if (result.status !== 0) {
-    throw new Error(`Release PR merge commit ${ancestor} is not in ${descendant}`);
-  }
+  return result.status === 0;
 }
 
 function assertMetadataMatchesPullRequest(repoRoot, pullNumber, expectedHeadSha) {
@@ -98,8 +96,11 @@ async function main() {
     throw new Error('Release PR contains more than 100 changed files');
   }
   assertReleaseChangedFiles(pullFiles.map(file => file.filename));
-  assertCommitIsAncestor(repoRoot, mergeCommitSha, 'HEAD');
-  assertReleaseCommitIsCurrentMain(mergeCommitSha, releaseSha);
+  assertReleaseCommitIsInMainHistory(
+    mergeCommitSha,
+    releaseSha,
+    isCommitAncestor(repoRoot, mergeCommitSha, releaseSha)
+  );
   assertMetadataMatchesPullRequest(repoRoot, pullNumber, pullRequest.head.sha);
   assertReleaseMetadata(
     await getVersionState(repoRoot),
