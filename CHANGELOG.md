@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.8 - 2026-07-19
+- Fix Gemini Send All in localized interfaces without affecting image uploads.
+
 ## 1.2.7 - 2026-07-17
 - Removed the experimental Claude model override now that Claude provides native model selection when embedded.
 - Added upgrade cleanup and regression coverage for the retired Claude model preference.
