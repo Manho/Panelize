@@ -172,9 +172,10 @@
     ],
     gemini: [
       'button[aria-label="Send message"]',
+      'button[aria-label="发送"]',
       'button.send-button',
       'button[mattooltip="Send message"]',
-      '.input-area-container button:has(mat-icon)',
+      '.input-area-container button:has(mat-icon[fonticon="arrow_upward"])',
       'button[aria-label="Submit"]'
     ],
     grok: [
