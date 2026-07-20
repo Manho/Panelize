@@ -38,7 +38,12 @@ function markVisible(element) {
   });
 }
 
-function dispatchImageInjection({ images = SAMPLE_IMAGES.slice(0, 1), text = '', autoSubmit = false } = {}) {
+function dispatchImageInjection({
+  images = SAMPLE_IMAGES.slice(0, 1),
+  text = '',
+  autoSubmit = false,
+  requestId,
+} = {}) {
   window.dispatchEvent(new MessageEvent('message', {
     data: {
       type: 'INJECT_TEXT_WITH_IMAGES',
@@ -46,6 +51,7 @@ function dispatchImageInjection({ images = SAMPLE_IMAGES.slice(0, 1), text = '',
       images,
       text,
       autoSubmit,
+      requestId,
     },
   }));
 }
@@ -246,6 +252,10 @@ describe('provider image upload adapters', () => {
     Object.defineProperty(document, 'execCommand', {
       configurable: true,
       value: vi.fn(() => false),
+    });
+    Object.defineProperty(window, 'parent', {
+      configurable: true,
+      value: { postMessage: vi.fn() },
     });
   });
 
@@ -511,5 +521,65 @@ describe('provider image upload adapters', () => {
 
     expect(uploadedNames).toEqual([]);
     expect(document.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  it('acknowledges a verified image fill with its request ID and provider', async () => {
+    window.happyDOM.setURL('https://grok.com/');
+    createGrokDom();
+
+    dispatchImageInjection({ requestId: 'fill-request-success' });
+    await finishSuccessfulInjection();
+
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-success',
+      provider: 'grok',
+      action: 'fill',
+      status: 'succeeded',
+    }, '*');
+  });
+
+  it('acknowledges an unsupported Kimi image fill without claiming success', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    createKimiDom({ uploadAvailable: false });
+
+    dispatchImageInjection({ requestId: 'fill-request-unsupported' });
+    await finishSuccessfulInjection();
+
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-unsupported',
+      provider: 'kimi',
+      action: 'fill',
+      status: 'failed',
+      reason: 'unsupported',
+    }, '*');
+  });
+
+  it('acknowledges a preview timeout and keeps the failed fill unsent', async () => {
+    window.happyDOM.setURL('https://chat.deepseek.com/');
+    const { sendButton } = createDeepSeekDom({ previewOnChange: false });
+    const sendSpy = vi.fn();
+    sendButton.addEventListener('click', sendSpy);
+
+    dispatchImageInjection({
+      requestId: 'fill-request-timeout',
+      text: 'keep this text',
+      autoSubmit: true,
+    });
+    await finishTimedOutInjection();
+
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-timeout',
+      provider: 'deepseek',
+      action: 'fill',
+      status: 'failed',
+      reason: 'preview-timeout',
+    }, '*');
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 });

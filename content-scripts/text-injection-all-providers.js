@@ -7,6 +7,8 @@
   const GOOGLE_PROVIDER_MODE_AI = 'ai';
   const GOOGLE_PROVIDER_MODE_SEARCH = 'search';
   const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
+  const MULTI_PANEL_ACTION_RESULT_CONTEXT = 'multi-panel-action-result';
+  const PANELIZE_ACTION_RESULT = 'PANELIZE_ACTION_RESULT';
   const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
   const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
   const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
@@ -482,6 +484,27 @@
       phase,
       context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
     }, '*');
+  }
+
+  function postMultiPanelActionResult(requestId, provider, result) {
+    if (!requestId || !provider || window.parent === window) {
+      return;
+    }
+
+    const message = {
+      type: PANELIZE_ACTION_RESULT,
+      context: MULTI_PANEL_ACTION_RESULT_CONTEXT,
+      requestId,
+      provider,
+      action: 'fill',
+      status: result.ok ? 'succeeded' : 'failed'
+    };
+
+    if (!result.ok) {
+      message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
+    }
+
+    window.parent.postMessage(message, '*');
   }
 
   function postTemporaryChatEnabled(provider = detectProvider()) {
@@ -1556,9 +1579,10 @@
       await sleep(500);
 
       // Then inject text if provided
+      let textInjected = true;
       if (text && text.trim()) {
         await sleep(300);
-        injectText(provider, text, autoSubmit && allImagesInjected, providerMode);
+        textInjected = injectText(provider, text, autoSubmit && allImagesInjected, providerMode);
       } else if (autoSubmit) {
         if (!allImagesInjected) {
           console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
@@ -1570,10 +1594,14 @@
         clickSendButton(provider, providerMode);
       }
 
-      return allImagesInjected
-        ? createImageInjectionSuccess()
-        : imageInjectionResults.find(result => !result.ok) ||
+      if (!allImagesInjected) {
+        return imageInjectionResults.find(result => !result.ok) ||
           createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+
+      return textInjected
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     } catch (error) {
       console.error('[Image Injection] Error:', error);
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
@@ -2732,7 +2760,19 @@
 
     // Handle INJECT_TEXT_WITH_IMAGES messages
     if (event.data.type === 'INJECT_TEXT_WITH_IMAGES' && event.data.context === 'multi-panel') {
-      handleImageInjection(event);
+      const provider = detectProvider();
+      void handleImageInjection(event)
+        .then(result => {
+          postMultiPanelActionResult(event.data.requestId, provider, result);
+        })
+        .catch(error => {
+          console.error('[Image Injection] Unhandled fill error:', error);
+          postMultiPanelActionResult(
+            event.data.requestId,
+            provider,
+            createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR)
+          );
+        });
       return;
     }
 

@@ -23,6 +23,12 @@ import { saveSetting } from '../modules/settings.js';
 import { applyTheme } from '../modules/theme-manager.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
 import {
+  createPanelActionResultWaiter,
+  getFillTargetPanels,
+  shouldClearFillPayload,
+  summarizeFillResults
+} from '../modules/panel-action-results.js';
+import {
   getAllPrompts,
   searchPrompts,
   recordPromptUsage,
@@ -39,6 +45,9 @@ import {
 let currentLayout = '1x3';
 let panels = []; // Array of { id, providerId, iframe, state }
 let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
+let failedFillPanelIds = new Set();
+let fillActionRequestCounter = 0;
+let fillPayloadRevision = 0;
 let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
 let isRestoringFocusAfterNewChat = false;
@@ -1310,6 +1319,7 @@ async function addPanel(providerId) {
     currentUrl: null,
     state: 'loading'
   });
+  resetFillRetryState();
 
   bindPanelHeaderActions(panelId);
 
@@ -1333,6 +1343,7 @@ function removePanel(panelId) {
   // Remove from arrays and sets
   panels.splice(panelIndex, 1);
   loadingPanelIds.delete(panelId);
+  resetFillRetryState();
 
   // Auto-shrink layout if applicable
   const shrunkLayout = getAutoShrunkLayout(currentLayout, panels.length);
@@ -1366,6 +1377,8 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   const panelEl = document.getElementById(panelId);
   if (!panelEl) return;
+
+  resetFillRetryState();
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();
@@ -1457,6 +1470,57 @@ function toggleToolbar() {
 }
 
 // ===== Message Broadcasting =====
+function createFillActionRequestId() {
+  fillActionRequestCounter += 1;
+  return `fill-${Date.now()}-${fillActionRequestCounter}`;
+}
+
+function updateFillRetryButton() {
+  const fillBtn = document.getElementById('fill-input-btn');
+  if (!fillBtn) {
+    return;
+  }
+
+  const text = fillBtn.querySelector('.btn-text');
+  const hasFailures = failedFillPanelIds.size > 0;
+  if (text) {
+    text.textContent = hasFailures ? 'Retry Failed' : 'Fill';
+  }
+  fillBtn.title = hasFailures ? 'Retry Failed Panels' : 'Fill Input Boxes';
+  fillBtn.dataset.retryFailed = hasFailures ? 'true' : 'false';
+}
+
+function resetFillRetryState() {
+  fillPayloadRevision += 1;
+  if (failedFillPanelIds.size === 0) {
+    updateFillRetryButton();
+    return;
+  }
+
+  failedFillPanelIds = new Set();
+  updateFillRetryButton();
+}
+
+function setFillRetryState(panelIds) {
+  failedFillPanelIds = new Set(panelIds);
+  updateFillRetryButton();
+}
+
+function normalizePanelResults(settledResults, targetPanels) {
+  return settledResults.map((settled, index) => {
+    const panel = targetPanels[index];
+    if (settled.status === 'fulfilled' && settled.value) {
+      return settled.value;
+    }
+    return {
+      ok: false,
+      panelId: panel.id,
+      provider: panel.providerId,
+      reason: 'injection-error'
+    };
+  });
+}
+
 async function broadcastMessage(text, autoSubmit = true) {
   const sendBtn = document.getElementById('send-all-btn');
   const fillBtn = document.getElementById('fill-input-btn');
@@ -1482,6 +1546,9 @@ async function broadcastMessage(text, autoSubmit = true) {
   const sendFocusRequestId = shouldAutoSubmit
     ? restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames())
     : null;
+  const fillActionRequestId = hasImages ? createFillActionRequestId() : null;
+  const requestId = fillActionRequestId || sendFocusRequestId;
+  const payloadRevisionAtStart = fillPayloadRevision;
 
   try {
     // Disable buttons during send
@@ -1497,13 +1564,75 @@ async function broadcastMessage(text, autoSubmit = true) {
       type: img.type
     }));
 
-    // Send to all panels
+    const targetPanels = hasImages
+      ? getFillTargetPanels(panels, failedFillPanelIds)
+      : panels;
+    const previousFailedPanelIds = new Set(failedFillPanelIds);
+
+    // Send to all panels, or only the panels that failed the previous image fill.
     const panelResults = await Promise.allSettled(
-      panels.map(panel => sendToPanel(panel, text, imagesPayload, shouldAutoSubmit, sendFocusRequestId))
+      targetPanels.map(panel => sendToPanel(panel, text, imagesPayload, shouldAutoSubmit, requestId))
     );
+    const normalizedResults = normalizePanelResults(panelResults, targetPanels);
+
+    if (hasImages) {
+      if (fillPayloadRevision !== payloadRevisionAtStart) {
+        statusEl.textContent = 'Input changed; fill again';
+        statusEl.className = 'send-status partial';
+        setTimeout(() => {
+          statusEl.textContent = '';
+          statusEl.className = 'send-status';
+        }, 3000);
+        return;
+      }
+
+      const summary = summarizeFillResults(panels, normalizedResults, previousFailedPanelIds);
+      const totalCount = panels.length;
+      const { successfulCount, failedCount } = summary;
+
+      if (summary.allSucceeded) {
+        statusEl.textContent = `Filled ${successfulCount} input${successfulCount > 1 ? 's' : ''}`;
+        statusEl.className = 'send-status success';
+        setFillRetryState([]);
+      } else if (successfulCount > 0) {
+        statusEl.textContent = `Filled ${successfulCount}/${totalCount}; ${failedCount} failed`;
+        statusEl.className = 'send-status partial';
+        setFillRetryState(summary.failedPanelIds);
+      } else {
+        statusEl.textContent = `Failed to fill 0/${totalCount}; ${failedCount} failed`;
+        statusEl.className = 'send-status error';
+        setFillRetryState(summary.failedPanelIds);
+      }
+
+      if (failedCount > 0) {
+        const resultsByPanelId = new Map(
+          normalizedResults.map(result => [result.panelId, result])
+        );
+        const failedPanels = panels
+          .filter(panel => summary.failedPanelIds.has(panel.id))
+          .map(panel => ({
+            panelId: panel.id,
+            provider: panel.providerId,
+            reason: resultsByPanelId.get(panel.id)?.reason || 'injection-error'
+          }));
+        console.warn('[Multi-Panel] Image fill failed for panels:', failedPanels);
+      }
+
+      if (shouldClearFillPayload(summary)) {
+        document.getElementById('unified-input').value = '';
+        resizeTextarea();
+        clearAllImages();
+      }
+
+      setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.className = 'send-status';
+      }, 3000);
+      return;
+    }
 
     // Count results (panels only)
-    const panelSuccessful = panelResults.filter(r => r.status === 'fulfilled' && r.value).length;
+    const panelSuccessful = normalizedResults.filter(result => result.ok).length;
     const totalSuccessful = panelSuccessful;
     const totalCount = panels.length;
     const failed = totalCount - totalSuccessful;
@@ -1556,35 +1685,62 @@ async function broadcastMessage(text, autoSubmit = true) {
 }
 
 async function sendToPanel(panel, text, images = [], autoSubmit = true, requestId = null) {
-  return new Promise((resolve) => {
-    try {
-      if (!panel.iframe || !panel.iframe.contentWindow) {
-        resolve(false);
-        return;
-      }
+  if (!panel.iframe || !panel.iframe.contentWindow) {
+    return {
+      ok: false,
+      panelId: panel.id,
+      provider: panel.providerId,
+      reason: 'control-not-found'
+    };
+  }
 
-      // Determine message type based on whether images are included
-      const messageType = images.length > 0 ? 'INJECT_TEXT_WITH_IMAGES' : 'INJECT_TEXT';
+  const waitsForActionResult = images.length > 0 && Boolean(requestId);
+  const waiter = waitsForActionResult
+    ? createPanelActionResultWaiter({
+      target: window,
+      panel,
+      requestId,
+      action: 'fill'
+    })
+    : null;
 
-      // Send message to content script inside iframe with autoSubmit flag
-      // Add context identifier so receivers can validate origin
-      panel.iframe.contentWindow.postMessage({
-        type: messageType,
-        text: text,
-        images: images,
-        autoSubmit: autoSubmit,
-        requestId: requestId,
-        providerMode: getPanelProviderMode(panel),
-        context: 'multi-panel'  // Identify this is from multi-panel
-      }, '*');
+  try {
+    // Determine message type based on whether images are included
+    const messageType = images.length > 0 ? 'INJECT_TEXT_WITH_IMAGES' : 'INJECT_TEXT';
 
-      // Assume success (we can't easily verify)
-      resolve(true);
-    } catch (error) {
-      console.error(`Error sending to ${panel.providerId}:`, error);
-      resolve(false);
+    // Send message to content script inside iframe with autoSubmit flag.
+    panel.iframe.contentWindow.postMessage({
+      type: messageType,
+      text,
+      images,
+      autoSubmit,
+      requestId,
+      action: waitsForActionResult ? 'fill' : undefined,
+      providerMode: getPanelProviderMode(panel),
+      context: 'multi-panel'
+    }, '*');
+
+    if (waiter) {
+      return await waiter.promise;
     }
-  });
+
+    return {
+      ok: true,
+      panelId: panel.id,
+      provider: panel.providerId
+    };
+  } catch (error) {
+    console.error(`Error sending to ${panel.providerId}:`, error);
+    waiter?.cancel('injection-error');
+    return waiter
+      ? await waiter.promise
+      : {
+        ok: false,
+        panelId: panel.id,
+        provider: panel.providerId,
+        reason: 'injection-error'
+      };
+  }
 }
 
 // Clear all input boxes (unified input + all panels)
@@ -1645,6 +1801,7 @@ async function addImage(file) {
       type: file.type,
       dataUrl: dataUrl
     });
+    resetFillRetryState();
 
     // Render preview
     renderImagePreviews();
@@ -1667,11 +1824,13 @@ function fileToDataUrl(file) {
 
 function removeImage(imageId) {
   uploadedImages = uploadedImages.filter(img => img.id !== imageId);
+  resetFillRetryState();
   renderImagePreviews();
 }
 
 function clearAllImages() {
   uploadedImages = [];
+  resetFillRetryState();
   renderImagePreviews();
 }
 
@@ -2030,6 +2189,7 @@ function applyVariables() {
 function applyPromptToInput(content) {
   const input = document.getElementById('unified-input');
   input.value = content;
+  resetFillRetryState();
   resizeTextarea();
   input.focus();
 }
@@ -2218,7 +2378,10 @@ function setupEventListeners() {
   // Input textarea
   const inputTextarea = document.getElementById('unified-input');
   let isInputComposing = false;
-  inputTextarea.addEventListener('input', resizeTextarea);
+  inputTextarea.addEventListener('input', () => {
+    resetFillRetryState();
+    resizeTextarea();
+  });
   inputTextarea.addEventListener('compositionstart', () => {
     isInputComposing = true;
   });
