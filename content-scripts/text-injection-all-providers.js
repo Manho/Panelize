@@ -18,6 +18,13 @@
   const MULTI_PANEL_USER_INTERACTION_TRACKING_TIMEOUT_MS = 90000;
   const TEMP_CHAT_POLL_INTERVAL_MS = 200;
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
+  const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
+  const IMAGE_INJECTION_REASONS = Object.freeze({
+    CONTROL_NOT_FOUND: 'control-not-found',
+    UNSUPPORTED: 'unsupported',
+    PREVIEW_TIMEOUT: 'preview-timeout',
+    INJECTION_ERROR: 'injection-error'
+  });
   let googleSearchReplaceOnNextFill = true;
   let chatgptSendTracking = null;
   let multiPanelUserInteractionTracking = null;
@@ -101,7 +108,7 @@
     gemini: true,
     grok: true,
     deepseek: true,
-    kimi: true,  // Kimi supports images
+    kimi: true,
     doubao: true,
     'qwen-cn': true,
     'qwen-global': true,
@@ -115,9 +122,6 @@
     chatgpt: ['input[type="file"][data-testid="file-upload-input"]', 'input[type="file"]'],
     claude: ['input[type="file"]'],
     gemini: ['input[type="file"]'],
-    grok: ['input[type="file"]'],
-    deepseek: ['input[type="file"]'],
-    kimi: ['input[type="file"]'],
     doubao: ['input[type="file"]'],
     'qwen-cn': ['input[type="file"][accept*="image"]'],
     'qwen-global': [
@@ -134,9 +138,6 @@
     chatgpt: ['button[aria-label="Attach files"]', 'button[data-testid="composer-attach-button"]', 'button:has(svg path[d*="M9"])'],
     claude: ['button[aria-label="Attach file"]', 'button[aria-label="Upload file"]', 'fieldset button:has(svg)'],
     gemini: ['button[aria-label="Upload file"]', 'button[mattooltip="Upload file"]', '.add-button', 'button:has(mat-icon)'],
-    grok: [],
-    deepseek: [],
-    kimi: [],  // Kimi supports drag-drop for images
     doubao: [
       '#input-engine-container button[data-slot="dropdown-menu-trigger"][aria-haspopup="menu"]'
     ],
@@ -1494,7 +1495,7 @@
 
     if (!provider) {
       console.warn('[Image Injection] Provider not detected');
-      return;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     }
 
     if (provider === 'google' && providerMode === GOOGLE_PROVIDER_MODE_SEARCH) {
@@ -1502,7 +1503,7 @@
       if (text && text.trim()) {
         handleGoogleTextInjection(text, autoSubmit, providerMode);
       }
-      return;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
     }
 
     if (!PROVIDER_IMAGE_SUPPORT[provider]) {
@@ -1511,12 +1512,12 @@
       if (text) {
         injectText(provider, text, autoSubmit, providerMode);
       }
-      return;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
     }
 
     if (!images || images.length === 0) {
       console.warn('[Image Injection] No images provided');
-      return;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
 
     console.log(`[Image Injection] Injecting ${images.length} images to ${provider}`);
@@ -1536,12 +1537,17 @@
 
       // Inject images first
       for (const image of images) {
-        imageInjectionResults.push(await injectSingleImage(provider, image));
+        const result = await injectSingleImage(provider, image);
+        imageInjectionResults.push(result);
+        if (!result.ok) {
+          break;
+        }
         // Wait a bit between images
         await sleep(200);
       }
 
-      const allImagesInjected = imageInjectionResults.every(Boolean);
+      const allImagesInjected = imageInjectionResults.length === images.length &&
+        imageInjectionResults.every(result => result.ok);
       if (!allImagesInjected) {
         console.warn('[Image Injection] One or more images failed to inject for:', provider);
       }
@@ -1556,15 +1562,40 @@
       } else if (autoSubmit) {
         if (!allImagesInjected) {
           console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
-          return;
+          return imageInjectionResults.find(result => !result.ok) ||
+            createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
         }
         // If no text but autoSubmit is true, click send button
         await sleep(300);
         clickSendButton(provider, providerMode);
       }
+
+      return allImagesInjected
+        ? createImageInjectionSuccess()
+        : imageInjectionResults.find(result => !result.ok) ||
+          createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     } catch (error) {
       console.error('[Image Injection] Error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
+  }
+
+  function createImageInjectionSuccess() {
+    return { ok: true };
+  }
+
+  function createImageInjectionFailure(reason) {
+    return { ok: false, reason };
+  }
+
+  function normalizeImageInjectionResult(result) {
+    if (result && typeof result.ok === 'boolean') {
+      return result;
+    }
+
+    return result
+      ? createImageInjectionSuccess()
+      : createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
   }
 
   // Inject a single image to the provider using provider-specific strategy
@@ -1572,34 +1603,367 @@
     console.log('[Image Injection] Injecting image to', provider);
 
     // Use provider-specific strategies
+    let result;
     switch (provider) {
       case 'chatgpt':
-        return await injectImageToChatGPT(imageData);
+        result = await injectImageToChatGPT(imageData);
+        break;
       case 'claude':
-        return await injectImageToClaude(imageData);
+        result = await injectImageToClaude(imageData);
+        break;
       case 'gemini':
-        return await injectImageToGemini(imageData);
+        result = await injectImageToGemini(imageData);
+        break;
       case 'grok':
+        return await injectImageToGrok(imageData);
       case 'deepseek':
-        // These work with drag-drop
-        return await tryDragDropUpload(provider, imageData);
+        return await injectImageToDeepSeek(imageData);
+      case 'kimi':
+        return await injectImageToKimi(imageData);
       case 'doubao':
-        return await injectImageToDoubao(imageData);
+        result = await injectImageToDoubao(imageData);
+        break;
       case 'qwen-cn':
       case 'qwen-global':
-        return await injectImageToQwen(provider, imageData);
+        result = await injectImageToQwen(provider, imageData);
+        break;
       case 'chatglm':
-        return await injectImageToChatGLM(imageData);
+        result = await injectImageToChatGLM(imageData);
+        break;
       case 'zai-global':
-        return await injectImageToZaiGlobal(imageData);
+        result = await injectImageToZaiGlobal(imageData);
+        break;
       case 'google':
-        return await injectImageToGoogle(imageData);
+        result = await injectImageToGoogle(imageData);
+        break;
       default:
         // Fallback: try file input first, then drag-drop
         if (await tryFileInputUpload(provider, imageData)) {
-          return true;
+          result = true;
+          break;
         }
-        return await tryDragDropUpload(provider, imageData);
+        result = await tryDragDropUpload(provider, imageData);
+        break;
+    }
+
+    return normalizeImageInjectionResult(result);
+  }
+
+  function findClosestAncestorContaining(element, selector, maxDepth = 8) {
+    let current = element;
+
+    for (let depth = 0; current && depth <= maxDepth; depth++) {
+      if (current === document.body || current === document.documentElement) {
+        return null;
+      }
+      try {
+        if (current.querySelector?.(selector)) {
+          return current;
+        }
+      } catch (error) {
+        console.warn('[Image Injection] Invalid scoped selector:', selector, error);
+        return null;
+      }
+      current = current.parentElement;
+    }
+
+    return null;
+  }
+
+  function findVisibleElementByExactText(selector, expectedTexts) {
+    const normalizedTexts = expectedTexts.map(text => text.trim().toLowerCase());
+
+    for (const element of document.querySelectorAll(selector)) {
+      const text = (element.textContent || '').trim().toLowerCase();
+      if (normalizedTexts.includes(text) && isVisibleElement(element)) {
+        return element;
+      }
+    }
+
+    return null;
+  }
+
+  function acceptsImageFiles(fileInput) {
+    const accept = (fileInput?.getAttribute('accept') || '').toLowerCase();
+    return !accept || accept.includes('image/') || [
+      '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif', '.apng'
+    ].some(extension => accept.includes(extension));
+  }
+
+  async function createImageFile(imageData) {
+    const blob = await dataUrlToBlob(imageData.dataUrl);
+    return new File([blob], imageData.name, { type: imageData.type });
+  }
+
+  function dispatchFileInputEvents(fileInput) {
+    fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function dispatchDragEventsToWakeInput(target, file) {
+    if (!target) {
+      return;
+    }
+
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    ['dragenter', 'dragover', 'dragleave'].forEach(type => {
+      target.dispatchEvent(new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer
+      }));
+    });
+  }
+
+  async function waitForFileInput(findFileInput, timeoutMs = 1000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const fileInput = findFileInput();
+      if (fileInput) {
+        return fileInput;
+      }
+      await sleep(100);
+    }
+
+    return null;
+  }
+
+  async function waitForPreviewIncrease(getCount, previousCount, timeoutMs = IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      if (getCount() > previousCount) {
+        return true;
+      }
+      await sleep(100);
+    }
+
+    return false;
+  }
+
+  function countFilenamePreviewEvidence(root, fileName) {
+    if (!root) {
+      return 0;
+    }
+
+    const normalizedName = (fileName || '').trim().toLowerCase();
+    const evidence = new Set();
+
+    root.querySelectorAll('img[alt], button, [role="button"]').forEach(element => {
+      const alt = (element.getAttribute('alt') || '').trim().toLowerCase();
+      const accessibleText = getElementAccessibleText(element);
+      if (alt === normalizedName || accessibleText.includes(normalizedName)) {
+        evidence.add(element.closest('button, [role="button"]') || element);
+      }
+    });
+
+    return evidence.size;
+  }
+
+  function getGrokComposer() {
+    const editor = document.querySelector('[data-testid="chat-input"] [contenteditable="true"]') ||
+      document.querySelector('[contenteditable="true"][aria-label="Ask Grok anything"]');
+    return editor?.closest('form') || null;
+  }
+
+  function findGrokFileInput(composer) {
+    return [...(composer?.querySelectorAll('input[type="file"]') || [])]
+      .find(input => acceptsImageFiles(input)) || null;
+  }
+
+  function countGrokAttachmentPreviews(composer, fileName) {
+    const attachmentList = composer?.querySelector('[role="list"][aria-label="Conversation attachments"]');
+    const attachmentListCount = attachmentList?.children.length || 0;
+
+    // Grok may render the visible attachment chip in a portal outside the form.
+    // The filename is exposed as the preview button/image accessible name.
+    const filenameEvidence = countFilenamePreviewEvidence(document, fileName);
+    return Math.max(attachmentListCount, filenameEvidence);
+  }
+
+  async function injectImageToGrok(imageData) {
+    try {
+      const composer = getGrokComposer();
+      if (!composer) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const attachButton = composer.querySelector('button[aria-label="Attach"], button[data-testid="attach-button"]');
+      if (!attachButton) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const file = await createImageFile(imageData);
+      let fileInput = findGrokFileInput(composer);
+      if (!fileInput) {
+        // Grok ignores synthetic clicks when deciding whether to open its
+        // attachment menu. Its native composer file input is still usable;
+        // only use synthetic UI events to wake a lazily mounted input.
+        attachButton.click();
+        dispatchDragEventsToWakeInput(composer, file);
+        fileInput = await waitForFileInput(() => findGrokFileInput(composer));
+      }
+      if (!fileInput) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const previousCount = countGrokAttachmentPreviews(composer, imageData.name);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+      dispatchFileInputEvents(fileInput);
+
+      const accepted = await waitForPreviewIncrease(
+        () => countGrokAttachmentPreviews(composer, imageData.name),
+        previousCount
+      );
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    } catch (error) {
+      console.error('[Image Injection] Grok error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+    }
+  }
+
+  function getDeepSeekComposer() {
+    const editor = document.querySelector('textarea[placeholder="Message DeepSeek"]') ||
+      document.querySelector('textarea.ds-scroll-area') ||
+      document.querySelector('textarea');
+    return findClosestAncestorContaining(editor, 'input[type="file"]');
+  }
+
+  function findDeepSeekFileInput(composer) {
+    return [...(composer?.querySelectorAll('input[type="file"]') || [])]
+      .find(input => input.multiple && acceptsImageFiles(input)) || null;
+  }
+
+  async function injectImageToDeepSeek(imageData) {
+    try {
+      const composer = getDeepSeekComposer();
+      if (!composer) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const file = await createImageFile(imageData);
+      let fileInput = findDeepSeekFileInput(composer);
+      if (!fileInput) {
+        dispatchDragEventsToWakeInput(composer, file);
+        fileInput = await waitForFileInput(() => findDeepSeekFileInput(composer));
+      }
+      if (!fileInput) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      // DeepSeek renders attachment previews beside the composer controls rather
+      // than consistently inside the nearest file-input ancestor.
+      const previousCount = countFilenamePreviewEvidence(document, imageData.name);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+      dispatchFileInputEvents(fileInput);
+
+      const accepted = await waitForPreviewIncrease(
+        () => countFilenamePreviewEvidence(document, imageData.name),
+        previousCount
+      );
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    } catch (error) {
+      console.error('[Image Injection] DeepSeek error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+    }
+  }
+
+  function getKimiComposer() {
+    const editor = document.querySelector('.chat-input-editor[contenteditable="true"]') ||
+      document.querySelector('.chat-input-editor');
+    return editor?.closest('.chat-editor') || editor?.closest('#chat-box') || null;
+  }
+
+  function countKimiAttachmentPreviews(composer) {
+    // Kimi promotes the thumbnail to `success` only after its upload API has
+    // returned a signed remote image URL. Error thumbnails use a different
+    // status class and must not be acknowledged as successful attachments.
+    return composer?.querySelectorAll(
+      '.image-thumbnail.success .image-wrapper.image-detail img.image-main'
+    ).length || 0;
+  }
+
+  function countKimiPendingAttachmentPreviews(composer) {
+    return composer?.querySelectorAll('.image-thumbnail.loading').length || 0;
+  }
+
+  async function waitForKimiPendingPreview(composer, previousSuccessCount) {
+    const start = Date.now();
+
+    while (Date.now() - start < IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS) {
+      if (countKimiAttachmentPreviews(composer) > previousSuccessCount) {
+        return true;
+      }
+      if (countKimiPendingAttachmentPreviews(composer) === 0) {
+        return false;
+      }
+      await sleep(100);
+    }
+
+    return false;
+  }
+
+  async function injectImageToKimi(imageData) {
+    try {
+      const composer = getKimiComposer();
+      if (!composer) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const previousCount = countKimiAttachmentPreviews(composer);
+      if (countKimiPendingAttachmentPreviews(composer) > 0) {
+        const pendingAccepted = await waitForKimiPendingPreview(composer, previousCount);
+        return pendingAccepted
+          ? createImageInjectionSuccess()
+          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+      }
+
+      const toolkitTrigger = composer.querySelector('.toolkit-trigger-btn');
+      if (!toolkitTrigger) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      }
+
+      let uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
+      if (!uploadEntry) {
+        toolkitTrigger.click();
+        await sleep(100);
+        uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
+      }
+      if (!uploadEntry) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      }
+
+      const fileInput = uploadEntry.querySelector('input[type="file"]');
+      if (!fileInput || !acceptsImageFiles(fileInput)) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const file = await createImageFile(imageData);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+      dispatchFileInputEvents(fileInput);
+
+      const accepted = await waitForPreviewIncrease(
+        () => countKimiAttachmentPreviews(composer),
+        previousCount
+      );
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    } catch (error) {
+      console.error('[Image Injection] Kimi error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
@@ -2113,7 +2477,7 @@
     return false;
   }
 
-  // Try to upload image via drag-drop event (works for Grok, DeepSeek)
+  // Generic drag-drop fallback for providers without a dedicated adapter.
   async function tryDragDropUpload(provider, imageData) {
     try {
       const selectors = PROVIDER_SELECTORS[provider];
