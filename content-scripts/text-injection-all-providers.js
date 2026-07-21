@@ -1472,8 +1472,24 @@
   // ===== Image Injection Functions =====
 
   // Helper function to inject text into provider's input field
-  function injectText(provider, text, autoSubmit, providerMode = null) {
+  function inputEndsWithText(element, text) {
+    const isFormControl = element?.tagName === 'TEXTAREA' || element?.tagName === 'INPUT';
+    const currentText = isFormControl ? element.value : element?.textContent;
+    return typeof currentText === 'string' && currentText.endsWith(text);
+  }
+
+  function injectText(
+    provider,
+    text,
+    autoSubmit,
+    providerMode = null,
+    { skipIfAlreadyPresent = false } = {}
+  ) {
     if (provider === 'google') {
+      const input = findGoogleInput(providerMode);
+      if (skipIfAlreadyPresent && inputEndsWithText(input, text)) {
+        return true;
+      }
       return handleGoogleTextInjection(text, autoSubmit, providerMode);
     }
 
@@ -1486,6 +1502,9 @@
     for (const selector of selectors) {
       const element = findTextInputElement(selector);
       if (element) {
+        if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
+          return true;
+        }
         const success = injectTextIntoElement(element, text, provider);
         if (success) {
           console.log('[Text Injection] Text injected via injectText helper for', provider);
@@ -1583,7 +1602,13 @@
       let textInjected = true;
       if (text && text.trim()) {
         await sleep(300);
-        textInjected = injectText(provider, text, autoSubmit && allImagesInjected, providerMode);
+        textInjected = injectText(
+          provider,
+          text,
+          autoSubmit && allImagesInjected,
+          providerMode,
+          { skipIfAlreadyPresent: retry }
+        );
       } else if (autoSubmit) {
         if (!allImagesInjected) {
           console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
@@ -1644,11 +1669,14 @@
         result = await injectImageToGemini(imageData);
         break;
       case 'grok':
-        return await injectImageToGrok(imageData);
+        result = await injectImageToGrok(imageData);
+        break;
       case 'deepseek':
-        return await injectImageToDeepSeek(imageData);
+        result = await injectImageToDeepSeek(imageData);
+        break;
       case 'kimi':
-        return await injectImageToKimi(imageData, { retry });
+        result = await injectImageToKimi(imageData, { retry });
+        break;
       case 'doubao':
         result = await injectImageToDoubao(imageData);
         break;

@@ -1606,7 +1606,7 @@ async function broadcastMessage(text, autoSubmit = true) {
         statusEl.className = 'send-status partial';
         setFillRetryState(summary.failedPanelIds);
       } else {
-        statusEl.textContent = `Failed to fill 0/${totalCount}; ${failedCount} failed`;
+        statusEl.textContent = `Fill failed: ${failedCount}/${totalCount} panels failed`;
         statusEl.className = 'send-status error';
         setFillRetryState(summary.failedPanelIds);
       }

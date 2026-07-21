@@ -527,11 +527,15 @@ describe('provider image upload adapters', () => {
       replacePreviewOnDelay: true,
     });
 
-    dispatchImageInjection({ requestId: 'fill-request-kimi-late-success' });
+    dispatchImageInjection({
+      requestId: 'fill-request-kimi-late-success',
+      text: 'keep this text',
+    });
     await finishTimedOutInjection();
 
     expect(uploadedNames).toEqual(['sample-one.png']);
     expect(document.querySelectorAll('.image-thumbnail.success')).toHaveLength(1);
+    expect(document.querySelector('.chat-input-editor').textContent).toBe('keep this text');
     expect(window.parent.postMessage).toHaveBeenCalledWith({
       type: 'PANELIZE_ACTION_RESULT',
       context: 'multi-panel-action-result',
@@ -546,11 +550,13 @@ describe('provider image upload adapters', () => {
     dispatchImageInjection({
       requestId: 'fill-request-kimi-late-success-retry',
       retry: true,
+      text: 'keep this text',
     });
     await finishSuccessfulInjection();
 
     expect(uploadedNames).toEqual(['sample-one.png']);
     expect(document.querySelectorAll('.image-thumbnail.success')).toHaveLength(1);
+    expect(document.querySelector('.chat-input-editor').textContent).toBe('keep this text');
     expect(window.parent.postMessage).toHaveBeenCalledWith({
       type: 'PANELIZE_ACTION_RESULT',
       context: 'multi-panel-action-result',

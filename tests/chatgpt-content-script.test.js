@@ -140,7 +140,6 @@ describe('chatgpt content script provider status', () => {
       context: 'multi-panel',
     });
 
-    await wait(100);
     composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
     expect(await waitForProviderStatusCall(postMessageSpy, 'PANELIZE_PROVIDER_BUSY')).toHaveLength(1);
     getStopButton()?.remove();
