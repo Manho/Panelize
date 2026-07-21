@@ -43,6 +43,7 @@ function dispatchImageInjection({
   text = '',
   autoSubmit = false,
   requestId,
+  retry = false,
 } = {}) {
   window.dispatchEvent(new MessageEvent('message', {
     data: {
@@ -52,6 +53,7 @@ function dispatchImageInjection({
       text,
       autoSubmit,
       requestId,
+      retry,
     },
   }));
 }
@@ -164,6 +166,8 @@ function createDeepSeekDom({
 function createKimiDom({
   uploadAvailable = true,
   previewOnChange = true,
+  previewDelayMs = 0,
+  replacePreviewOnDelay = false,
   language = 'zh',
   remoteErrorPreview = false,
   existingLoadingPreview = false,
@@ -234,7 +238,24 @@ function createKimiDom({
       const file = fileInput.files[0];
       uploadedNames.push(file.name);
       if (!previewOnChange) return;
-      appendThumbnail(remoteErrorPreview ? 'error' : 'success', file.name);
+      const outcome = remoteErrorPreview ? 'error' : 'success';
+      if (previewDelayMs <= 0) {
+        appendThumbnail(outcome, file.name);
+        return;
+      }
+
+      const { thumbnail, image } = appendThumbnail('loading', file.name);
+      setTimeout(() => {
+        if (replacePreviewOnDelay) {
+          thumbnail.remove();
+          appendThumbnail(outcome, file.name);
+          return;
+        }
+        thumbnail.classList.replace('loading', outcome);
+        image.src = outcome === 'success'
+          ? `https://www.kimi.com/apiv2-files/sign-obj/${file.name}`
+          : `https://statics.moonshot.cn/kimi-upload-error/${file.name}`;
+      }, previewDelayMs);
     });
   });
 
@@ -496,6 +517,47 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'failed',
       reason: 'preview-timeout',
+    }, '*');
+  });
+
+  it('reconciles a Kimi upload that succeeds after the first fill times out', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    const { uploadedNames } = createKimiDom({
+      previewDelayMs: 6500,
+      replacePreviewOnDelay: true,
+    });
+
+    dispatchImageInjection({ requestId: 'fill-request-kimi-late-success' });
+    await finishTimedOutInjection();
+
+    expect(uploadedNames).toEqual(['sample-one.png']);
+    expect(document.querySelectorAll('.image-thumbnail.success')).toHaveLength(1);
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-kimi-late-success',
+      provider: 'kimi',
+      action: 'fill',
+      status: 'failed',
+      reason: 'preview-timeout',
+    }, '*');
+
+    window.parent.postMessage.mockClear();
+    dispatchImageInjection({
+      requestId: 'fill-request-kimi-late-success-retry',
+      retry: true,
+    });
+    await finishSuccessfulInjection();
+
+    expect(uploadedNames).toEqual(['sample-one.png']);
+    expect(document.querySelectorAll('.image-thumbnail.success')).toHaveLength(1);
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-kimi-late-success-retry',
+      provider: 'kimi',
+      action: 'fill',
+      status: 'succeeded',
     }, '*');
   });
 

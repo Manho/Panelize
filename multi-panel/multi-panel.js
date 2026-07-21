@@ -1571,7 +1571,14 @@ async function broadcastMessage(text, autoSubmit = true) {
 
     // Send to all panels, or only the panels that failed the previous image fill.
     const panelResults = await Promise.allSettled(
-      targetPanels.map(panel => sendToPanel(panel, text, imagesPayload, shouldAutoSubmit, requestId))
+      targetPanels.map(panel => sendToPanel(
+        panel,
+        text,
+        imagesPayload,
+        shouldAutoSubmit,
+        requestId,
+        previousFailedPanelIds.has(panel.id)
+      ))
     );
     const normalizedResults = normalizePanelResults(panelResults, targetPanels);
 
@@ -1684,7 +1691,14 @@ async function broadcastMessage(text, autoSubmit = true) {
   }
 }
 
-async function sendToPanel(panel, text, images = [], autoSubmit = true, requestId = null) {
+async function sendToPanel(
+  panel,
+  text,
+  images = [],
+  autoSubmit = true,
+  requestId = null,
+  isRetry = false
+) {
   if (!panel.iframe || !panel.iframe.contentWindow) {
     return {
       ok: false,
@@ -1716,6 +1730,7 @@ async function sendToPanel(panel, text, images = [], autoSubmit = true, requestI
       autoSubmit,
       requestId,
       action: waitsForActionResult ? 'fill' : undefined,
+      retry: waitsForActionResult ? isRetry : undefined,
       providerMode: getPanelProviderMode(panel),
       context: 'multi-panel'
     }, '*');

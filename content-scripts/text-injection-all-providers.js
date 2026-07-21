@@ -30,6 +30,7 @@
   let googleSearchReplaceOnNextFill = true;
   let chatgptSendTracking = null;
   let multiPanelUserInteractionTracking = null;
+  const pendingKimiImageUploads = new Map();
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
@@ -1510,7 +1511,7 @@
 
   // Handle image injection message
   async function handleImageInjection(event) {
-    const { text, images, autoSubmit, requestId } = event.data;
+    const { text, images, autoSubmit, requestId, retry = false } = event.data;
     const provider = detectProvider();
     const providerMode = provider === 'google'
       ? normalizeGoogleProviderMode(event.data.providerMode)
@@ -1560,7 +1561,7 @@
 
       // Inject images first
       for (const image of images) {
-        const result = await injectSingleImage(provider, image);
+        const result = await injectSingleImage(provider, image, { retry });
         imageInjectionResults.push(result);
         if (!result.ok) {
           break;
@@ -1627,7 +1628,7 @@
   }
 
   // Inject a single image to the provider using provider-specific strategy
-  async function injectSingleImage(provider, imageData) {
+  async function injectSingleImage(provider, imageData, { retry = false } = {}) {
     console.log('[Image Injection] Injecting image to', provider);
 
     // Use provider-specific strategies
@@ -1647,7 +1648,7 @@
       case 'deepseek':
         return await injectImageToDeepSeek(imageData);
       case 'kimi':
-        return await injectImageToKimi(imageData);
+        return await injectImageToKimi(imageData, { retry });
       case 'doubao':
         result = await injectImageToDoubao(imageData);
         break;
@@ -1925,6 +1926,67 @@
     return composer?.querySelectorAll('.image-thumbnail.loading').length || 0;
   }
 
+  function getKimiImageKey(imageData) {
+    return `${imageData.name}\u0000${imageData.type}\u0000${imageData.dataUrl}`;
+  }
+
+  function getKimiThumbnailState(thumbnail) {
+    if (!thumbnail?.isConnected) {
+      return 'missing';
+    }
+    if (
+      thumbnail.matches('.image-thumbnail.success') &&
+      thumbnail.querySelector('.image-wrapper.image-detail img.image-main')
+    ) {
+      return 'success';
+    }
+    return thumbnail.matches('.image-thumbnail.loading') ? 'loading' : 'failed';
+  }
+
+  async function waitForTrackedKimiThumbnail(thumbnail) {
+    const start = Date.now();
+
+    while (Date.now() - start < IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS) {
+      const state = getKimiThumbnailState(thumbnail);
+      if (state !== 'loading') {
+        return state;
+      }
+      await sleep(100);
+    }
+
+    return getKimiThumbnailState(thumbnail);
+  }
+
+  async function reconcilePendingKimiImage(imageKey, composer) {
+    const pendingUpload = pendingKimiImageUploads.get(imageKey);
+    if (!pendingUpload) {
+      return null;
+    }
+
+    // Kimi replaces the original loading thumbnail during upload finalization.
+    // The verified success-count increase preserves reconciliation across that
+    // replacement while the retry flag keeps it scoped to the failed Fill.
+    if (countKimiAttachmentPreviews(composer) > pendingUpload.previousSuccessCount) {
+      pendingKimiImageUploads.delete(imageKey);
+      return createImageInjectionSuccess();
+    }
+
+    const state = await waitForTrackedKimiThumbnail(pendingUpload.thumbnail);
+    if (
+      state === 'success' ||
+      countKimiAttachmentPreviews(composer) > pendingUpload.previousSuccessCount
+    ) {
+      pendingKimiImageUploads.delete(imageKey);
+      return createImageInjectionSuccess();
+    }
+    if (state === 'loading') {
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    }
+
+    pendingKimiImageUploads.delete(imageKey);
+    return null;
+  }
+
   async function waitForKimiPendingPreview(composer, previousSuccessCount) {
     const start = Date.now();
 
@@ -1941,11 +2003,23 @@
     return false;
   }
 
-  async function injectImageToKimi(imageData) {
+  async function injectImageToKimi(imageData, { retry = false } = {}) {
     try {
       const composer = getKimiComposer();
       if (!composer) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      // A Kimi upload can finish after the first Fill has already timed out.
+      // Reconcile the exact thumbnail created by that attempt before retrying.
+      const imageKey = getKimiImageKey(imageData);
+      if (retry) {
+        const reconciledResult = await reconcilePendingKimiImage(imageKey, composer);
+        if (reconciledResult) {
+          return reconciledResult;
+        }
+      } else {
+        pendingKimiImageUploads.clear();
       }
 
       const previousCount = countKimiAttachmentPreviews(composer);
@@ -1977,6 +2051,7 @@
       }
 
       const file = await createImageFile(imageData);
+      const previousThumbnails = new Set(composer.querySelectorAll('.image-thumbnail'));
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
@@ -1986,9 +2061,25 @@
         () => countKimiAttachmentPreviews(composer),
         previousCount
       );
-      return accepted
-        ? createImageInjectionSuccess()
-        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+      if (accepted) {
+        pendingKimiImageUploads.delete(imageKey);
+        return createImageInjectionSuccess();
+      }
+
+      const newThumbnail = [...composer.querySelectorAll('.image-thumbnail')]
+        .find(thumbnail => !previousThumbnails.has(thumbnail));
+      const thumbnailState = getKimiThumbnailState(newThumbnail);
+      if (thumbnailState === 'success') {
+        pendingKimiImageUploads.delete(imageKey);
+        return createImageInjectionSuccess();
+      }
+      if (thumbnailState === 'loading') {
+        pendingKimiImageUploads.set(imageKey, {
+          thumbnail: newThumbnail,
+          previousSuccessCount: previousCount
+        });
+      }
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
     } catch (error) {
       console.error('[Image Injection] Kimi error:', error);
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
@@ -2230,15 +2321,23 @@
     const previewCount = countQwenImagePreviews('qwen-cn');
     let fileInput = findQwenFileInput('qwen-cn');
 
-    // Qwen China mounts its hidden image input only after a drag interaction.
+    // Prefer waking Qwen China's lazy file input without dropping the image.
     if (!fileInput) {
-      dispatchFileDragEvents(composer, file);
+      dispatchDragEventsToWakeInput(composer, file);
       fileInput = await waitForQwenFileInput('qwen-cn', 1000);
     }
 
     if (!fileInput) {
-      console.warn('[Image Injection] Qwen China image input not found');
-      return false;
+      // The current Qwen China composer can accept the native drop directly
+      // without ever mounting a file input. Only its new preview is success.
+      if (countQwenImagePreviews('qwen-cn') <= previewCount) {
+        dispatchFileDragEvents(composer, file);
+      }
+      const accepted = await waitForQwenImagePreview('qwen-cn', previewCount, 6000);
+      if (!accepted) {
+        console.warn('[Image Injection] Qwen China image input and preview not found');
+      }
+      return accepted;
     }
 
     if (!assignFilesToInput(fileInput, [file])) {
