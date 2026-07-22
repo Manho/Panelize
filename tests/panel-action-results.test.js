@@ -2,9 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PANEL_ACTION_RESULT_CONTEXT,
   PANELIZE_ACTION_RESULT,
+  calculatePendingImageIds,
+  cleanStalePanelRetryState,
+  createBroadcastGate,
   createPanelActionResultWaiter,
+  determinePanelMessageType,
   getFillTargetPanels,
+  getPanelActionResultTimeoutMs,
+  getPanelBroadcastActionParams,
   isMatchingPanelActionResult,
+  normalizeSucceededImageIds,
   shouldClearFillPayload,
   summarizeFillResults,
 } from '../modules/panel-action-results.js';
@@ -86,6 +93,7 @@ describe('panel action result protocol', () => {
       ok: true,
       panelId: 'panel-1',
       provider: 'grok',
+      succeededImageIds: [],
     });
   });
 
@@ -105,6 +113,7 @@ describe('panel action result protocol', () => {
       panelId: 'panel-1',
       provider: 'grok',
       reason: 'preview-timeout',
+      succeededImageIds: [],
     });
   });
 
@@ -128,11 +137,51 @@ describe('panel action result protocol', () => {
       panelId: 'panel-kimi',
       provider: 'kimi',
       reason: 'unsupported',
+      succeededImageIds: [],
     });
   });
 });
 
-describe('fill retry state', () => {
+describe('image fill ACK normalization and timeout budget', () => {
+  it('calculates timeout budget for 0, 1, 2, 10 images correctly', () => {
+    expect(getPanelActionResultTimeoutMs(0)).toBe(8000);
+    expect(getPanelActionResultTimeoutMs(1)).toBe(8000);
+    expect(getPanelActionResultTimeoutMs(2)).toBe(14500);
+    expect(getPanelActionResultTimeoutMs(10)).toBe(66500);
+  });
+
+  it('normalizes success ACK missing image list to all expected IDs', () => {
+    const expected = ['img-1', 'img-2'];
+    expect(normalizeSucceededImageIds(undefined, expected, true)).toEqual(['img-1', 'img-2']);
+  });
+
+  it('normalizes failure ACK missing image list to empty array', () => {
+    const expected = ['img-1', 'img-2'];
+    expect(normalizeSucceededImageIds(undefined, expected, false)).toEqual([]);
+  });
+
+  it('filters unknown, duplicate, and non-string image IDs in ACK', () => {
+    const expected = ['img-1', 'img-2', 'img-3'];
+    const received = ['img-1', 'img-1', 123, 'img-unknown', null, 'img-2'];
+    expect(normalizeSucceededImageIds(received, expected, false)).toEqual(['img-1', 'img-2']);
+  });
+
+  it('calculates pending image IDs when failed ACK carries partial succeededImageIds', () => {
+    const expected = ['img-1', 'img-2'];
+    const succeeded = ['img-1'];
+    const pending = calculatePendingImageIds(expected, succeeded);
+    expect(pending).toEqual(['img-2']);
+  });
+
+  it('returns empty pending array when all images succeeded but text failed', () => {
+    const expected = ['img-1', 'img-2'];
+    const succeeded = ['img-1', 'img-2'];
+    const pending = calculatePendingImageIds(expected, succeeded);
+    expect(pending).toEqual([]);
+  });
+});
+
+describe('fill retry state & stale ID cleanup', () => {
   const panels = [
     { id: 'panel-grok', providerId: 'grok' },
     { id: 'panel-deepseek', providerId: 'deepseek' },
@@ -161,6 +210,20 @@ describe('fill retry state', () => {
     ]);
   });
 
+  it('cleans up stale panel IDs when a panel is deleted or provider switched', () => {
+    const failedPanelIds = new Set(['panel-deepseek', 'panel-stale']);
+    const pendingMap = new Map([
+      ['panel-deepseek', ['img-2']],
+      ['panel-stale', ['img-1', 'img-2']],
+    ]);
+
+    cleanStalePanelRetryState(panels, pendingMap, failedPanelIds);
+
+    expect([...failedPanelIds]).toEqual(['panel-deepseek']);
+    expect(pendingMap.has('panel-stale')).toBe(false);
+    expect(pendingMap.get('panel-deepseek')).toEqual(['img-2']);
+  });
+
   it('clears the payload only after every failed panel succeeds on retry', () => {
     const previousFailures = new Set(['panel-deepseek', 'panel-kimi']);
     const partialRetry = summarizeFillResults(panels, [
@@ -179,5 +242,82 @@ describe('fill retry state', () => {
 
   it('resets retry targeting when no failed IDs remain', () => {
     expect(getFillTargetPanels(panels, new Set())).toBe(panels);
+  });
+});
+
+describe('broadcast gate', () => {
+  it('prevents concurrent acquire and allows acquire after release', () => {
+    const gate = createBroadcastGate();
+    expect(gate.isActive()).toBe(false);
+
+    expect(gate.tryAcquire()).toBe(true);
+    expect(gate.isActive()).toBe(true);
+    expect(gate.tryAcquire()).toBe(false);
+
+    gate.release();
+    expect(gate.isActive()).toBe(false);
+    expect(gate.tryAcquire()).toBe(true);
+  });
+});
+
+describe('getPanelBroadcastActionParams & determinePanelMessageType', () => {
+  it('returns plain text parameters for plain text Send All', () => {
+    const params = getPanelBroadcastActionParams({
+      hasImages: false,
+      hasFailedPanels: false,
+      autoSubmit: true,
+    });
+    expect(params).toEqual({
+      isFillAction: false,
+      shouldAutoSubmit: true,
+      messageType: 'INJECT_TEXT',
+      waitForActionResult: false,
+    });
+    expect(determinePanelMessageType({ isFillAction: params.isFillAction })).toBe('INJECT_TEXT');
+  });
+
+  it('returns plain text parameters for plain text Fill Input Boxes', () => {
+    const params = getPanelBroadcastActionParams({
+      hasImages: false,
+      hasFailedPanels: false,
+      autoSubmit: false,
+    });
+    expect(params).toEqual({
+      isFillAction: false,
+      shouldAutoSubmit: false,
+      messageType: 'INJECT_TEXT',
+      waitForActionResult: false,
+    });
+    expect(determinePanelMessageType({ isFillAction: params.isFillAction })).toBe('INJECT_TEXT');
+  });
+
+  it('returns image fill parameters for image fill operations', () => {
+    const params = getPanelBroadcastActionParams({
+      hasImages: true,
+      hasFailedPanels: false,
+      autoSubmit: true,
+    });
+    expect(params).toEqual({
+      isFillAction: true,
+      shouldAutoSubmit: false,
+      messageType: 'INJECT_TEXT_WITH_IMAGES',
+      waitForActionResult: true,
+    });
+    expect(determinePanelMessageType({ isFillAction: params.isFillAction })).toBe('INJECT_TEXT_WITH_IMAGES');
+  });
+
+  it('returns fill action parameters during text-only retry when hasFailedPanels is true', () => {
+    const params = getPanelBroadcastActionParams({
+      hasImages: false,
+      hasFailedPanels: true,
+      autoSubmit: false,
+    });
+    expect(params).toEqual({
+      isFillAction: true,
+      shouldAutoSubmit: false,
+      messageType: 'INJECT_TEXT_WITH_IMAGES',
+      waitForActionResult: true,
+    });
+    expect(determinePanelMessageType({ isFillAction: params.isFillAction })).toBe('INJECT_TEXT_WITH_IMAGES');
   });
 });

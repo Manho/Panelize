@@ -23,8 +23,16 @@ import { saveSetting } from '../modules/settings.js';
 import { applyTheme } from '../modules/theme-manager.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
 import {
+  calculatePendingImageIds,
+  cleanStalePanelRetryState,
+  createBroadcastGate,
   createPanelActionResultWaiter,
+  determinePanelMessageType,
   getFillTargetPanels,
+  getPanelActionResultTimeoutMs,
+  getPanelBroadcastActionParams,
+  normalizePanelResults,
+  normalizeSucceededImageIds,
   shouldClearFillPayload,
   summarizeFillResults
 } from '../modules/panel-action-results.js';
@@ -46,6 +54,8 @@ let currentLayout = '1x3';
 let panels = []; // Array of { id, providerId, iframe, state }
 let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
 let failedFillPanelIds = new Set();
+let pendingFillImageIdsByPanel = new Map();
+const broadcastGate = createBroadcastGate();
 let fillActionRequestCounter = 0;
 let fillPayloadRevision = 0;
 let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
@@ -1492,6 +1502,7 @@ function updateFillRetryButton() {
 
 function resetFillRetryState() {
   fillPayloadRevision += 1;
+  pendingFillImageIdsByPanel = new Map();
   if (failedFillPanelIds.size === 0) {
     updateFillRetryButton();
     return;
@@ -1506,79 +1517,90 @@ function setFillRetryState(panelIds) {
   updateFillRetryButton();
 }
 
-function normalizePanelResults(settledResults, targetPanels) {
-  return settledResults.map((settled, index) => {
-    const panel = targetPanels[index];
-    if (settled.status === 'fulfilled' && settled.value) {
-      return settled.value;
-    }
-    return {
-      ok: false,
-      panelId: panel.id,
-      provider: panel.providerId,
-      reason: 'injection-error'
-    };
-  });
-}
+export async function broadcastMessage(text, autoSubmit = true) {
+  if (!broadcastGate.tryAcquire()) {
+    return;
+  }
 
-async function broadcastMessage(text, autoSubmit = true) {
   const sendBtn = document.getElementById('send-all-btn');
   const fillBtn = document.getElementById('fill-input-btn');
   const statusEl = document.getElementById('send-status');
 
   const hasImages = uploadedImages.length > 0;
-
-  if (!text.trim() && !hasImages) {
-    // If input is empty and autoSubmit is true, just trigger send buttons
-    // (this happens when user clicks Fill first, then Send All)
-    if (autoSubmit) {
-      await triggerSendButtons();
-      return;
-    }
-    showToast('Please enter a message or upload an image');
-    return;
-  }
-
-  // When images are present, always fill first without auto-submit
-  // User needs to click "Send All" again to actually send
-  // This gives users a chance to verify content before sending
-  const shouldAutoSubmit = hasImages ? false : autoSubmit;
-  const sendFocusRequestId = shouldAutoSubmit
-    ? restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames())
-    : null;
-  const fillActionRequestId = hasImages ? createFillActionRequestId() : null;
-  const requestId = fillActionRequestId || sendFocusRequestId;
-  const payloadRevisionAtStart = fillPayloadRevision;
+  const hasFailedPanels = failedFillPanelIds.size > 0;
+  const broadcastParams = getPanelBroadcastActionParams({
+    hasImages,
+    hasFailedPanels,
+    autoSubmit
+  });
+  const { isFillAction, shouldAutoSubmit, waitForActionResult } = broadcastParams;
 
   try {
+    if (!text.trim() && !hasImages) {
+      // If input is empty and autoSubmit is true, just trigger send buttons
+      if (autoSubmit) {
+        await triggerSendButtons();
+        return;
+      }
+      showToast('Please enter a message or upload an image');
+      return;
+    }
+
+    const sendFocusRequestId = shouldAutoSubmit
+      ? restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames())
+      : null;
+    const fillActionRequestId = isFillAction ? createFillActionRequestId() : null;
+    const requestId = fillActionRequestId || sendFocusRequestId;
+    const payloadRevisionAtStart = fillPayloadRevision;
+
     // Disable buttons during send
     sendBtn.disabled = true;
     fillBtn.disabled = true;
     statusEl.textContent = shouldAutoSubmit ? 'Sending...' : 'Filling...';
     statusEl.className = 'send-status';
 
-    // Prepare images payload
-    const imagesPayload = uploadedImages.map(img => ({
-      dataUrl: img.dataUrl,
-      name: img.name,
-      type: img.type
-    }));
+    cleanStalePanelRetryState(panels, pendingFillImageIdsByPanel, failedFillPanelIds);
 
     const targetPanels = hasImages
       ? getFillTargetPanels(panels, failedFillPanelIds)
       : panels;
     const previousFailedPanelIds = new Set(failedFillPanelIds);
+    const attemptedImagesByPanel = new Map();
 
     // Send to all panels, or only the panels that failed the previous image fill.
     const panelResults = await Promise.allSettled(
-      targetPanels.map(panel => sendToPanel(
-        panel,
-        text,
-        imagesPayload,
-        shouldAutoSubmit,
-        requestId,
-        previousFailedPanelIds.has(panel.id)
-      ))
+      targetPanels.map(panel => {
+        const isPanelRetry = previousFailedPanelIds.has(panel.id);
+        let panelImages = [];
+        if (hasImages) {
+          if (isPanelRetry && pendingFillImageIdsByPanel.has(panel.id)) {
+            const pendingIds = new Set(pendingFillImageIdsByPanel.get(panel.id));
+            panelImages = uploadedImages.filter(img => pendingIds.has(img.id));
+          } else {
+            panelImages = uploadedImages;
+          }
+        }
+        attemptedImagesByPanel.set(panel.id, panelImages);
+
+        const imageCount = panelImages.length;
+        const panelTimeoutMs = isFillAction
+          ? getPanelActionResultTimeoutMs(imageCount)
+          : 8000;
+
+        return sendToPanel(
+          panel,
+          text,
+          panelImages,
+          shouldAutoSubmit,
+          requestId,
+          isPanelRetry,
+          panelTimeoutMs,
+          {
+            isFillAction,
+            waitForActionResult
+          }
+        );
+      })
     );
     const normalizedResults = normalizePanelResults(panelResults, targetPanels);
 
@@ -1593,6 +1615,21 @@ async function broadcastMessage(text, autoSubmit = true) {
         return;
       }
 
+      normalizedResults.forEach(result => {
+        if (!result?.panelId) return;
+        const attempted = attemptedImagesByPanel.get(result.panelId) || uploadedImages;
+        const attemptedIds = attempted.map(img => img.id);
+
+        if (result.ok) {
+          failedFillPanelIds.delete(result.panelId);
+          pendingFillImageIdsByPanel.delete(result.panelId);
+        } else {
+          failedFillPanelIds.add(result.panelId);
+          const pendingIds = calculatePendingImageIds(attemptedIds, result.succeededImageIds);
+          pendingFillImageIdsByPanel.set(result.panelId, pendingIds);
+        }
+      });
+
       const summary = summarizeFillResults(panels, normalizedResults, previousFailedPanelIds);
       const totalCount = panels.length;
       const { successfulCount, failedCount } = summary;
@@ -1601,6 +1638,7 @@ async function broadcastMessage(text, autoSubmit = true) {
         statusEl.textContent = `Filled ${successfulCount} input${successfulCount > 1 ? 's' : ''}`;
         statusEl.className = 'send-status success';
         setFillRetryState([]);
+        pendingFillImageIdsByPanel.clear();
       } else if (successfulCount > 0) {
         statusEl.textContent = `Filled ${successfulCount}/${totalCount}; ${failedCount} failed`;
         statusEl.className = 'send-status partial';
@@ -1685,52 +1723,66 @@ async function broadcastMessage(text, autoSubmit = true) {
       statusEl.className = 'send-status';
     }, 3000);
   } finally {
-    // Always re-enable buttons, even if there was an error
+    // Always re-enable buttons and release broadcast gate
     sendBtn.disabled = false;
     fillBtn.disabled = false;
+    broadcastGate.release();
   }
 }
 
-async function sendToPanel(
+export async function sendToPanel(
   panel,
   text,
   images = [],
   autoSubmit = true,
   requestId = null,
-  isRetry = false
+  isRetry = false,
+  timeoutMs = 8000,
+  options = {}
 ) {
   if (!panel.iframe || !panel.iframe.contentWindow) {
     return {
       ok: false,
       panelId: panel.id,
       provider: panel.providerId,
-      reason: 'control-not-found'
+      reason: 'control-not-found',
+      succeededImageIds: []
     };
   }
 
-  const waitsForActionResult = images.length > 0 && Boolean(requestId);
-  const waiter = waitsForActionResult
+  const isFillAction = options.isFillAction === true;
+  const waitForActionResult = options.waitForActionResult === true;
+  const expectedImageIds = images.map(img => img.id).filter(Boolean);
+
+  const waiter = waitForActionResult
     ? createPanelActionResultWaiter({
       target: window,
       panel,
       requestId,
-      action: 'fill'
+      expectedImageIds,
+      action: 'fill',
+      timeoutMs
     })
     : null;
 
   try {
-    // Determine message type based on whether images are included
-    const messageType = images.length > 0 ? 'INJECT_TEXT_WITH_IMAGES' : 'INJECT_TEXT';
+    const messageType = determinePanelMessageType({ isFillAction });
 
-    // Send message to content script inside iframe with autoSubmit flag.
+    const imagesPayload = images.map(img => ({
+      id: img.id,
+      dataUrl: img.dataUrl,
+      name: img.name,
+      type: img.type
+    }));
+
     panel.iframe.contentWindow.postMessage({
       type: messageType,
       text,
-      images,
+      images: imagesPayload,
       autoSubmit,
       requestId,
-      action: waitsForActionResult ? 'fill' : undefined,
-      retry: waitsForActionResult ? isRetry : undefined,
+      action: waitForActionResult ? 'fill' : undefined,
+      retry: waitForActionResult ? isRetry : undefined,
       providerMode: getPanelProviderMode(panel),
       context: 'multi-panel'
     }, '*');
@@ -1742,7 +1794,8 @@ async function sendToPanel(
     return {
       ok: true,
       panelId: panel.id,
-      provider: panel.providerId
+      provider: panel.providerId,
+      succeededImageIds: expectedImageIds
     };
   } catch (error) {
     console.error(`Error sending to ${panel.providerId}:`, error);
@@ -1753,7 +1806,8 @@ async function sendToPanel(
         ok: false,
         panelId: panel.id,
         provider: panel.providerId,
-        reason: 'injection-error'
+        reason: 'injection-error',
+        succeededImageIds: []
       };
   }
 }
@@ -2220,9 +2274,12 @@ async function searchPromptLibrary(query) {
 
 // ===== Event Listeners =====
 function setupEventListeners() {
+  const layoutBtn = document.getElementById('layout-btn');
+  if (!layoutBtn) return;
+
   // Layout button
-  document.getElementById('layout-btn').addEventListener('click', openLayoutModal);
-  document.getElementById('close-layout-modal').addEventListener('click', closeLayoutModal);
+  layoutBtn.addEventListener('click', openLayoutModal);
+  document.getElementById('close-layout-modal')?.addEventListener('click', closeLayoutModal);
 
   // Layout options
   document.querySelectorAll('.layout-option').forEach(btn => {

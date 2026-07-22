@@ -9,11 +9,13 @@ const contentScriptSource = readFileSync(
 
 const SAMPLE_IMAGES = [
   {
+    id: 'sample-one-id',
     name: 'sample-one.png',
     type: 'image/png',
     dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII=',
   },
   {
+    id: 'sample-two-id',
     name: 'sample-two.png',
     type: 'image/png',
     dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII=',
@@ -331,6 +333,7 @@ describe('provider image upload adapters', () => {
       provider: 'grok',
       action: 'fill',
       status: 'succeeded',
+      succeededImageIds: ['sample-one-id'],
     }, '*');
   });
 
@@ -398,6 +401,7 @@ describe('provider image upload adapters', () => {
       provider: 'deepseek',
       action: 'fill',
       status: 'succeeded',
+      succeededImageIds: ['sample-one-id'],
     }, '*');
   });
 
@@ -474,31 +478,12 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'failed',
       reason: 'preview-timeout',
+      succeededImageIds: [],
     }, '*');
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
-  it('reconciles an in-flight Kimi upload without injecting the image twice', async () => {
-    window.happyDOM.setURL('https://www.kimi.com/');
-    const { uploadedNames } = createKimiDom({
-      existingLoadingPreview: true,
-      existingPreviewOutcome: 'success',
-    });
 
-    dispatchImageInjection({ requestId: 'fill-request-kimi-pending-success' });
-    await finishSuccessfulInjection();
-
-    expect(uploadedNames).toEqual([]);
-    expect(document.querySelectorAll('.image-thumbnail.success')).toHaveLength(1);
-    expect(window.parent.postMessage).toHaveBeenCalledWith({
-      type: 'PANELIZE_ACTION_RESULT',
-      context: 'multi-panel-action-result',
-      requestId: 'fill-request-kimi-pending-success',
-      provider: 'kimi',
-      action: 'fill',
-      status: 'succeeded',
-    }, '*');
-  });
 
   it('does not duplicate a Kimi upload that remains in progress', async () => {
     window.happyDOM.setURL('https://www.kimi.com/');
@@ -517,6 +502,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'failed',
       reason: 'preview-timeout',
+      succeededImageIds: [],
     }, '*');
   });
 
@@ -544,6 +530,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'failed',
       reason: 'preview-timeout',
+      succeededImageIds: [],
     }, '*');
 
     window.parent.postMessage.mockClear();
@@ -564,6 +551,56 @@ describe('provider image upload adapters', () => {
       provider: 'kimi',
       action: 'fill',
       status: 'succeeded',
+      succeededImageIds: ['sample-one-id'],
+    }, '*');
+  });
+
+  it('isolates Kimi unrelated existing upload and retries current image after completion', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    const { uploadedNames } = createKimiDom({
+      existingLoadingPreview: true,
+      existingPreviewOutcome: 'success',
+      existingPreviewDelayMs: 500,
+    });
+
+    dispatchImageInjection({
+      requestId: 'fill-request-kimi-unrelated-1',
+      images: [SAMPLE_IMAGES[0]],
+      retry: false,
+    });
+    await finishSuccessfulInjection();
+
+    expect(uploadedNames).toEqual([]);
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-kimi-unrelated-1',
+      provider: 'kimi',
+      action: 'fill',
+      status: 'failed',
+      reason: 'preview-timeout',
+      succeededImageIds: [],
+    }, '*');
+
+    // Wait for existing.png to finish uploading
+    await vi.advanceTimersByTimeAsync(600);
+
+    dispatchImageInjection({
+      requestId: 'fill-request-kimi-unrelated-2',
+      images: [SAMPLE_IMAGES[0]],
+      retry: true,
+    });
+    await finishSuccessfulInjection();
+
+    expect(uploadedNames).toEqual(['sample-one.png']);
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-kimi-unrelated-2',
+      provider: 'kimi',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: ['sample-one-id'],
     }, '*');
   });
 
@@ -605,6 +642,7 @@ describe('provider image upload adapters', () => {
       provider: 'grok',
       action: 'fill',
       status: 'succeeded',
+      succeededImageIds: ['sample-one-id'],
     }, '*');
   });
 
@@ -623,6 +661,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'failed',
       reason: 'unsupported',
+      succeededImageIds: [],
     }, '*');
   });
 
@@ -647,7 +686,32 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'failed',
       reason: 'preview-timeout',
+      succeededImageIds: [],
     }, '*');
     expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('handles text-only retry when images array is empty during retry', async () => {
+    window.happyDOM.setURL('https://grok.com/');
+    createGrokDom();
+
+    dispatchImageInjection({
+      requestId: 'text-only-retry-req',
+      images: [],
+      text: 'retry text only',
+      retry: true,
+    });
+    await finishSuccessfulInjection();
+
+    expect(document.querySelector('.tiptap').textContent).toBe('retry text only');
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'text-only-retry-req',
+      provider: 'grok',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: [],
+    }, '*');
   });
 });

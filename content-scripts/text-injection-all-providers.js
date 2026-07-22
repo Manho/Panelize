@@ -501,6 +501,10 @@
       status: result.ok ? 'succeeded' : 'failed'
     };
 
+    if (Array.isArray(result?.succeededImageIds)) {
+      message.succeededImageIds = result.succeededImageIds;
+    }
+
     if (!result.ok) {
       message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
     }
@@ -1538,7 +1542,7 @@
 
     if (!provider) {
       console.warn('[Image Injection] Provider not detected');
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, []);
     }
 
     if (provider === 'google' && providerMode === GOOGLE_PROVIDER_MODE_SEARCH) {
@@ -1546,7 +1550,7 @@
       if (text && text.trim()) {
         handleGoogleTextInjection(text, autoSubmit, providerMode);
       }
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED, []);
     }
 
     if (!PROVIDER_IMAGE_SUPPORT[provider]) {
@@ -1555,12 +1559,24 @@
       if (text) {
         injectText(provider, text, autoSubmit, providerMode);
       }
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED, []);
     }
 
     if (!images || images.length === 0) {
+      if (retry && text && text.trim()) {
+        const textInjected = injectText(
+          provider,
+          text,
+          autoSubmit,
+          providerMode,
+          { skipIfAlreadyPresent: true }
+        );
+        return textInjected
+          ? createImageInjectionSuccess([])
+          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, []);
+      }
       console.warn('[Image Injection] No images provided');
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, []);
     }
 
     console.log(`[Image Injection] Injecting ${images.length} images to ${provider}`);
@@ -1576,13 +1592,18 @@
         startChatgptSendTracking(requestId);
       }
 
+      const succeededImageIds = [];
       const imageInjectionResults = [];
 
       // Inject images first
       for (const image of images) {
         const result = await injectSingleImage(provider, image, { retry });
         imageInjectionResults.push(result);
-        if (!result.ok) {
+        if (result.ok) {
+          if (image.id && typeof image.id === 'string') {
+            succeededImageIds.push(image.id);
+          }
+        } else {
           break;
         }
         // Wait a bit between images
@@ -1612,8 +1633,11 @@
       } else if (autoSubmit) {
         if (!allImagesInjected) {
           console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
-          return imageInjectionResults.find(result => !result.ok) ||
-            createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+          const firstFailure = imageInjectionResults.find(result => !result.ok);
+          return createImageInjectionFailure(
+            firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
+            succeededImageIds
+          );
         }
         // If no text but autoSubmit is true, click send button
         await sleep(300);
@@ -1621,25 +1645,33 @@
       }
 
       if (!allImagesInjected) {
-        return imageInjectionResults.find(result => !result.ok) ||
-          createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+        const firstFailure = imageInjectionResults.find(result => !result.ok);
+        return createImageInjectionFailure(
+          firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
+          succeededImageIds
+        );
       }
 
-      return textInjected
-        ? createImageInjectionSuccess()
-        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      if (!textInjected) {
+        return createImageInjectionFailure(
+          IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND,
+          succeededImageIds
+        );
+      }
+
+      return createImageInjectionSuccess(succeededImageIds);
     } catch (error) {
       console.error('[Image Injection] Error:', error);
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, []);
     }
   }
 
-  function createImageInjectionSuccess() {
-    return { ok: true };
+  function createImageInjectionSuccess(succeededImageIds = []) {
+    return { ok: true, succeededImageIds };
   }
 
-  function createImageInjectionFailure(reason) {
-    return { ok: false, reason };
+  function createImageInjectionFailure(reason, succeededImageIds = []) {
+    return { ok: false, reason, succeededImageIds };
   }
 
   function normalizeImageInjectionResult(result) {
@@ -1955,7 +1987,10 @@
   }
 
   function getKimiImageKey(imageData) {
-    return `${imageData.name}\u0000${imageData.type}\u0000${imageData.dataUrl}`;
+    if (imageData && imageData.id && typeof imageData.id === 'string') {
+      return imageData.id;
+    }
+    return `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || ''}`;
   }
 
   function getKimiThumbnailState(thumbnail) {
@@ -2052,10 +2087,13 @@
 
       const previousCount = countKimiAttachmentPreviews(composer);
       if (countKimiPendingAttachmentPreviews(composer) > 0) {
-        const pendingAccepted = await waitForKimiPendingPreview(composer, previousCount);
-        return pendingAccepted
-          ? createImageInjectionSuccess()
-          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+        if (pendingKimiImageUploads.has(imageKey)) {
+          const pendingAccepted = await waitForKimiPendingPreview(composer, previousCount);
+          return pendingAccepted
+            ? createImageInjectionSuccess()
+            : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+        }
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
       }
 
       const toolkitTrigger = composer.querySelector('.toolkit-trigger-btn');

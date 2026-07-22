@@ -224,6 +224,7 @@ describe('Qwen content script integration', () => {
       provider: 'qwen-cn',
       action: 'fill',
       status: 'succeeded',
+      succeededImageIds: [],
     }, '*');
   });
 
