@@ -22,7 +22,7 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createQwenChinaDom() {
+function createQwenChinaDom({ dropUploadsWithoutInput = false } = {}) {
   document.body.innerHTML = `
     <aside id="new-nav-tab-wrapper">
       <button id="qwen-cn-new-chat">
@@ -59,7 +59,18 @@ function createQwenChinaDom() {
     elements.sendButton.disabled = elements.editor.textContent.trim() === '';
   });
   const composer = document.querySelector('[data-chat-input-layout="true"]');
+  let dropUploadCount = 0;
+  if (dropUploadsWithoutInput) {
+    composer.addEventListener('drop', () => {
+      dropUploadCount += 1;
+      const preview = document.createElement('img');
+      preview.alt = 'avatar';
+      preview.src = 'https://workspace-zb-cdn.qianwen.com/sample.png';
+      composer.append(preview);
+    });
+  }
   composer.addEventListener('dragenter', () => {
+    if (dropUploadsWithoutInput) return;
     if (document.getElementById('qwen-cn-file')) return;
 
     const fileInput = document.createElement('input');
@@ -75,7 +86,7 @@ function createQwenChinaDom() {
     composer.append(fileInput);
   });
   Object.values(elements).forEach(markVisible);
-  return { ...elements, composer };
+  return { ...elements, composer, getDropUploadCount: () => dropUploadCount };
 }
 
 function createQwenGlobalDom() {
@@ -117,6 +128,10 @@ describe('Qwen content script integration', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(window, 'parent', {
+      configurable: true,
+      value: { postMessage: vi.fn() },
+    });
   });
 
   it.each([
@@ -159,7 +174,7 @@ describe('Qwen content script integration', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
-  function dispatchImageInjection() {
+  function dispatchImageInjection({ requestId } = {}) {
     dispatchMultiPanelMessage({
       type: 'INJECT_TEXT_WITH_IMAGES',
       text: '',
@@ -170,6 +185,7 @@ describe('Qwen content script integration', () => {
       }],
       autoSubmit: false,
       context: 'multi-panel',
+      requestId,
     });
   }
 
@@ -187,6 +203,29 @@ describe('Qwen content script integration', () => {
     expect(fileInput.files).toHaveLength(1);
     expect(fileInput.files[0].name).toBe('sample.png');
     expect(composer.querySelector('img[alt="avatar"]')).not.toBeNull();
+  });
+
+  it('accepts a Qwen China preview created directly by drop without mounting an input', async () => {
+    window.happyDOM.setURL('https://www.qianwen.com/');
+    const { composer, getDropUploadCount } = createQwenChinaDom({
+      dropUploadsWithoutInput: true,
+    });
+
+    dispatchImageInjection({ requestId: 'fill-request-qwen-cn-drop' });
+    await wait(2000);
+
+    expect(getDropUploadCount()).toBe(1);
+    expect(document.getElementById('qwen-cn-file')).toBeNull();
+    expect(composer.querySelectorAll('img[alt="avatar"]')).toHaveLength(1);
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'fill-request-qwen-cn-drop',
+      provider: 'qwen-cn',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: [],
+    }, '*');
   });
 
   it('uploads an image to Qwen Global through its verified composer paste path', async () => {
