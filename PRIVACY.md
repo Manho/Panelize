@@ -1,6 +1,6 @@
 # Privacy Policy for Panelize
 
-**Last Updated: July 17, 2026**
+**Last Updated: September 22, 2026**
 
 ## Overview
 
@@ -73,7 +73,7 @@ All data collected by Panelize is used solely for providing extension functional
 
 ### AI Provider Websites
 
-Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen, ChatGLM, and Google AI Mode) inside embedded panels. These providers operate under their own privacy policies.
+Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen, ChatGLM, Z.ai, Yuanbao, MiMo, and Google AI Mode) inside embedded panels. These providers operate under their own privacy policies.
 
 When you interact with these AI providers through Panelize, you are subject to their respective privacy policies. Panelize does not collect or store the content of your conversations with these services.
 
@@ -158,7 +158,8 @@ Panelize requests the following Chrome extension permissions:
 | `contextMenus` | Add "Send to Panelize" option when right-clicking |
 | `declarativeNetRequest` | Allow AI provider websites to load in embedded panels (bypass X-Frame-Options) |
 | `declarativeNetRequestWithHostAccess` | Apply header modifications for specific AI provider domains |
-| Host permissions | Access AI provider websites, and check for updates on GitHub |
+| Host permissions | Access the built-in AI provider websites and check for updates on GitHub |
+| Optional host permissions | Access additional providers only after you enable them and approve the provider-specific browser prompt |
 
 **None of these permissions are used to collect, transmit, or share your data with external parties.**
 

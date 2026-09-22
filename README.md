@@ -40,7 +40,7 @@ Ever found yourself copying the same prompt across multiple AI tabs just to comp
 
 ### 🎯 Ask Once, Compare All
 
-Type your question once and send it to ChatGPT, Claude, Gemini, Grok, Doubao, DeepSeek, Kimi, Qwen, Zhipu (China), Z.ai (Global), and Google simultaneously. See which AI gives you the best answer—no tab switching required.
+Type your question once and send it to ChatGPT, Claude, Gemini, Grok, Doubao, DeepSeek, Kimi, Qwen, Zhipu (China), Z.ai (Global), Yuanbao, MiMo, and Google simultaneously. See which AI gives you the best answer—no tab switching required.
 
 ### 📐 Flexible Layouts
 
@@ -87,6 +87,12 @@ Save your best prompts and reuse them across all providers. Supports variables l
     <td align="center"><strong>Qwen (Global)</strong></td>
     <td align="center"><strong>Zhipu (China)</strong></td>
     <td align="center"><strong>Z.ai (Global)</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Yuanbao</strong></td>
+    <td align="center"><strong>MiMo</strong></td>
+    <td></td>
+    <td></td>
   </tr>
 </table>
 

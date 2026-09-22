@@ -17,7 +17,8 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "test:e2e": "playwright test tests/e2e"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",

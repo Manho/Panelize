@@ -1,6 +1,7 @@
 import { test, expect, chromium } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getBrowserLaunchOptions } from './browser-launch-options.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,7 +14,7 @@ test.describe('Layout Auto-Adjust E2E', () => {
 
   test.beforeAll(async () => {
     // Launch Chrome with extension loaded
-    const launchOptions = {
+    const launchOptions = getBrowserLaunchOptions({
       headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
@@ -21,10 +22,7 @@ test.describe('Layout Auto-Adjust E2E', () => {
         '--no-sandbox',
         '--disable-setuid-sandbox'
       ]
-    };
-    
-    // Use existing Chrome installation if available
-    const chromeChannel = process.platform === 'darwin' ? 'chrome' : 'chromium';
+    });
     
     browser = await chromium.launch(launchOptions);
     context = await browser.newContext({

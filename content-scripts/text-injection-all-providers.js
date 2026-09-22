@@ -31,6 +31,7 @@
   let chatgptSendTracking = null;
   let multiPanelUserInteractionTracking = null;
   const pendingKimiImageUploads = new Map();
+  const pendingProviderImageUploads = new Map();
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
@@ -85,6 +86,14 @@
       'textarea[placeholder="How can I help you today?"]',
       'textarea.input-scroll'
     ],
+    yuanbao: [
+      '.chat-command-editor-specail .ql-editor[contenteditable="true"]',
+      '.ql-editor[contenteditable="true"][data-placeholder]'
+    ],
+    mimo: [
+      'textarea[placeholder="Ask me anything"]',
+      'textarea'
+    ],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -118,6 +127,8 @@
     'qwen-global': true,
     chatglm: true,
     'zai-global': true,
+    yuanbao: true,
+    mimo: true,
     google: true  // Google AI Mode supports images
   };
 
@@ -134,6 +145,8 @@
     ],
     chatglm: ['input.el-upload__input[type="file"]'],
     'zai-global': ['input[type="file"][multiple][accept*=".png"]'],
+    yuanbao: ['input[type="file"][multiple][accept*="image"]'],
+    mimo: ['input[type="file"][multiple][accept*="image"]'],
     google: ['input[type="file"]']
   };
 
@@ -144,6 +157,10 @@
     gemini: ['button[aria-label="Upload file"]', 'button[mattooltip="Upload file"]', '.add-button', 'button:has(mat-icon)'],
     doubao: [
       '#input-engine-container button[data-slot="dropdown-menu-trigger"][aria-haspopup="menu"]'
+    ],
+    yuanbao: [
+      'button[data-new-input-control="add-tools-trigger"]',
+      'button[aria-label="Add"]'
     ],
     google: [
       'button[aria-label="更多输入项"]',
@@ -229,6 +246,13 @@
     'zai-global': [
       'button.sendMessageButton'
     ],
+    yuanbao: [
+      '#yuanbao-send-btn[aria-label="Send"]',
+      '#yuanbao-send-btn'
+    ],
+    mimo: [
+      'button[data-track-id="home_send_btn"]'
+    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -297,6 +321,14 @@
       'button[aria-label="New Chat"]',
       'button.navNewChat'
     ],
+    yuanbao: [
+      '[role="button"][aria-label="New Chat"]',
+      '.yb-new-chat-entry__item[aria-label="New Chat"]',
+      '.yb-projects-section__item-new-chat[aria-label="New Chat"]'
+    ],
+    mimo: [
+      'button[data-track-id="navbar_new_chat_btn"]'
+    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -317,6 +349,8 @@
     'qwen-global': 'https://chat.qwen.ai/c/new-chat',
     chatglm: 'https://chatglm.cn/',
     'zai-global': 'https://chat.z.ai/',
+    yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
+    mimo: 'https://aistudio.xiaomimimo.com/#/c',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -327,7 +361,11 @@
       'button[data-test-id="temp-chat-button"]',
       'button[aria-label="Temporary chat"]'
     ],
-    grok: ['a[href="/c#private"][aria-label="Switch to Private Chat"]']
+    grok: ['a[href="/c#private"][aria-label="Switch to Private Chat"]'],
+    yuanbao: [
+      '[role="button"][aria-label="Enter Temporary Chat"]',
+      '[role="button"][aria-label="Exit Temporary Chat"]'
+    ]
   };
 
   // Detect which provider we're on based on hostname
@@ -358,6 +396,10 @@
       return 'chatglm';
     } else if (hostname === 'chat.z.ai') {
       return 'zai-global';
+    } else if (hostname === 'yuanbao.tencent.com') {
+      return 'yuanbao';
+    } else if (hostname === 'aistudio.xiaomimimo.com') {
+      return 'mimo';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
@@ -878,6 +920,23 @@
     );
   }
 
+  function isProviderSendControlEnabled(provider, element) {
+    if (!isElementEnabled(element)) {
+      return false;
+    }
+
+    if (provider === 'yuanbao') {
+      const className = String(element.className || '');
+      return !/(disabled|sendNot|loading|sending)/i.test(className);
+    }
+
+    if (provider === 'mimo') {
+      return element.getAttribute('data-state') !== 'open';
+    }
+
+    return !element.classList.contains('disabled');
+  }
+
   function fillGoogleSearchInput(text) {
     const input = findGoogleInput(GOOGLE_PROVIDER_MODE_SEARCH);
     if (!input || !text || typeof text !== 'string') {
@@ -1107,11 +1166,7 @@
           }
           
           // Check if element or its parent is disabled
-          const isDisabled = targetElement.disabled || 
-                            targetElement.getAttribute('aria-disabled') === 'true' ||
-                            targetElement.classList.contains('disabled');
-          
-          if (!isDisabled) {
+          if (isProviderSendControlEnabled(provider, targetElement)) {
             console.log('[Text Injection] Clicking send button:', selector, targetElement);
             if (provider === 'chatglm') {
               // ChatGLM submits from its mousedown handler; HTMLElement.click() skips it.
@@ -1259,6 +1314,11 @@
       case 'gemini': {
         return isGeminiTemporaryChatEnabled(control);
       }
+      case 'yuanbao':
+        return (
+          currentUrl.searchParams.get('chatMode') === 'temp' ||
+          control?.getAttribute('aria-label') === 'Exit Temporary Chat'
+        );
       default:
         return false;
     }
@@ -1286,8 +1346,22 @@
 
       if (button && isElementEnabled(button)) {
         button.click();
-        postTemporaryChatEnabled(provider);
-        return true;
+        if (provider !== 'yuanbao') {
+          postTemporaryChatEnabled(provider);
+          return true;
+        }
+
+        const confirmationDeadline = Date.now() + TEMP_CHAT_POLL_TIMEOUT_MS;
+        while (Date.now() <= confirmationDeadline) {
+          const currentControl = findDeepFirstVisibleElement(selectors) ||
+            findFirstVisibleElement(selectors);
+          if (isTemporaryChatAlreadyEnabled(provider, currentControl)) {
+            postTemporaryChatEnabled(provider);
+            return true;
+          }
+          await sleep(TEMP_CHAT_POLL_INTERVAL_MS);
+        }
+        return false;
       }
 
       await sleep(TEMP_CHAT_POLL_INTERVAL_MS);
@@ -1520,7 +1594,9 @@
               provider === 'kimi' ||
               provider === 'doubao' ||
               provider === 'chatglm' ||
-              provider === 'zai-global'
+              provider === 'zai-global' ||
+              provider === 'yuanbao' ||
+              provider === 'mimo'
             ) ? 800 : 500;
             setTimeout(() => clickSendButton(provider, providerMode), delay);
           }
@@ -1723,6 +1799,12 @@
       case 'zai-global':
         result = await injectImageToZaiGlobal(imageData);
         break;
+      case 'yuanbao':
+        result = await injectImageToYuanbao(imageData, { retry });
+        break;
+      case 'mimo':
+        result = await injectImageToMimo(imageData, { retry });
+        break;
       case 'google':
         result = await injectImageToGoogle(imageData);
         break;
@@ -1841,15 +1923,231 @@
     const normalizedName = (fileName || '').trim().toLowerCase();
     const evidence = new Set();
 
-    root.querySelectorAll('img[alt], button, [role="button"]').forEach(element => {
+    root.querySelectorAll(
+      'img[alt], button, [role="button"], [aria-label], [title], [data-file-name], [data-filename]'
+    ).forEach(element => {
       const alt = (element.getAttribute('alt') || '').trim().toLowerCase();
+      const fileNameData = (
+        element.getAttribute('data-file-name') ||
+        element.getAttribute('data-filename') ||
+        ''
+      ).trim().toLowerCase();
       const accessibleText = getElementAccessibleText(element);
-      if (alt === normalizedName || accessibleText.includes(normalizedName)) {
+      if (
+        alt === normalizedName ||
+        fileNameData === normalizedName ||
+        accessibleText.includes(normalizedName)
+      ) {
         evidence.add(element.closest('button, [role="button"]') || element);
       }
     });
 
     return evidence.size;
+  }
+
+  function getProviderImageKey(provider, imageData) {
+    const imageKey = imageData?.id && typeof imageData.id === 'string'
+      ? imageData.id
+      : `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || ''}`;
+    return `${provider}\u0000${imageKey}`;
+  }
+
+  async function reconcilePendingProviderImage(provider, imageData, countCompletedPreviews) {
+    const imageKey = getProviderImageKey(provider, imageData);
+    const pendingUpload = pendingProviderImageUploads.get(imageKey);
+    if (!pendingUpload) {
+      return null;
+    }
+
+    if (countCompletedPreviews() > pendingUpload.previousCount) {
+      pendingProviderImageUploads.delete(imageKey);
+      return createImageInjectionSuccess();
+    }
+
+    if (Date.now() - pendingUpload.startedAt >= 30000) {
+      pendingProviderImageUploads.delete(imageKey);
+      return null;
+    }
+
+    const accepted = await waitForPreviewIncrease(
+      countCompletedPreviews,
+      pendingUpload.previousCount
+    );
+    if (accepted) {
+      pendingProviderImageUploads.delete(imageKey);
+      return createImageInjectionSuccess();
+    }
+
+    return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+  }
+
+  function rememberPendingProviderImage(provider, imageData, previousCount) {
+    pendingProviderImageUploads.set(getProviderImageKey(provider, imageData), {
+      previousCount,
+      startedAt: Date.now()
+    });
+  }
+
+  function getYuanbaoComposer() {
+    const editor = document.querySelector(
+      '.chat-command-editor-specail .ql-editor[contenteditable="true"]'
+    ) || document.querySelector('.ql-editor[contenteditable="true"][data-placeholder]');
+    return findClosestAncestorContaining(editor, '[data-new-input-control="add-tools-trigger"]') ||
+      editor?.closest('[data-input-editor-area="true"]')?.parentElement ||
+      editor?.parentElement?.parentElement ||
+      null;
+  }
+
+  function findYuanbaoFileInput() {
+    return [...document.querySelectorAll('input[type="file"]')]
+      .find(input => input.multiple && acceptsImageFiles(input)) || null;
+  }
+
+  function countYuanbaoCompletedPreviews(fileName) {
+    const normalizedName = (fileName || '').trim().toLowerCase();
+    return [...document.querySelectorAll('img[alt]')].filter(image => {
+      const source = image.getAttribute('src') || '';
+      const alt = (image.getAttribute('alt') || '').trim().toLowerCase();
+      return (
+        alt === normalizedName &&
+        /^https:\/\//.test(source) &&
+        image.closest('[class*="FileList_inputFileListItem"]')
+      );
+    }).length;
+  }
+
+  async function openYuanbaoImagePicker(composer) {
+    const addButton = composer?.querySelector('[data-new-input-control="add-tools-trigger"]') ||
+      findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.yuanbao);
+    if (!addButton) {
+      return null;
+    }
+
+    addButton.click();
+    await sleep(100);
+
+    const uploadAction = findVisibleElementByExactText(
+      'button, [role="menuitem"]',
+      ['Upload Image', '上传图片']
+    );
+    if (!uploadAction) {
+      return null;
+    }
+
+    uploadAction.click();
+    return waitForFileInput(findYuanbaoFileInput, 1000);
+  }
+
+  async function injectImageToYuanbao(imageData, { retry = false } = {}) {
+    try {
+      const composer = getYuanbaoComposer();
+      if (!composer) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const countCompleted = () => countYuanbaoCompletedPreviews(imageData.name);
+      if (retry) {
+        const reconciled = await reconcilePendingProviderImage(
+          'yuanbao',
+          imageData,
+          countCompleted
+        );
+        if (reconciled) {
+          return reconciled;
+        }
+      }
+
+      let fileInput = findYuanbaoFileInput();
+      if (!fileInput) {
+        fileInput = await openYuanbaoImagePicker(composer);
+      }
+      if (!fileInput) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const previousCount = countCompleted();
+      const file = await createImageFile(imageData);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+      dispatchFileInputEvents(fileInput);
+
+      const accepted = await waitForPreviewIncrease(countCompleted, previousCount);
+      if (accepted) {
+        pendingProviderImageUploads.delete(getProviderImageKey('yuanbao', imageData));
+        return createImageInjectionSuccess();
+      }
+
+      rememberPendingProviderImage('yuanbao', imageData, previousCount);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    } catch (error) {
+      console.error('[Image Injection] Yuanbao error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+    }
+  }
+
+  function getMimoComposer() {
+    const editor = document.querySelector('textarea[placeholder="Ask me anything"]') ||
+      document.querySelector('textarea');
+    return findClosestAncestorContaining(editor, 'input[type="file"]');
+  }
+
+  function findMimoFileInput(composer) {
+    return [...(composer?.querySelectorAll('input[type="file"]') || [])]
+      .find(input => input.multiple && acceptsImageFiles(input)) || null;
+  }
+
+  function countMimoCompletedPreviews(composer, fileName) {
+    const filenameEvidence = countFilenamePreviewEvidence(composer, fileName);
+    const uploadedImages = [...(composer?.querySelectorAll('img') || [])].filter(image => {
+      const source = image.getAttribute('src') || '';
+      const container = image.closest(
+        '[class*="attachment"], [class*="upload"], [class*="preview"], [class*="file"]'
+      );
+      return Boolean(container && /^https:\/\//.test(source));
+    }).length;
+    return Math.max(filenameEvidence, uploadedImages);
+  }
+
+  async function injectImageToMimo(imageData, { retry = false } = {}) {
+    try {
+      const composer = getMimoComposer();
+      const fileInput = findMimoFileInput(composer);
+      if (!composer || !fileInput) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const countCompleted = () => countMimoCompletedPreviews(composer, imageData.name);
+      if (retry) {
+        const reconciled = await reconcilePendingProviderImage(
+          'mimo',
+          imageData,
+          countCompleted
+        );
+        if (reconciled) {
+          return reconciled;
+        }
+      }
+
+      const previousCount = countCompleted();
+      const file = await createImageFile(imageData);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+      dispatchFileInputEvents(fileInput);
+
+      const accepted = await waitForPreviewIncrease(countCompleted, previousCount);
+      if (accepted) {
+        pendingProviderImageUploads.delete(getProviderImageKey('mimo', imageData));
+        return createImageInjectionSuccess();
+      }
+
+      rememberPendingProviderImage('mimo', imageData, previousCount);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    } catch (error) {
+      console.error('[Image Injection] MiMo error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+    }
   }
 
   function getGrokComposer() {
@@ -3036,9 +3334,16 @@
 
         // Auto-submit if requested (only from multi-panel context)
         if (shouldAutoSubmit) {
-          // Wait for UI to update, then click send button
-          // Use longer delay for DeepSeek to ensure DOM is ready
-          const delay = provider === 'deepseek' ? 800 : 500;
+          // Wait for framework-managed composer state to catch up before sending.
+          const delay = [
+            'deepseek',
+            'kimi',
+            'doubao',
+            'chatglm',
+            'zai-global',
+            'yuanbao',
+            'mimo'
+          ].includes(provider) ? 800 : 500;
           setTimeout(() => {
             console.log('[Text Injection] Attempting to click send button for', provider);
             const clicked = clickSendButton(provider, providerMode);
@@ -3073,7 +3378,15 @@
             if (success) {
               console.log('[Text Injection] Text injected on retry into', provider, 'using selector:', retrySelector);
               if (shouldAutoSubmit) {
-                const submitDelay = provider === 'deepseek' ? 800 : 500;
+                const submitDelay = [
+                  'deepseek',
+                  'kimi',
+                  'doubao',
+                  'chatglm',
+                  'zai-global',
+                  'yuanbao',
+                  'mimo'
+                ].includes(provider) ? 800 : 500;
                 setTimeout(() => {
                   console.log('[Text Injection] Attempting to click send button for', provider, 'after retry');
                   clickSendButton(provider, providerMode);

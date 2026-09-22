@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getBrowserLaunchOptions } from './browser-launch-options.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,15 +16,18 @@ test.describe('Layout options E2E', () => {
 
   test.beforeAll(async () => {
     userDataDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-layout-options-'));
-    context = await chromium.launchPersistentContext(userDataDir, {
-      headless: false,
-      args: [
-        `--disable-extensions-except=${EXTENSION_PATH}`,
-        `--load-extension=${EXTENSION_PATH}`,
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-      ],
-    });
+    context = await chromium.launchPersistentContext(
+      userDataDir,
+      getBrowserLaunchOptions({
+        headless: false,
+        args: [
+          `--disable-extensions-except=${EXTENSION_PATH}`,
+          `--load-extension=${EXTENSION_PATH}`,
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+        ],
+      }, { extension: true })
+    );
 
     let [serviceWorker] = context.serviceWorkers();
     if (!serviceWorker) {

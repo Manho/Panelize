@@ -116,6 +116,26 @@ export const PROVIDERS = [
     iconDark: '/icons/providers/dark/zhipu.svg',
     enabled: true,
     optionalOrigins: OPTIONAL_PROVIDER_CONFIGS['zai-global'].origins
+  },
+  {
+    id: 'yuanbao',
+    name: 'Yuanbao',
+    url: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
+    topLevelUrl: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
+    icon: '/icons/providers/yuanbao.png',
+    iconDark: '/icons/providers/dark/yuanbao.png',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.yuanbao.origins
+  },
+  {
+    id: 'mimo',
+    name: 'MiMo',
+    url: 'https://aistudio.xiaomimimo.com/#/c',
+    topLevelUrl: 'https://aistudio.xiaomimimo.com/#/c',
+    icon: '/icons/providers/mimo.png',
+    iconDark: '/icons/providers/dark/mimo.png',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.mimo.origins
   }
 ];
 
