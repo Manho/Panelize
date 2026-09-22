@@ -57,6 +57,7 @@
       'div[contenteditable="true"]'
     ],
     doubao: [
+      '#input-engine-container .ProseMirror[contenteditable="true"]',
       '#input-engine-container .semi-input-textarea-wrapper textarea',
       '.semi-input-textarea-wrapper textarea',
       '#input-engine-container textarea',

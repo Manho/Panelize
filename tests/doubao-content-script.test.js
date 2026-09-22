@@ -56,6 +56,40 @@ function createDoubaoComposerDom() {
   };
 }
 
+function createCurrentDoubaoComposerDom() {
+  document.body.innerHTML = `
+    <div contenteditable="true" class="ProseMirror" id="unrelated-editor"></div>
+    <div id="input-engine-container">
+      <div class="guidance-input-editor-wrapper">
+        <div class="w-full text-16">
+          <div
+            id="doubao-prosemirror-editor"
+            contenteditable="true"
+            translate="no"
+            class="tiptap ProseMirror"
+            tabindex="0"
+          >
+            <p data-placeholder="发消息或按住空格说话..." class="is-empty is-editor-empty"><br></p>
+          </div>
+        </div>
+      </div>
+      <button id="flow-end-msg-send">Send</button>
+    </div>
+  `;
+
+  const unrelatedEditor = document.getElementById('unrelated-editor');
+  const editor = document.getElementById('doubao-prosemirror-editor');
+  const sendButton = document.getElementById('flow-end-msg-send');
+
+  [unrelatedEditor, editor, sendButton].forEach(markVisible);
+
+  return {
+    unrelatedEditor,
+    editor,
+    sendButton,
+  };
+}
+
 describe('doubao content script integration', () => {
   beforeAll(() => {
     window.eval(contentScriptSource);
@@ -82,6 +116,37 @@ describe('doubao content script integration', () => {
     });
 
     expect(editor.value).toContain('hello doubao');
+  });
+
+  it('injects text into the current Doubao ProseMirror composer', () => {
+    const { unrelatedEditor, editor } = createCurrentDoubaoComposerDom();
+    const execCommandSpy = vi.fn((command, _showUi, value) => {
+      if (command !== 'insertText') {
+        return false;
+      }
+
+      document.activeElement.appendChild(document.createTextNode(value));
+      return true;
+    });
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommandSpy,
+    });
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT',
+      text: 'hello current doubao',
+      autoSubmit: false,
+      context: 'multi-panel',
+    });
+
+    expect(editor.textContent).toContain('hello current doubao');
+    expect(unrelatedEditor.textContent).toBe('');
+    expect(execCommandSpy).toHaveBeenCalledWith(
+      'insertText',
+      false,
+      'hello current doubao'
+    );
   });
 
   it('uses the send button for Doubao when triggering send', () => {
