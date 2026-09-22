@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.9 - 2026-09-22
+- Fix Doubao text injection for the current TipTap/ProseMirror composer.
+
 ## 1.2.8 - 2026-07-19
 - Fix Gemini Send All in localized interfaces without affecting image uploads.
 
