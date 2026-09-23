@@ -11,13 +11,23 @@ export const REPO_EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(impor
 const COPY_EXCLUDED_SEGMENTS = ['.git', 'node_modules', 'test-results', 'playwright-report', 'dist'];
 
 /**
- * Copies the extension into a temp directory and lets the caller patch its
- * manifest, e.g. to map provider content scripts onto local http fixtures.
+ * Copies the extension and lets the caller patch its manifest, e.g. to map
+ * provider content scripts onto local http fixtures.
  * @param {(manifest: object) => void} patchManifest - Mutates the parsed manifest.
+ * @param {object} [options]
+ * @param {string} [options.destination] - Fixed target directory, replaced on
+ *   every call. Unpacked extension ids derive from the path, so a fixed path
+ *   keeps the id stable across runs. Defaults to a fresh temp directory.
  * @returns {Promise<{extensionPath: string, cleanup: () => Promise<void>}>}
  */
-export async function createPatchedExtensionCopy(patchManifest) {
-  const extensionPath = await mkdtemp(path.join(os.tmpdir(), 'panelize-e2e-extension-'));
+export async function createPatchedExtensionCopy(patchManifest, { destination } = {}) {
+  let extensionPath;
+  if (destination) {
+    extensionPath = path.resolve(destination);
+    await rm(extensionPath, { recursive: true, force: true });
+  } else {
+    extensionPath = await mkdtemp(path.join(os.tmpdir(), 'panelize-e2e-extension-'));
+  }
   await cp(REPO_EXTENSION_PATH, extensionPath, {
     recursive: true,
     filter: (source) => !COPY_EXCLUDED_SEGMENTS.some(
@@ -57,11 +67,14 @@ export async function startFixtureServer(handler) {
 }
 
 /**
- * Launches Chromium with the unpacked extension in a throwaway profile.
+ * Launches Chromium with the unpacked extension.
  * @param {object} [options]
  * @param {string} [options.extensionPath] - Unpacked extension directory.
  * @param {string[]} [options.args] - Extra Chromium arguments.
- * @param {{width: number, height: number}} [options.viewport]
+ * @param {{width: number, height: number} | null} [options.viewport]
+ * @param {string} [options.userDataDir] - Profile to reuse and keep. Defaults
+ *   to a throwaway profile that is deleted on close.
+ * @param {boolean} [options.headless] - Live suite only; see getBrowserLaunchOptions.
  * @returns {Promise<{context: import('@playwright/test').BrowserContext,
  *   serviceWorker: import('@playwright/test').Worker, extensionId: string,
  *   extensionUrl: (relativePath: string) => string, close: () => Promise<void>}>}
@@ -70,12 +83,16 @@ export async function launchExtension({
   extensionPath = REPO_EXTENSION_PATH,
   args = [],
   viewport,
+  userDataDir: persistentUserDataDir,
+  headless,
 } = {}) {
-  const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-e2e-'));
+  const userDataDir = persistentUserDataDir
+    || await mkdtemp(path.join(os.tmpdir(), 'panelize-e2e-'));
   const context = await chromium.launchPersistentContext(
     userDataDir,
     getBrowserLaunchOptions({
       viewport,
+      headless,
       args: [
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
@@ -99,7 +116,9 @@ export async function launchExtension({
     extensionUrl: (relativePath) => `chrome-extension://${extensionId}/${relativePath}`,
     async close() {
       await context.close().catch(() => {});
-      await rm(userDataDir, { recursive: true, force: true });
+      if (!persistentUserDataDir) {
+        await rm(userDataDir, { recursive: true, force: true });
+      }
     },
   };
 }

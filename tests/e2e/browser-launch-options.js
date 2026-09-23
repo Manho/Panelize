@@ -102,15 +102,25 @@ function resolveChromiumLaunch() {
 }
 
 /**
+ * Returns the Chromium executable every E2E and live launch uses.
+ * @returns {string}
+ */
+export function getChromiumExecutablePath() {
+  const { executablePath } = resolveChromiumLaunch();
+  return executablePath || chromium.executablePath();
+}
+
+/**
  * Builds launch options for `chromium.launch` or `launchPersistentContext`.
- * Callers must not set `headless`; it is controlled by isHeadedRun().
+ * E2E callers leave `headless` unset so isHeadedRun() decides; only the live
+ * smoke suite, which targets real sites, passes an explicit value.
  * @param {object} [options] - Extra Playwright launch options such as `args`.
  * @returns {object}
  */
-export function getBrowserLaunchOptions(options = {}) {
+export function getBrowserLaunchOptions({ headless, ...options } = {}) {
   return {
     ...options,
     ...resolveChromiumLaunch(),
-    headless: !isHeadedRun(),
+    headless: headless ?? !isHeadedRun(),
   };
 }

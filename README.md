@@ -159,6 +159,40 @@ Customize shortcuts at `chrome://extensions/shortcuts`
 
 ---
 
+## Development and Testing
+
+```bash
+npm install
+npx playwright install chromium   # browser used by the e2e and live suites
+```
+
+With Playwright 1.58, `npx playwright install` can hang while it extracts the download under Node 26. The install then stays incomplete. If that happens, stop it and run the install once with Node 24 (for example `nvm exec 24 npx playwright install chromium`). The e2e suite then uses the installed browser under any Node version.
+
+| Command | What it runs |
+| --- | --- |
+| `npm test` | Unit and integration tests (Vitest + happy-dom) |
+| `npm run test:e2e` | Extension e2e tests: the real extension against local fixture sites, headless and in parallel |
+| `npm run test:e2e:headed` | Same, with visible windows for debugging (or set `PANELIZE_E2E_HEADED=1`) |
+| `npm run test:live:login` | Opens the live-test profile in a normal browser window so you can log in to providers |
+| `npm run test:live` | Smoke checks against the real provider sites (manual, not part of CI) |
+
+### Live smoke tests
+
+The live suite catches provider site changes that fixtures cannot. For each provider it opens the real multi-panel page, types into the unified input, and presses **Fill**. It then checks that the text reached the provider's composer and that the send and new-chat selectors still match.
+
+1. Run `npm run test:live:login` and log in to each provider. If a panel still looks logged out, log in inside that panel on the multi-panel tab, because panel iframes use partitioned storage. Close the browser when you are done.
+2. Run `npm run test:live`, ideally before every release. By default it opens a visible window, because several sites block headless browsers.
+3. Failures save a screenshot and the provider frame's HTML under `test-results/live/`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PANELIZE_LIVE_PROFILE` | `~/.panelize-live-profile` | Profile directory that keeps the logins |
+| `PANELIZE_LIVE_PROVIDERS` | all providers | Comma-separated ids, e.g. `chatgpt,doubao` |
+| `PANELIZE_LIVE_SEND` | off | `1` actually sends the prompt, which uses provider quota |
+| `PANELIZE_LIVE_HEADLESS` | off | `1` runs headless; expect Cloudflare challenges on some sites |
+
+---
+
 ## Contributing
 
 Found a bug? Have an idea? Contributions are welcome:
