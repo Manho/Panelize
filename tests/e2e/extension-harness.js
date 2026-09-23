@@ -103,3 +103,30 @@ export async function launchExtension({
     },
   };
 }
+
+/**
+ * Stores a panel configuration and opens the real multi-panel page.
+ * @param {Awaited<ReturnType<typeof launchExtension>>} extension
+ * @param {object} options
+ * @param {string[]} options.providers - Provider ids, one panel each.
+ * @param {string} [options.layout] - Grid layout id such as '1x1'.
+ * @returns {Promise<import('@playwright/test').Page>}
+ */
+export async function openMultiPanel(extension, { providers, layout = '1x1' }) {
+  await extension.serviceWorker.evaluate(async (settings) => {
+    await chrome.storage.sync.set(settings);
+  }, {
+    enabledProviders: providers,
+    providerOrder: providers,
+    multiPanelProviders: providers,
+    multiPanelLayout: layout,
+  });
+
+  const page = await extension.context.newPage();
+  await page.goto(extension.extensionUrl('multi-panel/multi-panel.html'));
+  await page.waitForFunction(
+    (count) => document.querySelectorAll('#panel-grid iframe').length === count,
+    providers.length
+  );
+  return page;
+}
