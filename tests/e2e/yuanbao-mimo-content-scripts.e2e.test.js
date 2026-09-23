@@ -29,7 +29,7 @@ const YUANBAO_FIXTURE = `<!doctype html>
       <div id="yuanbao-send-btn" role="button" aria-label="Send"
            class="SendButton_sendButton__test SendButton_disabled__test SendButton_sendNot__test">Send</div>
     </div>
-    <div role="button" aria-label="New Chat">New Chat</div>
+    <div role="button" aria-label="新建对话">新建对话</div>
     <script>
       window.__sendCount = 0;
       window.__newChatCount = 0;
@@ -39,7 +39,7 @@ const YUANBAO_FIXTURE = `<!doctype html>
         send.className = 'SendButton_sendButton__test';
       });
       send.addEventListener('click', () => window.__sendCount++);
-      document.querySelector('[aria-label="New Chat"]').addEventListener(
+      document.querySelector('[aria-label="新建对话"]').addEventListener(
         'click',
         () => window.__newChatCount++
       );
@@ -75,17 +75,18 @@ const YUANBAO_FIXTURE = `<!doctype html>
 const MIMO_FIXTURE = `<!doctype html>
 <html>
   <body>
-    <div class="relative rounded-2xl border" id="composer">
-      <textarea placeholder="Ask me anything">draft</textarea>
+    <textarea id="unrelated">leave me alone</textarea>
+    <div class="relative border" id="composer">
+      <textarea placeholder="随便问问">draft</textarea>
       <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/bmp,text/plain">
       <div id="previews"></div>
-      <button data-track-id="home_send_btn" data-state="closed" disabled>Send</button>
+      <button data-track-id="home_send_btn" data-state="open" disabled>Send</button>
     </div>
     <button data-track-id="navbar_new_chat_btn">New Chat</button>
     <script>
       window.__sendCount = 0;
       window.__newChatCount = 0;
-      const editor = document.querySelector('textarea');
+      const editor = document.querySelector('#composer textarea');
       const send = document.querySelector('[data-track-id="home_send_btn"]');
       editor.addEventListener('input', () => {
         send.disabled = editor.value.trim() === '';
@@ -226,7 +227,7 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
     {
       name: 'MiMo',
       url: () => `http://aistudio.xiaomimimo.com:${port}/#/c`,
-      editor: 'textarea',
+      editor: '#composer textarea',
       send: '[data-track-id="home_send_btn"]',
       preview: '[aria-label="sample.png"]',
     },
@@ -243,8 +244,9 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
         text: ' + extension',
         autoSubmit: false,
       });
-      if (providerCase.editor === 'textarea') {
+      if (providerCase.name === 'MiMo') {
         await expect(page.locator(providerCase.editor)).toHaveValue(/extension/);
+        await expect(page.locator('#unrelated')).toHaveValue('leave me alone');
       } else {
         await expect(page.locator(providerCase.editor)).toContainText('extension');
       }
@@ -252,6 +254,11 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
 
       await page.locator(providerCase.editor).focus();
       await page.keyboard.press('Shift+Enter');
+      if (providerCase.name === 'Yuanbao') {
+        await expect(page.locator(`${providerCase.editor} p`)).toHaveCount(2);
+      } else {
+        await expect(page.locator(providerCase.editor)).toHaveValue(/\n/);
+      }
       await page.keyboard.press('Enter');
       await expect.poll(() => page.evaluate(() => window.__sendCount)).toBe(1);
 

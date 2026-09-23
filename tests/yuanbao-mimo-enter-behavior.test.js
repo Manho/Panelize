@@ -8,7 +8,7 @@ const utilsSource = readFileSync(
   'utf8'
 );
 
-function createHarness(providerId, { enabled = true, yuanbaoState = null } = {}) {
+function createHarness(providerId, { enabled = true, yuanbaoState = null, mimoState = 'closed' } = {}) {
   const scriptSource = readFileSync(
     resolve(process.cwd(), `content-scripts/enter-behavior-${providerId}.js`),
     'utf8'
@@ -23,7 +23,7 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null } = {})
       : '',
     disabled: providerId === 'mimo' ? !enabled : false,
     getAttribute: vi.fn((name) => {
-      if (name === 'data-state' && providerId === 'mimo') return 'closed';
+      if (name === 'data-state' && providerId === 'mimo') return mimoState;
       return null;
     }),
     click: vi.fn(),
@@ -39,7 +39,11 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null } = {})
     classList: {
       contains: vi.fn((className) => providerId === 'yuanbao' && className === 'ql-editor'),
     },
-    closest: vi.fn(() => providerId === 'mimo' ? {} : null),
+    parentElement: providerId === 'mimo' ? {
+      parentElement: null,
+      querySelector: vi.fn(() => sendButton),
+      querySelectorAll: vi.fn(() => [editor]),
+    } : null,
     focus: vi.fn(),
     appendChild: vi.fn(),
     setRangeText: vi.fn(),
@@ -64,13 +68,14 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null } = {})
     },
     document: {
       activeElement: editor,
-      createTextNode: vi.fn((text) => ({ textContent: text })),
+      createElement: vi.fn((tagName) => ({ tagName })),
       execCommand: vi.fn(() => true),
     },
     window: {
       ButtonFinderUtils: { findButton: vi.fn(() => sendButton) },
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      getSelection: vi.fn(),
     },
     Event: class Event {
       constructor(type, options) {
@@ -137,7 +142,7 @@ describe.each(['yuanbao', 'mimo'])('%s Enter behavior', (providerId) => {
     context.handleEnterSwap(createEnterEvent({ shiftKey: true }));
 
     if (providerId === 'yuanbao') {
-      expect(context.document.execCommand).toHaveBeenCalledWith('insertLineBreak', false);
+      expect(context.document.execCommand).toHaveBeenCalledWith('insertParagraph', false);
     } else {
       expect(editor.setRangeText).toHaveBeenCalledWith('\n', 5, 5, 'end');
     }
@@ -151,4 +156,48 @@ describe.each(['yuanbao', 'mimo'])('%s Enter behavior', (providerId) => {
 
     expect(sendButton.click).not.toHaveBeenCalled();
   });
+
+  if (providerId === 'mimo') {
+    it('sends while the MiMo tooltip is open', () => {
+      const { context, sendButton } = createHarness(providerId, { mimoState: 'open' });
+      context.handleEnterSwap(createEnterEvent());
+      expect(sendButton.click).toHaveBeenCalledTimes(1);
+    });
+  } else {
+    it('inserts a paragraph at the caret if the first editing command fails', () => {
+      const { context, sendButton } = createHarness(providerId);
+      context.document.execCommand.mockReturnValueOnce(false).mockReturnValueOnce(true);
+      context.handleEnterSwap(createEnterEvent({ shiftKey: true }));
+      expect(context.document.execCommand.mock.calls.map(([command]) => command))
+        .toEqual(['insertParagraph', 'insertLineBreak']);
+      expect(sendButton.click).not.toHaveBeenCalled();
+    });
+
+    it('uses the selection rather than appending at the end when native commands fail', () => {
+      const { context, editor } = createHarness(providerId);
+      const range = {
+        deleteContents: vi.fn(),
+        insertNode: vi.fn(),
+        setStartAfter: vi.fn(),
+        collapse: vi.fn(),
+      };
+      const selection = {
+        anchorNode: {},
+        rangeCount: 1,
+        getRangeAt: vi.fn(() => range),
+        removeAllRanges: vi.fn(),
+        addRange: vi.fn(),
+      };
+      editor.contains = vi.fn(() => true);
+      context.window.getSelection.mockReturnValue(selection);
+      context.document.execCommand.mockReturnValue(false);
+
+      context.handleEnterSwap(createEnterEvent({ shiftKey: true }));
+
+      expect(range.insertNode).toHaveBeenCalledWith({ tagName: 'br' });
+      expect(range.setStartAfter).toHaveBeenCalledWith(range.insertNode.mock.calls[0][0]);
+      expect(editor.appendChild).not.toHaveBeenCalled();
+      expect(editor.dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'input' }));
+    });
+  }
 });

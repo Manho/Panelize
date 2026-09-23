@@ -66,8 +66,13 @@ function findProviderInput() {
 
   // MiMo
   if (host === 'aistudio.xiaomimimo.com') {
-    return document.querySelector('textarea[placeholder="Ask me anything"]') ||
-           document.querySelector('textarea');
+    const sendButton = document.querySelector('button[data-track-id="home_send_btn"]');
+    let ancestor = sendButton?.parentElement;
+    for (let depth = 0; ancestor && depth < 8; depth++, ancestor = ancestor.parentElement) {
+      const editors = ancestor.querySelectorAll('textarea');
+      if (editors.length === 1) return editors[0];
+    }
+    return null;
   }
 
   // Generic fallback: find any visible textarea or contenteditable

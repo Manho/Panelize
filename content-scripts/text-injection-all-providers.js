@@ -21,6 +21,9 @@
   const TEMP_CHAT_POLL_INTERVAL_MS = 200;
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
+  const SLOW_COMPOSER_PROVIDERS = new Set([
+    'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao', 'mimo'
+  ]);
   const IMAGE_INJECTION_REASONS = Object.freeze({
     CONTROL_NOT_FOUND: 'control-not-found',
     UNSUPPORTED: 'unsupported',
@@ -90,10 +93,7 @@
       '.chat-command-editor-specail .ql-editor[contenteditable="true"]',
       '.ql-editor[contenteditable="true"][data-placeholder]'
     ],
-    mimo: [
-      'textarea[placeholder="Ask me anything"]',
-      'textarea'
-    ],
+    mimo: ['textarea'],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -324,7 +324,9 @@
     yuanbao: [
       '[role="button"][aria-label="New Chat"]',
       '.yb-new-chat-entry__item[aria-label="New Chat"]',
-      '.yb-projects-section__item-new-chat[aria-label="New Chat"]'
+      '.yb-projects-section__item-new-chat[aria-label="New Chat"]',
+      '[role="button"][aria-label="新建对话"]',
+      '[role="button"][aria-label="新对话"]'
     ],
     mimo: [
       'button[data-track-id="navbar_new_chat_btn"]'
@@ -364,7 +366,9 @@
     grok: ['a[href="/c#private"][aria-label="Switch to Private Chat"]'],
     yuanbao: [
       '[role="button"][aria-label="Enter Temporary Chat"]',
-      '[role="button"][aria-label="Exit Temporary Chat"]'
+      '[role="button"][aria-label="Exit Temporary Chat"]',
+      '[role="button"][aria-label*="临时对话"]',
+      '[role="button"][aria-label*="临时聊天"]'
     ]
   };
 
@@ -930,9 +934,7 @@
       return !/(disabled|sendNot|loading|sending)/i.test(className);
     }
 
-    if (provider === 'mimo') {
-      return element.getAttribute('data-state') !== 'open';
-    }
+    if (provider === 'mimo') return true;
 
     return !element.classList.contains('disabled');
   }
@@ -1062,6 +1064,15 @@
     }
 
     try {
+      if (selector === 'textarea' && detectProvider() === 'mimo') {
+        const sendButton = document.querySelector('button[data-track-id="home_send_btn"]');
+        let ancestor = sendButton?.parentElement;
+        for (let depth = 0; ancestor && depth < 8; depth++, ancestor = ancestor.parentElement) {
+          const editors = ancestor.querySelectorAll('textarea');
+          if (editors.length === 1) return editors[0];
+        }
+        return null;
+      }
       return document.querySelector(selector);
     } catch (error) {
       console.error('Error finding element:', error);
@@ -1317,7 +1328,8 @@
       case 'yuanbao':
         return (
           currentUrl.searchParams.get('chatMode') === 'temp' ||
-          control?.getAttribute('aria-label') === 'Exit Temporary Chat'
+          /^(Exit Temporary Chat|退出临时对话|退出临时聊天|关闭临时对话|关闭临时聊天)$/
+            .test(control?.getAttribute('aria-label') || '')
         );
       default:
         return false;
@@ -1589,15 +1601,7 @@
           console.log('[Text Injection] Text injected via injectText helper for', provider);
           if (autoSubmit) {
             // Use longer delay for providers whose composer state updates asynchronously
-            const delay = (
-              provider === 'deepseek' ||
-              provider === 'kimi' ||
-              provider === 'doubao' ||
-              provider === 'chatglm' ||
-              provider === 'zai-global' ||
-              provider === 'yuanbao' ||
-              provider === 'mimo'
-            ) ? 800 : 500;
+            const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
             setTimeout(() => clickSendButton(provider, providerMode), delay);
           }
           return true;
@@ -2087,8 +2091,7 @@
   }
 
   function getMimoComposer() {
-    const editor = document.querySelector('textarea[placeholder="Ask me anything"]') ||
-      document.querySelector('textarea');
+    const editor = findTextInputElement('textarea');
     return findClosestAncestorContaining(editor, 'input[type="file"]');
   }
 
@@ -3335,15 +3338,7 @@
         // Auto-submit if requested (only from multi-panel context)
         if (shouldAutoSubmit) {
           // Wait for framework-managed composer state to catch up before sending.
-          const delay = [
-            'deepseek',
-            'kimi',
-            'doubao',
-            'chatglm',
-            'zai-global',
-            'yuanbao',
-            'mimo'
-          ].includes(provider) ? 800 : 500;
+          const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
           setTimeout(() => {
             console.log('[Text Injection] Attempting to click send button for', provider);
             const clicked = clickSendButton(provider, providerMode);
@@ -3378,15 +3373,7 @@
             if (success) {
               console.log('[Text Injection] Text injected on retry into', provider, 'using selector:', retrySelector);
               if (shouldAutoSubmit) {
-                const submitDelay = [
-                  'deepseek',
-                  'kimi',
-                  'doubao',
-                  'chatglm',
-                  'zai-global',
-                  'yuanbao',
-                  'mimo'
-                ].includes(provider) ? 800 : 500;
+                const submitDelay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
                 setTimeout(() => {
                   console.log('[Text Injection] Attempting to click send button for', provider, 'after retry');
                   clickSendButton(provider, providerMode);

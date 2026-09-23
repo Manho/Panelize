@@ -30,17 +30,29 @@ function isYuanbaoSendEnabled(sendButton) {
 function insertYuanbaoNewline(editor) {
   editor.focus();
 
-  let inserted = false;
-  try {
-    inserted = document.execCommand('insertLineBreak', false);
-  } catch (error) {
-    // Fall back to a text node when execCommand is unavailable.
+  for (const command of ['insertParagraph', 'insertLineBreak']) {
+    try {
+      if (document.execCommand(command, false)) {
+        return;
+      }
+    } catch (error) {
+      // Try the other native editing command.
+    }
   }
 
-  if (!inserted) {
-    editor.appendChild(document.createTextNode('\n'));
-    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) {
+    return;
   }
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const lineBreak = document.createElement('br');
+  range.insertNode(lineBreak);
+  range.setStartAfter(lineBreak);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function handleEnterSwap(event) {

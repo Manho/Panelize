@@ -204,13 +204,16 @@ describe('Yuanbao and MiMo content script integration', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('acknowledges Yuanbao temporary chat only after the control confirms activation', async () => {
+  it.each([
+    ['Enter Temporary Chat', 'Exit Temporary Chat'],
+    ['进入临时对话', '退出临时对话'],
+  ])('acknowledges Yuanbao temporary chat after %s changes to %s', async (enterLabel, exitLabel) => {
     window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
-    document.body.innerHTML = '<div role="button" aria-label="Enter Temporary Chat"></div>';
+    document.body.innerHTML = `<div role="button" aria-label="${enterLabel}"></div>`;
     const control = document.querySelector('[role="button"]');
     markVisible(control);
     control.addEventListener('click', () => {
-      control.setAttribute('aria-label', 'Exit Temporary Chat');
+      control.setAttribute('aria-label', exitLabel);
     });
 
     dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT' });
@@ -223,6 +226,33 @@ describe('Yuanbao and MiMo content script integration', () => {
       }),
       '*'
     );
+  });
+
+  it('clicks Yuanbao new chat with a Chinese label', () => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
+    const { newChatButton } = createYuanbaoDom();
+    newChatButton.setAttribute('aria-label', '新建对话');
+    const clickSpy = vi.fn();
+    newChatButton.addEventListener('click', clickSpy);
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT' });
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('targets MiMo composer when another textarea precedes it and the tooltip is open', () => {
+    window.happyDOM.setURL('https://aistudio.xiaomimimo.com/#/c');
+    const { editor, sendButton } = createMimoDom();
+    editor.placeholder = '随便问问';
+    document.body.insertAdjacentHTML('afterbegin', '<textarea id="unrelated">leave me alone</textarea>');
+    sendButton.setAttribute('data-state', 'open');
+    const clickSpy = vi.fn();
+    sendButton.addEventListener('click', clickSpy);
+
+    dispatchMultiPanelMessage({ type: 'INJECT_TEXT', text: ' + composer', autoSubmit: false });
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND' });
+
+    expect(editor.value).toContain('composer');
+    expect(document.getElementById('unrelated').value).toBe('leave me alone');
+    expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
   it.each([

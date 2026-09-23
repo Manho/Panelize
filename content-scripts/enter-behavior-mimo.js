@@ -9,12 +9,16 @@ const MIMO_SEND_BUTTON_SELECTORS = [
 ];
 
 function isMimoInput(element) {
-  return Boolean(
-    element &&
-    element.tagName === 'TEXTAREA' &&
-    element.offsetParent !== null &&
-    element.closest('div[class*="rounded-2xl"]')
-  );
+  if (!element || element.tagName !== 'TEXTAREA' || element.offsetParent === null) {
+    return false;
+  }
+  let ancestor = element.parentElement;
+  for (let depth = 0; ancestor && depth < 8; depth++, ancestor = ancestor.parentElement) {
+    if (ancestor.querySelector('button[data-track-id="home_send_btn"]')) {
+      return ancestor.querySelectorAll('textarea').length === 1;
+    }
+  }
+  return false;
 }
 
 function insertMimoNewline(textarea) {
@@ -53,8 +57,7 @@ function handleEnterSwap(event) {
   if (
     sendButton &&
     !sendButton.disabled &&
-    sendButton.getAttribute('aria-disabled') !== 'true' &&
-    sendButton.getAttribute('data-state') !== 'open'
+    sendButton.getAttribute('aria-disabled') !== 'true'
   ) {
     sendButton.click();
   }

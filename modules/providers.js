@@ -4,6 +4,8 @@ import {
   filterProvidersWithGrantedAccess
 } from './optional-provider-access.js';
 
+const YUANBAO_DEFAULT_URL = 'https://yuanbao.tencent.com/chat/naQivTmsDa';
+
 export const PROVIDERS = [
   {
     id: 'chatgpt',
@@ -120,8 +122,8 @@ export const PROVIDERS = [
   {
     id: 'yuanbao',
     name: 'Yuanbao',
-    url: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
-    topLevelUrl: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
+    url: YUANBAO_DEFAULT_URL,
+    topLevelUrl: YUANBAO_DEFAULT_URL,
     icon: '/icons/providers/yuanbao.png',
     iconDark: '/icons/providers/dark/yuanbao.png',
     enabled: true,

@@ -159,7 +159,7 @@ const TEMP_CHAT_NORMAL_URLS = {
   claude: 'https://claude.ai/new',
   gemini: 'https://gemini.google.com/',
   grok: 'https://grok.com/',
-  yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa'
+  yuanbao: getProviderById('yuanbao').url
 };
 const LAYOUT_PANEL_COUNTS = {
   '1x1': 1,
