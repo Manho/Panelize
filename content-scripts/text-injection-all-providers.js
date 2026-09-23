@@ -212,6 +212,8 @@
       'form button:has(svg)'
     ],
     deepseek: [
+      // Current site: a design-system div button that is disabled by class.
+      'div[role="button"].ds-button--primary.ds-button--filled:not(.ds-button--disabled)',
       'button[aria-label="Send"]',
       'button[type="submit"]'
     ],
@@ -290,6 +292,9 @@
       'a[href*="new"]'
     ],
     deepseek: [
+      // Current site: the sidebar "New chat" item is a focusable div with an
+      // icon and a label and no role; its only class is a build hash.
+      'div[tabindex="0"]:not([role]):has(> .ds-icon):has(> span)',
       'button[aria-label*="New"]',
       'a[href="/"]',
       'div[class*="new-chat"]'
