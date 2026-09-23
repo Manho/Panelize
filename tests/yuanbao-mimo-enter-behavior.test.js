@@ -15,6 +15,7 @@ const buttonFinderSource = readFileSync(
 function createHarness(providerId, {
   enabled = true,
   yuanbaoState = null,
+  yuanbaoIcon = '0 0 48 48',
   mimoState = 'closed',
   mimoIcon = '0 0 19 16',
 } = {}) {
@@ -33,10 +34,15 @@ function createHarness(providerId, {
     disabled: providerId === 'mimo' ? !enabled : false,
     getAttribute: vi.fn((name) => {
       if (name === 'data-state' && providerId === 'mimo') return mimoState;
+      if (name === 'aria-label' && providerId === 'yuanbao') {
+        return yuanbaoState === 'sendStop' ? 'Stop Answering' : 'Send';
+      }
       return null;
     }),
     querySelector: vi.fn(() => ({
-      getAttribute: vi.fn((name) => name === 'viewBox' ? mimoIcon : null),
+      getAttribute: vi.fn((name) => name === 'viewBox'
+        ? (providerId === 'yuanbao' ? yuanbaoIcon : mimoIcon)
+        : null),
     })),
     click: vi.fn(),
   };
@@ -141,7 +147,7 @@ describe.each(['yuanbao', 'mimo'])('%s Enter behavior', (providerId) => {
   });
 
   if (providerId === 'yuanbao') {
-    it.each(['sendNot', 'loading', 'sending'])(
+    it.each(['sendNot', 'loading', 'sending', 'sendStop'])(
       'does not send while the Yuanbao control is %s',
       (yuanbaoState) => {
         const { context, sendButton } = createHarness(providerId, { yuanbaoState });
@@ -151,6 +157,21 @@ describe.each(['yuanbao', 'mimo'])('%s Enter behavior', (providerId) => {
         expect(sendButton.click).not.toHaveBeenCalled();
       }
     );
+
+    it('ignores an unknown Yuanbao icon and accepts the observed Chinese send labels', () => {
+      const { context, sendButton } = createHarness(providerId, { yuanbaoIcon: '0 0 24 24' });
+      context.handleEnterSwap(createEnterEvent());
+      expect(sendButton.click).not.toHaveBeenCalled();
+
+      sendButton.querySelector.mockReturnValue({
+        getAttribute: vi.fn(() => '0 0 48 48'),
+      });
+      for (const label of ['发送', '發送']) {
+        sendButton.getAttribute.mockImplementation((name) => name === 'aria-label' ? label : null);
+        context.handleEnterSwap(createEnterEvent());
+      }
+      expect(sendButton.click).toHaveBeenCalledTimes(2);
+    });
   }
 
   it('inserts a newline for Shift+Enter', () => {

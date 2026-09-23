@@ -328,7 +328,8 @@
       '[role="button"][aria-label="New Chat"]',
       '.yb-new-chat-entry__item[aria-label="New Chat"]',
       '.yb-projects-section__item-new-chat[aria-label="New Chat"]',
-      '[role="button"][aria-label="新建对话"]'
+      '[role="button"][aria-label="新建对话"]',
+      '[role="button"][aria-label="新建對話"]'
     ],
     mimo: [
       'button[data-track-id="navbar_new_chat_btn"]'
@@ -371,7 +372,9 @@
       '[role="button"][aria-label="Enter Temporary Chat"]',
       '[role="button"][aria-label="Exit Temporary Chat"]',
       '[role="button"][aria-label="进入临时对话"]',
-      '[role="button"][aria-label="退出临时对话"]'
+      '[role="button"][aria-label="退出临时对话"]',
+      '[role="button"][aria-label="進入臨時對話"]',
+      '[role="button"][aria-label="退出臨時對話"]'
     ]
   };
 
@@ -933,8 +936,7 @@
     }
 
     if (provider === 'yuanbao') {
-      const className = String(element.className || '');
-      return !/(disabled|sendNot|loading|sending)/i.test(className);
+      return window.ButtonFinderUtils?.isYuanbaoSendControl(element) === true;
     }
 
     if (provider === 'mimo') {
@@ -1345,7 +1347,7 @@
       case 'yuanbao':
         return (
           currentUrl.searchParams.get('chatMode') === 'temp' ||
-          /^(Exit Temporary Chat|退出临时对话)$/
+          /^(Exit Temporary Chat|退出临时对话|退出臨時對話)$/
             .test(control?.getAttribute('aria-label') || '')
         );
       default:

@@ -55,7 +55,9 @@ function createYuanbaoDom({ previewDelayMs = 0 } = {}) {
       <button data-new-input-control="add-tools-trigger" aria-label="Add"></button>
       <div id="yuanbao-previews"></div>
       <div id="yuanbao-send-btn" aria-label="Send"
-           class="SendButton_sendButton__test SendButton_disabled__test SendButton_sendNot__test"></div>
+           class="SendButton_sendButton__test SendButton_disabled__test SendButton_sendNot__test">
+        <svg viewBox="0 0 48 48"></svg>
+      </div>
     </div>
     <div role="button" aria-label="New Chat"></div>
   `;
@@ -67,7 +69,9 @@ function createYuanbaoDom({ previewDelayMs = 0 } = {}) {
   [editor, addButton, sendButton, newChatButton].forEach(markVisible);
 
   editor.addEventListener('input', () => {
-    sendButton.className = 'SendButton_sendButton__test';
+    if (sendButton.getAttribute('aria-label') !== 'Stop Answering') {
+      sendButton.className = 'SendButton_sendButton__test';
+    }
   });
 
   const uploadedNames = [];
@@ -198,6 +202,23 @@ describe('Yuanbao and MiMo content script integration', () => {
     expect(sendSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('does not stop Yuanbao generation on trigger send or auto-submit', async () => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
+    const { editor, sendButton } = createYuanbaoDom();
+    sendButton.className = 'SendButton_sendButton__test SendButton_sendStop__test';
+    sendButton.setAttribute('aria-label', 'Stop Answering');
+    sendButton.querySelector('svg').remove();
+    const clickSpy = vi.fn();
+    sendButton.addEventListener('click', clickSpy);
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND' });
+    dispatchMultiPanelMessage({ type: 'INJECT_TEXT', text: ' + queued', autoSubmit: true });
+    await vi.advanceTimersByTimeAsync(900);
+
+    expect(editor.textContent).toContain('queued');
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['Yuanbao', 'https://yuanbao.tencent.com/chat/naQivTmsDa', createYuanbaoDom],
     ['MiMo', 'https://aistudio.xiaomimimo.com/#/c', createMimoDom],
@@ -215,6 +236,7 @@ describe('Yuanbao and MiMo content script integration', () => {
   it.each([
     ['Enter Temporary Chat', 'Exit Temporary Chat'],
     ['进入临时对话', '退出临时对话'],
+    ['進入臨時對話', '退出臨時對話'],
   ])('acknowledges Yuanbao temporary chat after %s changes to %s', async (enterLabel, exitLabel) => {
     window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
     document.body.innerHTML = `<div role="button" aria-label="${enterLabel}"></div>`;
@@ -236,23 +258,26 @@ describe('Yuanbao and MiMo content script integration', () => {
     );
   });
 
-  it('does not turn off an already active Chinese Yuanbao temporary chat without a URL flag', async () => {
-    window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
-    document.body.innerHTML = '<div role="button" aria-label="退出临时对话"></div>';
-    const control = document.querySelector('[role="button"]');
-    markVisible(control);
-    const clickSpy = vi.fn();
-    control.addEventListener('click', clickSpy);
+  it.each(['退出临时对话', '退出臨時對話'])(
+    'does not turn off an already active Yuanbao temporary chat labeled %s without a URL flag',
+    async (label) => {
+      window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
+      document.body.innerHTML = `<div role="button" aria-label="${label}"></div>`;
+      const control = document.querySelector('[role="button"]');
+      markVisible(control);
+      const clickSpy = vi.fn();
+      control.addEventListener('click', clickSpy);
 
-    dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT' });
-    await vi.advanceTimersByTimeAsync(200);
+      dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT' });
+      await vi.advanceTimersByTimeAsync(200);
 
-    expect(clickSpy).not.toHaveBeenCalled();
-    expect(window.parent.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'PANELIZE_TEMP_CHAT_ENABLED', provider: 'yuanbao' }),
-      '*'
-    );
-  });
+      expect(clickSpy).not.toHaveBeenCalled();
+      expect(window.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'PANELIZE_TEMP_CHAT_ENABLED', provider: 'yuanbao' }),
+        '*'
+      );
+    }
+  );
 
   it('does not toggle Yuanbao temporary chat twice across overlapping and late retries', async () => {
     window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
@@ -286,10 +311,10 @@ describe('Yuanbao and MiMo content script integration', () => {
     );
   });
 
-  it('clicks Yuanbao new chat with a Chinese label', () => {
+  it.each(['新建对话', '新建對話'])('clicks Yuanbao new chat with label %s', (label) => {
     window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
     const { newChatButton } = createYuanbaoDom();
-    newChatButton.setAttribute('aria-label', '新建对话');
+    newChatButton.setAttribute('aria-label', label);
     const clickSpy = vi.fn();
     newChatButton.addEventListener('click', clickSpy);
     dispatchMultiPanelMessage({ type: 'NEW_CHAT' });

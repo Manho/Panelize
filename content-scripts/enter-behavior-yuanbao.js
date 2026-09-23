@@ -19,12 +19,7 @@ function isYuanbaoInput(element) {
 }
 
 function isYuanbaoSendEnabled(sendButton) {
-  const className = String(sendButton?.className || '');
-  return Boolean(
-    sendButton &&
-    sendButton.getAttribute('aria-disabled') !== 'true' &&
-    !/(disabled|sendNot|loading|sending)/i.test(className)
-  );
+  return window.ButtonFinderUtils?.isYuanbaoSendControl(sendButton) === true;
 }
 
 function insertYuanbaoNewline(editor) {

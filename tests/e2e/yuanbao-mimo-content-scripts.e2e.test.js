@@ -27,7 +27,9 @@ const YUANBAO_FIXTURE = `<!doctype html>
       <button data-new-input-control="add-tools-trigger" aria-label="Add">Add</button>
       <div id="previews"></div>
       <div id="yuanbao-send-btn" role="button" aria-label="Send"
-           class="SendButton_sendButton__test SendButton_disabled__test SendButton_sendNot__test">Send</div>
+           class="SendButton_sendButton__test SendButton_disabled__test SendButton_sendNot__test">
+        <svg width="18" height="18" viewBox="0 0 48 48"></svg>Send
+      </div>
     </div>
     <div role="button" aria-label="新建对话">新建对话</div>
     <script>
@@ -36,7 +38,9 @@ const YUANBAO_FIXTURE = `<!doctype html>
       const editor = document.querySelector('.ql-editor');
       const send = document.querySelector('#yuanbao-send-btn');
       editor.addEventListener('input', () => {
-        send.className = 'SendButton_sendButton__test';
+        if (send.getAttribute('aria-label') !== 'Stop Answering') {
+          send.className = 'SendButton_sendButton__test';
+        }
       });
       send.addEventListener('click', () => window.__sendCount++);
       document.querySelector('[aria-label="新建对话"]').addEventListener(
@@ -49,6 +53,8 @@ const YUANBAO_FIXTURE = `<!doctype html>
         upload.id = 'upload-image';
         upload.setAttribute('role', 'menuitem');
         upload.textContent = 'Upload Image';
+        upload.style.position = 'absolute';
+        upload.style.top = '8px';
         document.body.append(upload);
         upload.addEventListener('click', () => {
           const input = document.createElement('input');
@@ -297,6 +303,29 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
     await page.waitForTimeout(950);
     expect(await page.evaluate(() => window.__sendCount)).toBe(0);
     await expect(editor).toHaveValue(/queued/);
+    await page.close();
+  });
+
+  test('Yuanbao generation keeps its stop control untouched by Enter and auto-submit', async () => {
+    const page = await context.newPage();
+    await page.goto(`http://yuanbao.tencent.com:${port}/chat/naQivTmsDa`);
+    const editor = page.locator('.ql-editor');
+    await expect(editor).toBeVisible();
+    await page.locator('#yuanbao-send-btn').evaluate(button => {
+      button.className = 'SendButton_sendButton__test SendButton_sendStop__test';
+      button.setAttribute('aria-label', 'Stop Answering');
+      button.querySelector('svg').remove();
+    });
+    await editor.focus();
+    await page.keyboard.press('Enter');
+    await postPanelMessage(page, {
+      type: 'INJECT_TEXT',
+      text: ' + queued',
+      autoSubmit: true,
+    });
+    await page.waitForTimeout(950);
+    expect(await page.evaluate(() => window.__sendCount)).toBe(0);
+    await expect(editor).toContainText('queued');
     await page.close();
   });
 });
