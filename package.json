@@ -18,7 +18,8 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "test:ui": "vitest --ui",
-    "test:e2e": "playwright test tests/e2e"
+    "test:e2e": "playwright test tests/e2e",
+    "test:e2e:headed": "PANELIZE_E2E_HEADED=1 playwright test tests/e2e"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",
