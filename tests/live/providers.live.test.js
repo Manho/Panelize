@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { launchExtension } from '../e2e/extension-harness.js';
 import {
   LIVE_HEADLESS,
+  LIVE_IGNORED_DEFAULT_ARGS,
   LIVE_SEND_ENABLED,
   LIVE_USER_DATA_DIR,
   configureLiveProviders,
@@ -36,6 +37,7 @@ test.describe('Live provider smoke', () => {
       extensionPath,
       userDataDir: LIVE_USER_DATA_DIR,
       headless: LIVE_HEADLESS,
+      ignoreDefaultArgs: LIVE_IGNORED_DEFAULT_ARGS,
       viewport: { width: 1400, height: 900 },
       // Some sites refuse to work when the automation infobar flag is set.
       args: ['--disable-blink-features=AutomationControlled'],

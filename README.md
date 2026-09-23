@@ -180,7 +180,7 @@ With Playwright 1.58, `npx playwright install` can hang while it extracts the do
 
 The live suite catches provider site changes that fixtures cannot. For each provider it opens the real multi-panel page, types into the unified input, and presses **Fill**. It then checks that the text reached the provider's composer and that the send and new-chat selectors still match.
 
-1. Run `npm run test:live:login` and log in to each provider. If a panel still looks logged out, log in inside that panel on the multi-panel tab, because panel iframes use partitioned storage. Close the browser when you are done.
+1. Run `npm run test:live:login` and log in to each provider. If a panel still looks logged out, log in inside that panel on the multi-panel tab, because panel iframes use partitioned storage. Quit the browser when you are done (Cmd+Q on macOS); with more than 12 providers the next batch then opens. The logins are kept in the profile, so this is a one-time step.
 2. Run `npm run test:live`, ideally before every release. By default it opens a visible window, because several sites block headless browsers.
 3. Failures save a screenshot and the provider frame's HTML under `test-results/live/`.
 

@@ -17,6 +17,14 @@ export const LIVE_PROFILE_ROOT = path.resolve(
 export const LIVE_USER_DATA_DIR = path.join(LIVE_PROFILE_ROOT, 'user-data');
 export const LIVE_EXTENSION_PATH = path.join(LIVE_PROFILE_ROOT, 'extension');
 
+/**
+ * Playwright switches the live profile must not get. With `--use-mock-keychain`
+ * Chromium encrypts cookies with a fixed test key instead of the OS keychain
+ * key used by the plain browser in `test:live:login`, so every login cookie
+ * saved there fails to decrypt and the sites look logged out.
+ */
+export const LIVE_IGNORED_DEFAULT_ARGS = ['--use-mock-keychain'];
+
 /** PANELIZE_LIVE_SEND=1 really sends the prompt, which uses provider quota. */
 export const LIVE_SEND_ENABLED = process.env.PANELIZE_LIVE_SEND === '1';
 

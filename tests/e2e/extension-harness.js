@@ -75,6 +75,7 @@ export async function startFixtureServer(handler) {
  * @param {string} [options.userDataDir] - Profile to reuse and keep. Defaults
  *   to a throwaway profile that is deleted on close.
  * @param {boolean} [options.headless] - Live suite only; see getBrowserLaunchOptions.
+ * @param {string[]} [options.ignoreDefaultArgs] - Playwright default switches to drop.
  * @returns {Promise<{context: import('@playwright/test').BrowserContext,
  *   serviceWorker: import('@playwright/test').Worker, extensionId: string,
  *   extensionUrl: (relativePath: string) => string, close: () => Promise<void>}>}
@@ -85,6 +86,7 @@ export async function launchExtension({
   viewport,
   userDataDir: persistentUserDataDir,
   headless,
+  ignoreDefaultArgs,
 } = {}) {
   const userDataDir = persistentUserDataDir
     || await mkdtemp(path.join(os.tmpdir(), 'panelize-e2e-'));
@@ -93,6 +95,7 @@ export async function launchExtension({
     getBrowserLaunchOptions({
       viewport,
       headless,
+      ignoreDefaultArgs,
       args: [
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
