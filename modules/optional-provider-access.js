@@ -156,8 +156,6 @@ async function syncContentScripts(allConfigs, desiredConfigs) {
   }
 
   const managedScriptIds = new Set(allConfigs.map(({ contentScript }) => contentScript.id));
-  // Retire the persisted registration from the unreleased provider experiment.
-  managedScriptIds.add('mimo-scripts');
   const desiredScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
   const registeredScripts = await chrome.scripting.getRegisteredContentScripts();
   const registeredManagedIds = registeredScripts

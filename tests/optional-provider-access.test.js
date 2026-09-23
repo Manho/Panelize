@@ -196,20 +196,6 @@ describe('optional provider access', () => {
     expect(chrome.declarativeNetRequest.updateDynamicRules).not.toHaveBeenCalled();
   });
 
-  it('unregisters the retired provider without touching unrelated scripts', async () => {
-    chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
-      { id: 'mimo-scripts' },
-      { id: 'unrelated-script' },
-    ]);
-
-    await syncOptionalProviderAccess([]);
-
-    expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
-      ids: ['mimo-scripts'],
-    });
-    expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();
-  });
-
   it('removes managed scripts and rules when providers are disabled', async () => {
     chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
       { id: 'qwen-cn-scripts' },
