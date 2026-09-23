@@ -40,7 +40,7 @@
 
 ### 一次提问，同时对比
 
-在统一输入框中输入一次内容，就能同时发送到 ChatGPT、Claude、Gemini、Grok、Doubao、DeepSeek、Kimi、Qwen、Zhipu (China)、Z.ai (Global)、Google。
+在统一输入框中输入一次内容，就能同时发送到 ChatGPT、Claude、Gemini、Grok、Doubao、DeepSeek、Kimi、Qwen、Zhipu (China)、Z.ai (Global)、元宝、MiMo、Google。
 
 ### 灵活布局
 
@@ -80,6 +80,8 @@
 - Qwen（海外版）
 - Zhipu (China)
 - Z.ai (Global)
+- 元宝
+- MiMo
 - Google
 
 <p align="center">

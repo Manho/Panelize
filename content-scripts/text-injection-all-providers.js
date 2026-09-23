@@ -20,6 +20,7 @@
   const MULTI_PANEL_USER_INTERACTION_TRACKING_TIMEOUT_MS = 90000;
   const TEMP_CHAT_POLL_INTERVAL_MS = 200;
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
+  const YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS = 5000;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
   const SLOW_COMPOSER_PROVIDERS = new Set([
     'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao', 'mimo'
@@ -33,6 +34,8 @@
   let googleSearchReplaceOnNextFill = true;
   let chatgptSendTracking = null;
   let multiPanelUserInteractionTracking = null;
+  let yuanbaoTemporaryChatActivation = null;
+  let yuanbaoTemporaryChatLastClickAt = -Infinity;
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
 
@@ -1350,7 +1353,26 @@
     }
   }
 
-  async function enableTemporaryChat(provider) {
+  function enableTemporaryChat(provider) {
+    if (provider !== 'yuanbao') {
+      return activateTemporaryChat(provider);
+    }
+    if (yuanbaoTemporaryChatActivation) {
+      return yuanbaoTemporaryChatActivation;
+    }
+
+    const activation = activateTemporaryChat(provider);
+    yuanbaoTemporaryChatActivation = activation;
+    const clearActivation = () => {
+      if (yuanbaoTemporaryChatActivation === activation) {
+        yuanbaoTemporaryChatActivation = null;
+      }
+    };
+    activation.then(clearActivation, clearActivation);
+    return activation;
+  }
+
+  async function activateTemporaryChat(provider) {
     const selectors = TEMP_CHAT_BUTTON_SELECTORS[provider];
     if (!selectors || selectors.length === 0) {
       console.log('[Temporary Chat] Provider does not support temporary chat:', provider);
@@ -1371,6 +1393,17 @@
       }
 
       if (button && isElementEnabled(button)) {
+        if (
+          provider === 'yuanbao' &&
+          Date.now() - yuanbaoTemporaryChatLastClickAt < YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS
+        ) {
+          await sleep(TEMP_CHAT_POLL_INTERVAL_MS);
+          continue;
+        }
+        if (provider === 'yuanbao') {
+          // Parent retries for five seconds; never toggle this control twice in that cycle.
+          yuanbaoTemporaryChatLastClickAt = Date.now();
+        }
         button.click();
         if (provider !== 'yuanbao') {
           postTemporaryChatEnabled(provider);

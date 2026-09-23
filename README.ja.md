@@ -40,7 +40,7 @@
 
 ### 1回の入力で同時送信
 
-統一入力欄から ChatGPT / Claude / Gemini / Grok / Doubao / DeepSeek / Kimi / Qwen / Zhipu (China) / Z.ai (Global) / Google へ同時に送信できます。
+統一入力欄から ChatGPT / Claude / Gemini / Grok / Doubao / DeepSeek / Kimi / Qwen / Zhipu (China) / Z.ai (Global) / Yuanbao / MiMo / Google へ同時に送信できます。
 
 ### 柔軟なレイアウト
 
@@ -80,6 +80,8 @@ API キー不要。通常どおり各 AI サービスにログインしていれ
 - Qwen（グローバル版）
 - Zhipu (China)
 - Z.ai (Global)
+- Yuanbao
+- MiMo
 - Google
 
 <p align="center">

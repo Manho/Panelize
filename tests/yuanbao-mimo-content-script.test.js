@@ -17,6 +17,7 @@ const SAMPLE_IMAGE = {
   type: 'image/png',
   dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII=',
 };
+let testClock = Date.now();
 
 function markVisible(element) {
   Object.defineProperty(element, 'offsetParent', {
@@ -155,6 +156,8 @@ describe('Yuanbao and MiMo content script integration', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    testClock += 10000;
+    vi.setSystemTime(testClock);
     vi.restoreAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -245,6 +248,38 @@ describe('Yuanbao and MiMo content script integration', () => {
     await vi.advanceTimersByTimeAsync(200);
 
     expect(clickSpy).not.toHaveBeenCalled();
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'PANELIZE_TEMP_CHAT_ENABLED', provider: 'yuanbao' }),
+      '*'
+    );
+  });
+
+  it('does not toggle Yuanbao temporary chat twice across overlapping and late retries', async () => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
+    document.body.innerHTML = '';
+    dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT' });
+    await vi.advanceTimersByTimeAsync(1100);
+
+    const control = document.createElement('div');
+    control.setAttribute('role', 'button');
+    control.setAttribute('aria-label', '进入临时对话');
+    document.body.append(control);
+    markVisible(control);
+    const clickSpy = vi.fn(() => {
+      setTimeout(() => control.setAttribute('aria-label', '退出临时对话'), 1600);
+    });
+    control.addEventListener('click', clickSpy);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT' });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(control.getAttribute('aria-label')).toBe('进入临时对话');
+
+    dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT' });
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(window.parent.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'PANELIZE_TEMP_CHAT_ENABLED', provider: 'yuanbao' }),
       '*'
