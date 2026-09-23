@@ -300,6 +300,7 @@
       '.sidebar a[href="/"]'
     ],
     doubao: [
+      '#flow_chat_sidebar [data-testid="create_conversation_button"]',
       '#flow_chat_sidebar > div.cursor-pointer',
       '#flow_chat_sidebar > div[class*="cursor-pointer"]',
       'button[data-testid="new-chat-button"]',
@@ -312,10 +313,12 @@
       'button[aria-label*="新建"]'
     ],
     'qwen-cn': [
+      '#new-nav-tab-wrapper [data-session-switch-target="new-chat"]',
       '#new-nav-tab-wrapper button:has([data-icon-type="qwpcicon-newDialogue"])'
     ],
     'qwen-global': [
       'button.new-chat',
+      '[role="button"].new-chat',
       '[data-testid="sidebar-new-chat-button"]'
     ],
     chatglm: ['.aside-subjects .new-session'],

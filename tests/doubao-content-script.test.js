@@ -249,4 +249,28 @@ describe('doubao content script integration', () => {
 
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('uses the current create conversation control for Doubao', () => {
+    // Markup captured from the live site on 2026-09-23: the control sits in a
+    // `contents` wrapper, so it is no longer a direct sidebar child.
+    document.body.innerHTML = `
+      <div id="flow_chat_sidebar" data-testid="flow_chat_sidebar">
+        <div class="select-none contents">
+          <div data-testid="create_conversation_button">
+            <div><span>新对话</span></div>
+          </div>
+        </div>
+      </div>
+    `;
+    const newChatControl = document.querySelector('[data-testid="create_conversation_button"]');
+    const clickSpy = vi.fn();
+    newChatControl.addEventListener('click', clickSpy);
+
+    dispatchMultiPanelMessage({
+      type: 'NEW_CHAT',
+      context: 'multi-panel',
+    });
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
 });
