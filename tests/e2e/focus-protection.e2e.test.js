@@ -249,13 +249,8 @@ test.describe('Focus protection E2E', () => {
   });
 
   test('clicking inside a provider panel cancels the send focus restore', async () => {
-    // Known bug: the unified input blur handler refocuses synchronously when
-    // the click moves focus into the iframe, and the provider's
-    // USER_INTERACTION message only arrives a few ms later. The restore loop
-    // is cancelled, but the user's first click has already been undone.
-    // Remove this marker once multi-panel.js defers that refocus.
-    test.fail(true, 'First click into a panel during send focus restore is pulled back');
-
+    // Regression: the unified input blur handler used to refocus before the
+    // provider's USER_INTERACTION message arrived, undoing the first click.
     await openPanels({ chatgpt: {} });
     await waitForLoadGracePeriod();
 
@@ -269,5 +264,6 @@ test.describe('Focus protection E2E', () => {
     await page.waitForTimeout(2800);
 
     expect(await activeElementLabel()).toBe('IFRAME');
+    expect(await providerFrame('chatgpt').evaluate(() => document.activeElement?.id)).toBe('prompt-textarea');
   });
 });

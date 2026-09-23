@@ -14,6 +14,8 @@
   const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
   const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
   const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
+  const PANELIZE_RESTORE_USER_FOCUS = 'PANELIZE_RESTORE_USER_FOCUS';
+  const USER_FOCUS_RESTORE_WINDOW_MS = 2000;
   const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
   const CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS = 2000;
@@ -36,6 +38,9 @@
   let multiPanelUserInteractionTracking = null;
   let yuanbaoTemporaryChatActivation = null;
   let yuanbaoTemporaryChatLastClickAt = -Infinity;
+  // Element the user focused with the interaction reported to multi-panel,
+  // in case the parent's focus restore took focus away before it heard back.
+  let lastUserFocus = null;
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
 
@@ -615,6 +620,33 @@
     reportIfChanged();
   }
 
+  function rememberUserFocus() {
+    const entry = { element: null, at: Date.now() };
+    lastUserFocus = entry;
+    // Focus moves after pointerdown, so capture the element it lands on.
+    const captureFocus = (event) => {
+      if (lastUserFocus === entry && !entry.element) {
+        entry.element = event.target;
+      }
+    };
+    document.addEventListener('focusin', captureFocus, { capture: true, once: true });
+    setTimeout(() => document.removeEventListener('focusin', captureFocus, true), USER_FOCUS_RESTORE_WINDOW_MS);
+  }
+
+  function restoreUserFocus() {
+    const entry = lastUserFocus;
+    lastUserFocus = null;
+    if (!entry?.element?.isConnected || Date.now() - entry.at > USER_FOCUS_RESTORE_WINDOW_MS) {
+      return;
+    }
+
+    try {
+      entry.element.focus({ preventScroll: true });
+    } catch {
+      entry.element.focus();
+    }
+  }
+
   function stopMultiPanelUserInteractionTracking() {
     const tracking = multiPanelUserInteractionTracking;
     if (!tracking) {
@@ -652,6 +684,7 @@
         return;
       }
 
+      rememberUserFocus();
       postMultiPanelProviderStatus(
         PANELIZE_PROVIDER_USER_INTERACTION,
         tracking.requestId,
@@ -3088,6 +3121,11 @@
   function handleTextInjection(event) {
     // Validate event data structure
     if (!event || !event.data || typeof event.data !== 'object') {
+      return;
+    }
+
+    if (event.data.type === PANELIZE_RESTORE_USER_FOCUS && event.data.context === 'multi-panel') {
+      restoreUserFocus();
       return;
     }
 

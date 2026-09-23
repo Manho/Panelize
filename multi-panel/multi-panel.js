@@ -829,6 +829,16 @@ function handleProviderStatusMessage(event) {
     case PANELIZE_PROVIDER_USER_INTERACTION:
       if (data.requestId === activeSendFocusRequestId) {
         cancelUnifiedInputFocusRestoreAfterSend();
+        // The click that moved focus into the panel also blurred the unified
+        // input, and the restore pulled focus back before this message
+        // arrived. Return focus to the panel the user actually chose.
+        if (document.activeElement === document.getElementById('unified-input')) {
+          panel.iframe.focus();
+          panel.iframe.contentWindow?.postMessage({
+            type: 'PANELIZE_RESTORE_USER_FOCUS',
+            context: 'multi-panel'
+          }, '*');
+        }
       }
       break;
     case PANELIZE_TEMP_CHAT_ENABLED:
