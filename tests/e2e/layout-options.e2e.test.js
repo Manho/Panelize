@@ -1,42 +1,16 @@
-import { test, expect, chromium } from '@playwright/test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { getBrowserLaunchOptions } from './browser-launch-options.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const EXTENSION_PATH = path.resolve(__dirname, '../..');
+import { test, expect } from '@playwright/test';
+import { launchExtension } from './extension-harness.js';
 
 test.describe('Layout options E2E', () => {
   test.setTimeout(60000);
 
-  let context;
+  let extension;
   let page;
-  let userDataDir;
 
   test.beforeAll(async () => {
-    userDataDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-layout-options-'));
-    context = await chromium.launchPersistentContext(
-      userDataDir,
-      getBrowserLaunchOptions({
-        headless: false,
-        args: [
-          `--disable-extensions-except=${EXTENSION_PATH}`,
-          `--load-extension=${EXTENSION_PATH}`,
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-        ],
-      }, { extension: true })
-    );
+    extension = await launchExtension();
+    const { serviceWorker } = extension;
 
-    let [serviceWorker] = context.serviceWorkers();
-    if (!serviceWorker) {
-      serviceWorker = await context.waitForEvent('serviceworker');
-    }
-
-    const extensionId = new URL(serviceWorker.url()).host;
     await serviceWorker.evaluate(async () => {
       await chrome.storage.sync.set({
         enabledProviders: [],
@@ -46,14 +20,13 @@ test.describe('Layout options E2E', () => {
       });
     });
 
-    page = await context.newPage();
-    await page.goto(`chrome-extension://${extensionId}/multi-panel/multi-panel.html`);
+    page = await extension.context.newPage();
+    await page.goto(extension.extensionUrl('multi-panel/multi-panel.html'));
     await page.waitForSelector('#layout-btn');
   });
 
   test.afterAll(async () => {
-    await context?.close();
-    await rm(userDataDir, { recursive: true, force: true });
+    await extension?.close();
   });
 
   test('shows and applies the 1x12 and 2x6 layouts', async ({}, testInfo) => {

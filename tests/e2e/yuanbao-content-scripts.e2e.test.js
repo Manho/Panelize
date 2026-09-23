@@ -1,14 +1,9 @@
-import { test, expect, chromium } from '@playwright/test';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { getBrowserLaunchOptions } from './browser-launch-options.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const SOURCE_EXTENSION_PATH = path.resolve(__dirname, '../..');
+import { test, expect } from '@playwright/test';
+import {
+  createPatchedExtensionCopy,
+  launchExtension,
+  startFixtureServer,
+} from './extension-harness.js';
 
 const SAMPLE_IMAGE = {
   id: 'e2e-image',
@@ -87,33 +82,16 @@ function postPanelMessage(page, payload) {
 test.describe('Yuanbao production content scripts', () => {
   test.setTimeout(60000);
 
-  let context;
+  let extension;
+  let extensionCopy;
   let server;
-  let extensionDir;
-  let userDataDir;
+  let context;
   let port;
 
   test.beforeAll(async () => {
-    extensionDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-provider-extension-'));
-    userDataDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-provider-profile-'));
-
-    await cp(SOURCE_EXTENSION_PATH, extensionDir, {
-      recursive: true,
-      filter: (source) => ![
-        '.git',
-        'node_modules',
-        'test-results',
-        'playwright-report',
-      ].some((segment) => source.split(path.sep).includes(segment)),
-    });
-
-    const manifestPath = path.join(extensionDir, 'manifest.json');
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    manifest.host_permissions.push(
-      'http://yuanbao.tencent.com/*'
-    );
-    manifest.content_scripts.push(
-      {
+    extensionCopy = await createPatchedExtensionCopy((manifest) => {
+      manifest.host_permissions.push('http://yuanbao.tencent.com/*');
+      manifest.content_scripts.push({
         matches: ['http://yuanbao.tencent.com/*'],
         js: [
           'content-scripts/button-finder-utils.js',
@@ -124,51 +102,33 @@ test.describe('Yuanbao production content scripts', () => {
         ],
         run_at: 'document_start',
         all_frames: true,
-      }
-    );
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      });
+    });
 
-    server = http.createServer((request, response) => {
-      const body = YUANBAO_FIXTURE;
+    server = await startFixtureServer((request, response) => {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
       });
-      response.end(body);
+      response.end(YUANBAO_FIXTURE);
     });
-    await new Promise((resolve) => {
-      server.listen(0, '127.0.0.1', resolve);
+    port = server.port;
+
+    extension = await launchExtension({
+      extensionPath: extensionCopy.extensionPath,
+      args: [
+        '--disable-features=HttpsUpgrades',
+        '--proxy-bypass-list=*',
+        '--host-resolver-rules=MAP yuanbao.tencent.com 127.0.0.1',
+      ],
     });
-    port = server.address().port;
-
-    context = await chromium.launchPersistentContext(
-      userDataDir,
-      getBrowserLaunchOptions({
-        headless: false,
-        args: [
-          `--disable-extensions-except=${extensionDir}`,
-          `--load-extension=${extensionDir}`,
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-features=HttpsUpgrades',
-          '--proxy-bypass-list=*',
-          '--host-resolver-rules=MAP yuanbao.tencent.com 127.0.0.1',
-        ],
-      }, { extension: true })
-    );
-
-    if (context.serviceWorkers().length === 0) {
-      await context.waitForEvent('serviceworker');
-    }
+    context = extension.context;
   });
 
   test.afterAll(async () => {
-    await context?.close();
-    await new Promise((resolve, reject) => {
-      server?.close((error) => error ? reject(error) : resolve());
-    });
-    await rm(extensionDir, { recursive: true, force: true });
-    await rm(userDataDir, { recursive: true, force: true });
+    await extension?.close();
+    await server?.close();
+    await extensionCopy?.cleanup();
   });
 
   test('shows the retained provider list in settings', async ({}, testInfo) => {
