@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiMo</title>
+  <link rel="stylesheet" href="mimo-bridge.css">
+</head>
+<body>
+  <main>
+    <header class="toolbar">
+      <span id="connection" class="connection" aria-live="polite">Not connected</span>
+      <button id="connect" type="button">Open MiMo tab</button>
+    </header>
+    <p id="status" class="status">Open MiMo in a browser tab to sign in and connect.</p>
+    <section class="reply" aria-label="MiMo response">
+      <pre id="response" aria-live="polite"></pre>
+    </section>
+  </main>
+  <script type="module" src="mimo-bridge.js"></script>
+</body>
+</html>

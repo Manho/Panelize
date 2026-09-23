@@ -145,6 +145,7 @@ const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
 const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
+const PANELIZE_MIMO_CONNECTION = 'PANELIZE_MIMO_CONNECTION';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
 const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao']);
@@ -309,6 +310,10 @@ function getProviderFrameUrl(providerId) {
     return '';
   }
 
+  if (providerId === 'mimo') {
+    return chrome.runtime.getURL('multi-panel/mimo-bridge.html');
+  }
+
   if (isTemporaryChatModeEnabled && isUrlDrivenTemporaryChatProvider(providerId)) {
     return getTemporaryChatUrl(providerId);
   }
@@ -403,6 +408,19 @@ function showPanelLoadingState(panelEl, provider) {
   loadingEl.innerHTML = `<img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}"><span class="loading-text">Loading ${provider.name}...</span>`;
 }
 
+function configureProviderIframe(iframe, providerId) {
+  if (providerId === 'mimo') {
+    iframe.removeAttribute('sandbox');
+    iframe.removeAttribute('allow');
+    return;
+  }
+  iframe.setAttribute(
+    'sandbox',
+    'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
+  );
+  iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+}
+
 function reloadPanelIframe(panel, overrideUrl = null) {
   const panelEl = document.getElementById(panel.id);
   const provider = getProviderById(panel.providerId);
@@ -418,6 +436,8 @@ function reloadPanelIframe(panel, overrideUrl = null) {
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
   panel.currentUrl = null;
+  if (panel.providerId === 'mimo') panel.bridgeConnected = false;
+  configureProviderIframe(iframe, panel.providerId);
   iframe.src = overrideUrl || getProviderFrameUrl(panel.providerId);
   panel.iframe = iframe;
 }
@@ -425,6 +445,14 @@ function reloadPanelIframe(panel, overrideUrl = null) {
 async function openProviderTopLevel(panel) {
   const provider = getProviderById(panel?.providerId);
   if (!provider) {
+    return;
+  }
+
+  if (provider.id === 'mimo' && panel.iframe?.contentWindow) {
+    panel.iframe.contentWindow.postMessage({
+      type: 'PANELIZE_MIMO_OPEN_TAB',
+      context: 'multi-panel'
+    }, window.location.origin);
     return;
   }
 
@@ -817,7 +845,11 @@ function handleProviderStatusMessage(event) {
 
   const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
   const isLocationMessage = data.type === PANELIZE_PROVIDER_LOCATION;
-  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage && !isLocationMessage)) {
+  const isMiMoConnection = data.type === PANELIZE_MIMO_CONNECTION;
+  if (
+    data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT ||
+    (!data.requestId && !isTempChatMessage && !isLocationMessage && !isMiMoConnection)
+  ) {
     return;
   }
 
@@ -827,6 +859,11 @@ function handleProviderStatusMessage(event) {
   }
 
   switch (data.type) {
+    case PANELIZE_MIMO_CONNECTION:
+      if (panel.providerId === 'mimo') {
+        panel.bridgeConnected = data.connected === true;
+      }
+      break;
     case PANELIZE_PROVIDER_LOCATION:
       if (!isProviderAllowedUrl(panel.providerId, data.url)) {
         return;
@@ -1237,6 +1274,10 @@ function getAutoShrunkLayout(currentLayout, newPanelCount) {
 }
 
 async function addPanel(providerId) {
+  if (providerId === 'mimo' && panels.some(panel => panel.providerId === 'mimo')) {
+    showToast('MiMo is already open in this window');
+    return;
+  }
   if (panels.length >= MAX_PANELS) {
     showToast(`Maximum number of panels reached (${MAX_PANELS})`);
     return;
@@ -1289,9 +1330,7 @@ async function addPanel(providerId) {
         <span class="loading-text">Loading ${provider.name}...</span>
       </div>
       <iframe
-        src="${getProviderFrameUrl(providerId)}"
-        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-        allow="clipboard-read; clipboard-write"
+        src="about:blank"
       ></iframe>
     </div>
   `;
@@ -1328,11 +1367,14 @@ async function addPanel(providerId) {
     providerId,
     iframe,
     currentUrl: null,
+    bridgeConnected: false,
     state: 'loading'
   });
   resetFillRetryState();
 
   bindPanelHeaderActions(panelId);
+  configureProviderIframe(iframe, providerId);
+  iframe.src = getProviderFrameUrl(providerId);
 
   // Save provider configuration
   await saveProviderConfiguration();
@@ -1382,6 +1424,12 @@ function removePanel(panelId) {
 async function switchPanelProvider(panelId, newProviderId) {
   const panel = panels.find(p => p.id === panelId);
   if (!panel) return;
+  if (newProviderId === 'mimo' && panels.some(other =>
+    other.id !== panelId && other.providerId === 'mimo'
+  )) {
+    showToast('MiMo is already open in this window');
+    return;
+  }
 
   const provider = getProviderById(newProviderId);
   if (!provider) return;
@@ -1741,7 +1789,8 @@ export async function sendToPanel(
   timeoutMs = 8000,
   options = {}
 ) {
-  if (!panel.iframe || !panel.iframe.contentWindow) {
+  if (!panel.iframe || !panel.iframe.contentWindow ||
+      (panel.providerId === 'mimo' && panel.bridgeConnected !== true)) {
     return {
       ok: false,
       panelId: panel.id,

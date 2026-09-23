@@ -90,6 +90,7 @@ const MIMO_FIXTURE = `<!doctype html>
         <svg viewBox="0 0 19 16"></svg>Send
       </button>
     </div>
+    <div id="message-list"></div>
     <button data-track-id="navbar_new_chat_btn">New Chat</button>
     <script>
       window.__sendCount = 0;
@@ -99,11 +100,21 @@ const MIMO_FIXTURE = `<!doctype html>
       editor.addEventListener('input', () => {
         send.disabled = editor.value.trim() === '';
       });
-      send.addEventListener('click', () => window.__sendCount++);
-      document.querySelector('[data-track-id="navbar_new_chat_btn"]').addEventListener(
-        'click',
-        () => window.__newChatCount++
-      );
+      send.addEventListener('click', () => {
+        window.__sendCount++;
+        window.location.hash = '#/chat/fixture-id';
+        document.querySelector('#message-list').innerHTML =
+          '<div class="markdown-prose">Mirrored reply</div>';
+        editor.value = '';
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      document.querySelector('[data-track-id="navbar_new_chat_btn"]').addEventListener('click', () => {
+        window.__newChatCount++;
+        window.location.hash = '#/c';
+        document.querySelector('#message-list').innerHTML = '';
+        editor.value = '';
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+      });
       document.querySelector('input[type="file"]').addEventListener('change', (event) => {
         const file = event.target.files[0];
         const preview = document.createElement('button');
@@ -148,7 +159,9 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.host_permissions.push(
       'http://yuanbao.tencent.com/*',
-      'http://aistudio.xiaomimimo.com/*'
+      'http://aistudio.xiaomimimo.com/*',
+      'https://yuanbao.tencent.com/*',
+      'https://aistudio.xiaomimimo.com/*'
     );
     manifest.content_scripts.push(
       {
@@ -180,9 +193,16 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
 
     server = http.createServer((request, response) => {
       const hostname = (request.headers.host || '').split(':')[0];
+      const isGuest = request.url?.includes('panelizeGuest=1');
       const body = hostname === 'yuanbao.tencent.com'
         ? YUANBAO_FIXTURE
-        : MIMO_FIXTURE;
+        : isGuest
+          ? MIMO_FIXTURE
+            .replace('<textarea placeholder="随便问问">draft</textarea>',
+              '<textarea placeholder="Sign in to continue chatting"></textarea>')
+            .replace('<button data-track-id="navbar_new_chat_btn">New Chat</button>',
+              '<button data-track-id="navbar_new_chat_btn">New Chat</button><button id="fixture-sign-in">Sign in</button>')
+          : MIMO_FIXTURE;
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -193,6 +213,21 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
       server.listen(0, '127.0.0.1', resolve);
     });
     port = server.address().port;
+
+    const providersPath = path.join(extensionDir, 'modules/providers.js');
+    const providersSource = await readFile(providersPath, 'utf8');
+    await writeFile(providersPath, providersSource.replace(
+      "const YUANBAO_DEFAULT_URL = 'https://yuanbao.tencent.com/chat/naQivTmsDa';",
+      `const YUANBAO_DEFAULT_URL = 'http://yuanbao.tencent.com:${port}/chat/naQivTmsDa';`
+    ));
+
+    const bridgePath = path.join(extensionDir, 'multi-panel/mimo-bridge.js');
+    const bridgeSource = await readFile(bridgePath, 'utf8');
+    await writeFile(bridgePath, bridgeSource
+      .replace(
+        "const MIMO_URL = 'https://aistudio.xiaomimimo.com/#/c';",
+        `const MIMO_URL = 'http://aistudio.xiaomimimo.com:${port}/?panelizeGuest=1#/c';`
+      ));
 
     context = await chromium.launchPersistentContext(
       userDataDir,
@@ -327,5 +362,210 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
     expect(await page.evaluate(() => window.__sendCount)).toBe(0);
     await expect(editor).toContainText('queued');
     await page.close();
+  });
+
+  test('MiMo connects to a signed-in top-level tab without loading the site in an iframe', async () => {
+    const worker = context.serviceWorkers()[0];
+    const extensionId = new URL(worker.url()).hostname;
+    await worker.evaluate(() => chrome.storage.sync.set({
+      enabledProviders: ['mimo'],
+      providerOrder: ['mimo'],
+      multiPanelProviders: ['mimo'],
+      multiPanelLayout: '1x1',
+    }));
+
+    const mimoPage = await context.newPage();
+    await mimoPage.goto(`http://aistudio.xiaomimimo.com:${port}/#/c`);
+    await mimoPage.evaluate(() => {
+      localStorage.setItem('hasLoggedIn', 'fixture-signed-in');
+      const editor = document.querySelector('#composer textarea');
+      editor.value = 'private draft';
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const panelPage = await context.newPage();
+    await panelPage.goto(`chrome-extension://${extensionId}/multi-panel/multi-panel.html`);
+    const bridge = panelPage.frameLocator('.panel-item iframe');
+    await expect(bridge.locator('#connection')).toHaveText('Not connected');
+    const panelTabId = await panelPage.evaluate(async () => (await chrome.tabs.getCurrent())?.id);
+    const bridgeTabId = await bridge.locator('body').evaluate(async () => (await chrome.tabs.getCurrent())?.id);
+    expect(bridgeTabId).toBe(panelTabId);
+    await worker.evaluate(() => chrome.storage.sync.set({ theme: 'dark' }));
+    await expect(bridge.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await worker.evaluate(() => chrome.storage.sync.set({ theme: 'light' }));
+    await expect(bridge.locator('html')).toHaveAttribute('data-theme', 'light');
+    expect(await panelPage.locator('.panel-item iframe').getAttribute('src'))
+      .toBe(`chrome-extension://${extensionId}/multi-panel/mimo-bridge.html`);
+    await expect.poll(() => mimoPage.evaluate(() => localStorage.getItem('hasLoggedIn')))
+      .toBe('fixture-signed-in');
+
+    const dedicatedTabPromise = context.waitForEvent('page');
+    await bridge.locator('#connect').click();
+    const dedicatedPage = await dedicatedTabPromise;
+    await expect(dedicatedPage).toHaveURL(
+      `http://aistudio.xiaomimimo.com:${port}/?panelizeGuest=1#/c`
+    );
+    await expect(bridge.locator('#connection')).toHaveText('Not connected');
+
+    await panelPage.locator('#unified-input').fill(' + not yet');
+    await panelPage.locator('#send-all-btn').click();
+    await expect.poll(() => dedicatedPage.evaluate(() => window.__sendCount)).toBe(0);
+    await expect(panelPage.locator('#send-status')).toHaveText('Failed to send');
+
+    await dedicatedPage.evaluate(() => {
+      document.querySelector('#fixture-sign-in').remove();
+      document.querySelector('#composer textarea').placeholder = 'Ask me anything';
+    });
+    await expect(bridge.locator('#connection')).toHaveText('Connected');
+    await dedicatedPage.locator('#composer textarea').fill('private dedicated draft');
+    await expect(bridge.locator('#connection')).toHaveText('Not connected');
+    await expect(bridge.locator('#status')).toContainText('unsent draft');
+    await panelPage.locator('#unified-input').fill(' + must not mix');
+    await panelPage.locator('#send-all-btn').click();
+    await expect(dedicatedPage.locator('#composer textarea')).toHaveValue('private dedicated draft');
+    await expect.poll(() => dedicatedPage.evaluate(() => window.__sendCount)).toBe(0);
+    await dedicatedPage.locator('#composer textarea').fill('');
+    await expect(bridge.locator('#connection')).toHaveText('Connected');
+
+    await panelPage.locator('#panel-grid').evaluate(grid => {
+      grid.className = 'layout-1x3';
+    });
+    expect(await bridge.locator('body').evaluate(body => body.scrollWidth <= body.clientWidth + 1))
+      .toBe(true);
+
+    await panelPage.locator('#unified-input').fill(' + relay');
+    await panelPage.locator('#send-all-btn').click();
+    await expect.poll(() => dedicatedPage.evaluate(() => window.__sendCount)).toBe(1);
+    await expect(bridge.locator('#response')).toHaveText('Mirrored reply');
+    await expect(mimoPage.locator('#composer textarea')).toHaveValue('private draft');
+    await expect.poll(() => mimoPage.evaluate(() => window.__sendCount)).toBe(0);
+
+    await panelPage.locator('#new-chat-btn').click();
+    await expect.poll(() => dedicatedPage.evaluate(() => window.__newChatCount)).toBe(1);
+    await expect(bridge.locator('#response')).toBeEmpty();
+
+    const imageBuffer = Buffer.from(SAMPLE_IMAGE.dataUrl.split(',')[1], 'base64');
+    await panelPage.locator('#image-file-input').setInputFiles([
+      { name: SAMPLE_IMAGE.name, mimeType: SAMPLE_IMAGE.type, buffer: imageBuffer },
+      { name: 'sample-2.png', mimeType: SAMPLE_IMAGE.type, buffer: imageBuffer },
+    ]);
+    await panelPage.locator('#unified-input').fill('image context');
+    await panelPage.locator('#fill-input-btn').click();
+    await expect(dedicatedPage.locator('[aria-label="sample.png"]')).toBeVisible();
+    await expect(dedicatedPage.locator('[aria-label="sample-2.png"]')).toBeVisible();
+    await expect(panelPage.locator('#send-status')).toContainText('Filled 1 input');
+    await panelPage.locator('#send-all-btn').click();
+    await expect.poll(() => dedicatedPage.evaluate(() => window.__sendCount)).toBe(2);
+    await expect(mimoPage.locator('#composer textarea')).toHaveValue('private draft');
+
+    await worker.evaluate(() => chrome.storage.sync.set({
+      enabledProviders: ['mimo', 'yuanbao'],
+      providerOrder: ['mimo', 'yuanbao'],
+    }));
+    const panelIframe = panelPage.locator('.panel-item iframe');
+    await panelPage.locator('.switch-provider-btn').click();
+    await panelPage.locator('.provider-switcher-item[data-provider-id="yuanbao"]').click();
+    await expect(panelIframe).toHaveAttribute('sandbox', /allow-scripts/);
+    await expect(panelIframe).toHaveAttribute(
+      'src',
+      `http://yuanbao.tencent.com:${port}/chat/naQivTmsDa`
+    );
+    await panelPage.locator('.switch-provider-btn').click();
+    await panelPage.locator('.provider-switcher-item[data-provider-id="mimo"]').click();
+    await expect(panelIframe).not.toHaveAttribute('sandbox');
+    await expect(panelIframe).toHaveAttribute(
+      'src',
+      `chrome-extension://${extensionId}/multi-panel/mimo-bridge.html`
+    );
+
+    const secondPanelPage = await context.newPage();
+    await secondPanelPage.goto(`chrome-extension://${extensionId}/multi-panel/multi-panel.html`);
+    const secondBridge = secondPanelPage.frameLocator('.panel-item iframe');
+    await expect(secondBridge.locator('#connection')).toHaveText('Not connected');
+    const secondTabPromise = context.waitForEvent('page');
+    await secondBridge.locator('#connect').click();
+    const secondDedicatedPage = await secondTabPromise;
+    await expect(secondDedicatedPage).toHaveURL(
+      `http://aistudio.xiaomimimo.com:${port}/?panelizeGuest=1#/c`
+    );
+    await expect(secondDedicatedPage.locator('#fixture-sign-in')).toBeVisible();
+    await secondDedicatedPage.evaluate(() => {
+      document.querySelector('#fixture-sign-in').remove();
+      document.querySelector('#composer textarea').placeholder = 'Ask me anything';
+    });
+    await expect(secondBridge.locator('#connection')).toHaveText('Connected');
+    await secondPanelPage.locator('#unified-input').fill('second panel only');
+    await secondPanelPage.locator('#send-all-btn').click();
+    await expect.poll(() => secondDedicatedPage.evaluate(() => window.__sendCount)).toBe(1);
+    expect(await dedicatedPage.evaluate(() => window.__sendCount)).toBe(2);
+
+    await secondPanelPage.close();
+    await secondDedicatedPage.close();
+
+    await worker.evaluate(() => chrome.storage.sync.set({ multiPanelLayout: '1x2' }));
+    await panelPage.reload();
+    await expect(panelPage.locator('.panel-item')).toHaveCount(2);
+    const secondPanel = panelPage.locator('.panel-item').nth(1);
+    await secondPanel.locator('.switch-provider-btn').click();
+    await panelPage.locator('.provider-switcher-item[data-provider-id="mimo"]').click();
+    await expect(secondPanel.locator('.panel-header-left span')).toHaveText('Yuanbao');
+
+    await panelPage.close();
+    await dedicatedPage.close();
+    await mimoPage.close();
+  });
+
+  test('MiMo opens a top-level tab only after the user requests it', async () => {
+    const worker = context.serviceWorkers()[0];
+    const extensionId = new URL(worker.url()).hostname;
+    await worker.evaluate(() => chrome.storage.sync.set({
+      enabledProviders: ['mimo'],
+      providerOrder: ['mimo'],
+      multiPanelProviders: ['mimo'],
+      multiPanelLayout: '1x1',
+    }));
+
+    const panelPage = await context.newPage();
+    await panelPage.goto(`chrome-extension://${extensionId}/multi-panel/multi-panel.html`);
+    const bridge = panelPage.frameLocator('.panel-item iframe');
+    await expect(bridge.locator('#connection')).toHaveText('Not connected');
+    expect(context.pages().some(page => page.url().startsWith(`http://aistudio.xiaomimimo.com:${port}`)))
+      .toBe(false);
+
+    const newTabPromise = context.waitForEvent('page');
+    await panelPage.locator('.open-provider-top-level-btn').click();
+    const mimoPage = await newTabPromise;
+    await expect(mimoPage).toHaveURL(
+      `http://aistudio.xiaomimimo.com:${port}/?panelizeGuest=1#/c`
+    );
+    await expect(bridge.locator('#connection')).toHaveText('Not connected');
+
+    await context.route('https://account.xiaomi.com/**', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<!doctype html><title>MiMo sign in</title><button>Sign in</button>',
+    }));
+    await mimoPage.goto('https://account.xiaomi.com/fe/service/login');
+    await panelPage.reload();
+    const reloadedBridge = panelPage.frameLocator('.panel-item iframe');
+    await expect(reloadedBridge.locator('#connection')).toHaveText('Not connected');
+    const pageCount = context.pages().length;
+    await reloadedBridge.locator('#connect').click();
+    expect(context.pages()).toHaveLength(pageCount);
+
+    await mimoPage.goto(`http://aistudio.xiaomimimo.com:${port}/?panelizeGuest=1#/c`);
+    await mimoPage.evaluate(() => {
+      document.querySelector('#fixture-sign-in').remove();
+      document.querySelector('#composer textarea').placeholder = 'Ask me anything';
+    });
+    await expect(reloadedBridge.locator('#connection')).toHaveText('Connected');
+
+    await mimoPage.close();
+    await expect(reloadedBridge.locator('#connection')).toHaveText('Not connected');
+    await expect(reloadedBridge.locator('#connect')).toHaveText('Open MiMo tab');
+    await panelPage.locator('#unified-input').fill('must not send to a closed tab');
+    await panelPage.locator('#send-all-btn').click();
+    await expect(panelPage.locator('#send-status')).toHaveText('Failed to send');
+    await panelPage.close();
   });
 });

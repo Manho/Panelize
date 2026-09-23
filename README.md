@@ -52,7 +52,7 @@ Choose from 22 different layouts to fit your workflow. Need a quick 2-way compar
 
 ### ⚡ Zero Setup
 
-No API keys. No configuration. Just log into your AI accounts normally, and Panelize uses those existing sessions. If you can use ChatGPT in a browser tab, you can use it in Panelize.
+No API keys. Log into your AI accounts normally, and Panelize uses those sessions. For MiMo, select its panel and open the dedicated MiMo tab to sign in; prompts and replies then sync with the panel.
 
 ### 📚 Prompt Library
 

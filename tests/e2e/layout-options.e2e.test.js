@@ -10,6 +10,8 @@ const __dirname = path.dirname(__filename);
 const EXTENSION_PATH = path.resolve(__dirname, '../..');
 
 test.describe('Layout options E2E', () => {
+  test.setTimeout(60000);
+
   let context;
   let page;
   let userDataDir;

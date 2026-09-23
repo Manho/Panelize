@@ -22,6 +22,7 @@
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
   const YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS = 5000;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
+  const MIMO_BRIDGE_IMAGE_BATCH_TIMEOUT_MS = 30000;
   const SLOW_COMPOSER_PROVIDERS = new Set([
     'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao', 'mimo'
   ]);
@@ -36,8 +37,11 @@
   let multiPanelUserInteractionTracking = null;
   let yuanbaoTemporaryChatActivation = null;
   let yuanbaoTemporaryChatLastClickAt = -Infinity;
+  let mimoBridgeOwnedDraft = null;
+  let mimoBridgePendingText = '';
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
+  const pendingMimoBridgeImageBatches = new Map();
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
@@ -541,7 +545,7 @@
   }
 
   function postMultiPanelActionResult(requestId, provider, result) {
-    if (!requestId || !provider || window.parent === window) {
+    if (!requestId || !provider) {
       return;
     }
 
@@ -562,7 +566,16 @@
       message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
     }
 
-    window.parent.postMessage(message, '*');
+    if (window.parent === window) {
+      if (provider === 'mimo') {
+        mimoBridgeOwnedDraft = findMimoInput()?.value || null;
+        mimoBridgePendingText = '';
+        void chrome.runtime.sendMessage({ type: 'PANELIZE_MIMO_RELAY', payload: message })
+          .catch(() => {});
+      }
+    } else {
+      window.parent.postMessage(message, '*');
+    }
   }
 
   function postTemporaryChatEnabled(provider = detectProvider()) {
@@ -1080,6 +1093,68 @@
 
   function findMimoInput() {
     return window.ButtonFinderUtils?.findMimoInput() || null;
+  }
+
+  function getMimoBridgeSnapshot() {
+    const editor = findMimoInput();
+    const draft = editor?.value || '';
+    if (!draft.trim()) {
+      mimoBridgeOwnedDraft = null;
+    }
+    const draftConflict = Boolean(
+      draft.trim() &&
+      draft !== mimoBridgeOwnedDraft &&
+      !(mimoBridgePendingText && draft.endsWith(mimoBridgePendingText))
+    );
+    const signInButton = [...document.querySelectorAll('button')].some(button =>
+      /^(sign in|登录|登入)$/i.test((button.textContent || '').trim()) &&
+      isVisibleElement(button)
+    );
+    const authenticated = Boolean(
+      editor && !signInButton && !/sign in|登录|登入/i.test(editor.placeholder || '')
+    );
+    const replies = document.querySelectorAll('#message-list .markdown-prose');
+    const responseText = authenticated && /^#\/chat\//.test(window.location.hash)
+      ? (replies[replies.length - 1]?.innerText || replies[replies.length - 1]?.textContent || '').slice(0, 50000)
+      : '';
+    return { provider: 'mimo', authenticated, draftConflict, responseText, url: window.location.href };
+  }
+
+  function stageMimoBridgeImage(message) {
+    const { requestId, image, index, total } = message;
+    if (
+      typeof requestId !== 'string' || !requestId ||
+      !Number.isInteger(total) || total < 1 || total > 10 ||
+      !Number.isInteger(index) || index < 0 || index >= total ||
+      typeof image?.dataUrl !== 'string' ||
+      image.dataUrl.length > 32 * 1024 * 1024
+    ) {
+      return { accepted: false, reason: 'invalid-image' };
+    }
+
+    let batch = pendingMimoBridgeImageBatches.get(requestId);
+    if (!batch) {
+      batch = { total, images: new Map() };
+      batch.timeoutId = setTimeout(() => {
+        if (pendingMimoBridgeImageBatches.get(requestId) === batch) {
+          pendingMimoBridgeImageBatches.delete(requestId);
+        }
+      }, MIMO_BRIDGE_IMAGE_BATCH_TIMEOUT_MS);
+      pendingMimoBridgeImageBatches.set(requestId, batch);
+    }
+    if (batch.total !== total) return { accepted: false, reason: 'invalid-image' };
+    batch.images.set(index, image);
+    return { accepted: true };
+  }
+
+  function consumeMimoBridgeImages(requestId) {
+    const batch = pendingMimoBridgeImageBatches.get(requestId);
+    if (!batch || batch.images.size !== batch.total) return null;
+    const images = Array.from({ length: batch.total }, (_, index) => batch.images.get(index));
+    if (images.some(image => !image)) return null;
+    clearTimeout(batch.timeoutId);
+    pendingMimoBridgeImageBatches.delete(requestId);
+    return images;
   }
 
   function* findProviderInputs(provider, selectors) {
@@ -3414,4 +3489,53 @@
   // Listen for messages from the multi-panel host
   setupProviderLocationReporting();
   window.addEventListener('message', handleTextInjection);
+
+  if (window.location.hostname === 'aistudio.xiaomimimo.com') {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (window.parent !== window) return;
+      if (message?.type === 'PANELIZE_MIMO_SNAPSHOT') {
+        sendResponse(getMimoBridgeSnapshot());
+        return;
+      }
+
+      if (message?.context !== 'multi-panel-bridge') return;
+      const snapshot = getMimoBridgeSnapshot();
+      if (!snapshot.authenticated || snapshot.draftConflict) {
+        sendResponse({
+          accepted: false,
+          reason: snapshot.draftConflict ? 'draft-conflict' : 'not-authenticated'
+        });
+        return;
+      }
+      if (message.type === 'PANELIZE_MIMO_STAGE_IMAGE') {
+        sendResponse(stageMimoBridgeImage(message));
+        return;
+      }
+      if (![
+        'INJECT_TEXT', 'INJECT_TEXT_WITH_IMAGES', 'TRIGGER_SEND', 'CLEAR_INPUT', 'NEW_CHAT'
+      ].includes(message.type)) {
+        return;
+      }
+      let data = message;
+      if (message.type === 'INJECT_TEXT_WITH_IMAGES' && message.stagedImageRequestId) {
+        const images = consumeMimoBridgeImages(message.stagedImageRequestId);
+        if (!images || message.stagedImageRequestId !== message.requestId) {
+          sendResponse({ accepted: false, reason: 'staging-incomplete' });
+          return;
+        }
+        data = { ...message, images };
+      }
+      if (message.type === 'INJECT_TEXT_WITH_IMAGES') {
+        mimoBridgePendingText = message.text || '';
+      }
+      handleTextInjection({ data: { ...data, context: 'multi-panel' } });
+      if (message.type === 'INJECT_TEXT') {
+        mimoBridgeOwnedDraft = findMimoInput()?.value || null;
+      } else if (message.type === 'NEW_CHAT' || message.type === 'CLEAR_INPUT') {
+        mimoBridgeOwnedDraft = null;
+        mimoBridgePendingText = '';
+      }
+      sendResponse({ accepted: true });
+    });
+  }
 })();
