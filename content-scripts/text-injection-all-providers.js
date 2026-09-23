@@ -20,7 +20,11 @@
   const MULTI_PANEL_USER_INTERACTION_TRACKING_TIMEOUT_MS = 90000;
   const TEMP_CHAT_POLL_INTERVAL_MS = 200;
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
+  const YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS = 5000;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
+  const SLOW_COMPOSER_PROVIDERS = new Set([
+    'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao'
+  ]);
   const IMAGE_INJECTION_REASONS = Object.freeze({
     CONTROL_NOT_FOUND: 'control-not-found',
     UNSUPPORTED: 'unsupported',
@@ -30,7 +34,10 @@
   let googleSearchReplaceOnNextFill = true;
   let chatgptSendTracking = null;
   let multiPanelUserInteractionTracking = null;
+  let yuanbaoTemporaryChatActivation = null;
+  let yuanbaoTemporaryChatLastClickAt = -Infinity;
   const pendingKimiImageUploads = new Map();
+  const pendingProviderImageUploads = new Map();
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
@@ -85,6 +92,10 @@
       'textarea[placeholder="How can I help you today?"]',
       'textarea.input-scroll'
     ],
+    yuanbao: [
+      '.chat-command-editor-specail .ql-editor[contenteditable="true"]',
+      '.ql-editor[contenteditable="true"][data-placeholder]'
+    ],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -118,6 +129,7 @@
     'qwen-global': true,
     chatglm: true,
     'zai-global': true,
+    yuanbao: true,
     google: true  // Google AI Mode supports images
   };
 
@@ -134,6 +146,7 @@
     ],
     chatglm: ['input.el-upload__input[type="file"]'],
     'zai-global': ['input[type="file"][multiple][accept*=".png"]'],
+    yuanbao: ['input[type="file"][multiple][accept*="image"]'],
     google: ['input[type="file"]']
   };
 
@@ -144,6 +157,10 @@
     gemini: ['button[aria-label="Upload file"]', 'button[mattooltip="Upload file"]', '.add-button', 'button:has(mat-icon)'],
     doubao: [
       '#input-engine-container button[data-slot="dropdown-menu-trigger"][aria-haspopup="menu"]'
+    ],
+    yuanbao: [
+      'button[data-new-input-control="add-tools-trigger"]',
+      'button[aria-label="Add"]'
     ],
     google: [
       'button[aria-label="更多输入项"]',
@@ -229,6 +246,10 @@
     'zai-global': [
       'button.sendMessageButton'
     ],
+    yuanbao: [
+      '#yuanbao-send-btn[aria-label="Send"]',
+      '#yuanbao-send-btn'
+    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -297,6 +318,13 @@
       'button[aria-label="New Chat"]',
       'button.navNewChat'
     ],
+    yuanbao: [
+      '[role="button"][aria-label="New Chat"]',
+      '.yb-new-chat-entry__item[aria-label="New Chat"]',
+      '.yb-projects-section__item-new-chat[aria-label="New Chat"]',
+      '[role="button"][aria-label="新建对话"]',
+      '[role="button"][aria-label="新建對話"]'
+    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -317,6 +345,8 @@
     'qwen-global': 'https://chat.qwen.ai/c/new-chat',
     chatglm: 'https://chatglm.cn/',
     'zai-global': 'https://chat.z.ai/',
+    // Keep this in sync with YUANBAO_DEFAULT_URL in modules/providers.js.
+    yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -327,7 +357,15 @@
       'button[data-test-id="temp-chat-button"]',
       'button[aria-label="Temporary chat"]'
     ],
-    grok: ['a[href="/c#private"][aria-label="Switch to Private Chat"]']
+    grok: ['a[href="/c#private"][aria-label="Switch to Private Chat"]'],
+    yuanbao: [
+      '[role="button"][aria-label="Enter Temporary Chat"]',
+      '[role="button"][aria-label="Exit Temporary Chat"]',
+      '[role="button"][aria-label="进入临时对话"]',
+      '[role="button"][aria-label="退出临时对话"]',
+      '[role="button"][aria-label="進入臨時對話"]',
+      '[role="button"][aria-label="退出臨時對話"]'
+    ]
   };
 
   // Detect which provider we're on based on hostname
@@ -358,6 +396,8 @@
       return 'chatglm';
     } else if (hostname === 'chat.z.ai') {
       return 'zai-global';
+    } else if (hostname === 'yuanbao.tencent.com') {
+      return 'yuanbao';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
@@ -878,6 +918,18 @@
     );
   }
 
+  function isProviderSendControlEnabled(provider, element) {
+    if (!isElementEnabled(element)) {
+      return false;
+    }
+
+    if (provider === 'yuanbao') {
+      return window.ButtonFinderUtils?.isYuanbaoSendControl(element) === true;
+    }
+
+    return !element.classList.contains('disabled');
+  }
+
   function fillGoogleSearchInput(text) {
     const input = findGoogleInput(GOOGLE_PROVIDER_MODE_SEARCH);
     if (!input || !text || typeof text !== 'string') {
@@ -1010,6 +1062,19 @@
     }
   }
 
+  function* findProviderInputs(selectors) {
+    for (const selector of selectors) {
+      yield findTextInputElement(selector);
+    }
+  }
+
+  function findProviderInput(selectors) {
+    for (const element of findProviderInputs(selectors)) {
+      if (element) return element;
+    }
+    return null;
+  }
+
   function clickGoogleSendButton(mode) {
     const normalizedMode = normalizeGoogleProviderMode(mode);
 
@@ -1107,11 +1172,7 @@
           }
           
           // Check if element or its parent is disabled
-          const isDisabled = targetElement.disabled || 
-                            targetElement.getAttribute('aria-disabled') === 'true' ||
-                            targetElement.classList.contains('disabled');
-          
-          if (!isDisabled) {
+          if (isProviderSendControlEnabled(provider, targetElement)) {
             console.log('[Text Injection] Clicking send button:', selector, targetElement);
             if (provider === 'chatglm') {
               // ChatGLM submits from its mousedown handler; HTMLElement.click() skips it.
@@ -1259,12 +1320,37 @@
       case 'gemini': {
         return isGeminiTemporaryChatEnabled(control);
       }
+      case 'yuanbao':
+        return (
+          currentUrl.searchParams.get('chatMode') === 'temp' ||
+          /^(Exit Temporary Chat|退出临时对话|退出臨時對話)$/
+            .test(control?.getAttribute('aria-label') || '')
+        );
       default:
         return false;
     }
   }
 
-  async function enableTemporaryChat(provider) {
+  function enableTemporaryChat(provider) {
+    if (provider !== 'yuanbao') {
+      return activateTemporaryChat(provider);
+    }
+    if (yuanbaoTemporaryChatActivation) {
+      return yuanbaoTemporaryChatActivation;
+    }
+
+    const activation = activateTemporaryChat(provider);
+    yuanbaoTemporaryChatActivation = activation;
+    const clearActivation = () => {
+      if (yuanbaoTemporaryChatActivation === activation) {
+        yuanbaoTemporaryChatActivation = null;
+      }
+    };
+    activation.then(clearActivation, clearActivation);
+    return activation;
+  }
+
+  async function activateTemporaryChat(provider) {
     const selectors = TEMP_CHAT_BUTTON_SELECTORS[provider];
     if (!selectors || selectors.length === 0) {
       console.log('[Temporary Chat] Provider does not support temporary chat:', provider);
@@ -1285,9 +1371,34 @@
       }
 
       if (button && isElementEnabled(button)) {
+        if (
+          provider === 'yuanbao' &&
+          Date.now() - yuanbaoTemporaryChatLastClickAt < YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS
+        ) {
+          await sleep(TEMP_CHAT_POLL_INTERVAL_MS);
+          continue;
+        }
+        if (provider === 'yuanbao') {
+          // Parent retries for five seconds; never toggle this control twice in that cycle.
+          yuanbaoTemporaryChatLastClickAt = Date.now();
+        }
         button.click();
-        postTemporaryChatEnabled(provider);
-        return true;
+        if (provider !== 'yuanbao') {
+          postTemporaryChatEnabled(provider);
+          return true;
+        }
+
+        const confirmationDeadline = Date.now() + TEMP_CHAT_POLL_TIMEOUT_MS;
+        while (Date.now() <= confirmationDeadline) {
+          const currentControl = findDeepFirstVisibleElement(selectors) ||
+            findFirstVisibleElement(selectors);
+          if (isTemporaryChatAlreadyEnabled(provider, currentControl)) {
+            postTemporaryChatEnabled(provider);
+            return true;
+          }
+          await sleep(TEMP_CHAT_POLL_INTERVAL_MS);
+        }
+        return false;
       }
 
       await sleep(TEMP_CHAT_POLL_INTERVAL_MS);
@@ -1504,28 +1615,20 @@
       return false;
     }
 
-    for (const selector of selectors) {
-      const element = findTextInputElement(selector);
-      if (element) {
-        if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
-          return true;
+    for (const element of findProviderInputs(selectors)) {
+      if (!element) continue;
+      if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
+        return true;
+      }
+      const success = injectTextIntoElement(element, text, provider);
+      if (success) {
+        console.log('[Text Injection] Text injected via injectText helper for', provider);
+        if (autoSubmit) {
+          // Use longer delay for providers whose composer state updates asynchronously
+          const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
+          setTimeout(() => clickSendButton(provider, providerMode), delay);
         }
-        const success = injectTextIntoElement(element, text, provider);
-        if (success) {
-          console.log('[Text Injection] Text injected via injectText helper for', provider);
-          if (autoSubmit) {
-            // Use longer delay for providers whose composer state updates asynchronously
-            const delay = (
-              provider === 'deepseek' ||
-              provider === 'kimi' ||
-              provider === 'doubao' ||
-              provider === 'chatglm' ||
-              provider === 'zai-global'
-            ) ? 800 : 500;
-            setTimeout(() => clickSendButton(provider, providerMode), delay);
-          }
-          return true;
-        }
+        return true;
       }
     }
 
@@ -1723,6 +1826,9 @@
       case 'zai-global':
         result = await injectImageToZaiGlobal(imageData);
         break;
+      case 'yuanbao':
+        result = await injectImageToYuanbao(imageData, { retry });
+        break;
       case 'google':
         result = await injectImageToGoogle(imageData);
         break;
@@ -1841,15 +1947,167 @@
     const normalizedName = (fileName || '').trim().toLowerCase();
     const evidence = new Set();
 
-    root.querySelectorAll('img[alt], button, [role="button"]').forEach(element => {
+    root.querySelectorAll(
+      'img[alt], button, [role="button"], [aria-label], [title], [data-file-name], [data-filename]'
+    ).forEach(element => {
       const alt = (element.getAttribute('alt') || '').trim().toLowerCase();
+      const fileNameData = (
+        element.getAttribute('data-file-name') ||
+        element.getAttribute('data-filename') ||
+        ''
+      ).trim().toLowerCase();
       const accessibleText = getElementAccessibleText(element);
-      if (alt === normalizedName || accessibleText.includes(normalizedName)) {
+      if (
+        alt === normalizedName ||
+        fileNameData === normalizedName ||
+        accessibleText.includes(normalizedName)
+      ) {
         evidence.add(element.closest('button, [role="button"]') || element);
       }
     });
 
     return evidence.size;
+  }
+
+  function getProviderImageKey(provider, imageData) {
+    const imageKey = imageData?.id && typeof imageData.id === 'string'
+      ? imageData.id
+      : `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || ''}`;
+    return `${provider}\u0000${imageKey}`;
+  }
+
+  async function reconcilePendingProviderImage(provider, imageData, countCompletedPreviews) {
+    const imageKey = getProviderImageKey(provider, imageData);
+    const pendingUpload = pendingProviderImageUploads.get(imageKey);
+    if (!pendingUpload) {
+      return null;
+    }
+
+    if (countCompletedPreviews() > pendingUpload.previousCount) {
+      pendingProviderImageUploads.delete(imageKey);
+      return createImageInjectionSuccess();
+    }
+
+    if (Date.now() - pendingUpload.startedAt >= 30000) {
+      pendingProviderImageUploads.delete(imageKey);
+      return null;
+    }
+
+    const accepted = await waitForPreviewIncrease(
+      countCompletedPreviews,
+      pendingUpload.previousCount
+    );
+    if (accepted) {
+      pendingProviderImageUploads.delete(imageKey);
+      return createImageInjectionSuccess();
+    }
+
+    return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+  }
+
+  function rememberPendingProviderImage(provider, imageData, previousCount) {
+    pendingProviderImageUploads.set(getProviderImageKey(provider, imageData), {
+      previousCount,
+      startedAt: Date.now()
+    });
+  }
+
+  function getYuanbaoComposer() {
+    const editor = document.querySelector(
+      '.chat-command-editor-specail .ql-editor[contenteditable="true"]'
+    ) || document.querySelector('.ql-editor[contenteditable="true"][data-placeholder]');
+    return findClosestAncestorContaining(editor, '[data-new-input-control="add-tools-trigger"]') ||
+      editor?.closest('[data-input-editor-area="true"]')?.parentElement ||
+      editor?.parentElement?.parentElement ||
+      null;
+  }
+
+  function findYuanbaoFileInput() {
+    return [...document.querySelectorAll('input[type="file"]')]
+      .find(input => input.multiple && acceptsImageFiles(input)) || null;
+  }
+
+  function countYuanbaoCompletedPreviews(fileName) {
+    const normalizedName = (fileName || '').trim().toLowerCase();
+    return [...document.querySelectorAll('img[alt]')].filter(image => {
+      const source = image.getAttribute('src') || '';
+      const alt = (image.getAttribute('alt') || '').trim().toLowerCase();
+      return (
+        alt === normalizedName &&
+        /^https:\/\//.test(source) &&
+        image.closest('[class*="FileList_inputFileListItem"]')
+      );
+    }).length;
+  }
+
+  async function openYuanbaoImagePicker(composer) {
+    const addButton = composer?.querySelector('[data-new-input-control="add-tools-trigger"]') ||
+      findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.yuanbao);
+    if (!addButton) {
+      return null;
+    }
+
+    addButton.click();
+    await sleep(100);
+
+    const uploadAction = findVisibleElementByExactText(
+      'button, [role="menuitem"]',
+      ['Upload Image', '上传图片']
+    );
+    if (!uploadAction) {
+      return null;
+    }
+
+    uploadAction.click();
+    return waitForFileInput(findYuanbaoFileInput, 1000);
+  }
+
+  async function injectImageToYuanbao(imageData, { retry = false } = {}) {
+    try {
+      const composer = getYuanbaoComposer();
+      if (!composer) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const countCompleted = () => countYuanbaoCompletedPreviews(imageData.name);
+      if (retry) {
+        const reconciled = await reconcilePendingProviderImage(
+          'yuanbao',
+          imageData,
+          countCompleted
+        );
+        if (reconciled) {
+          return reconciled;
+        }
+      }
+
+      let fileInput = findYuanbaoFileInput();
+      if (!fileInput) {
+        fileInput = await openYuanbaoImagePicker(composer);
+      }
+      if (!fileInput) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const previousCount = countCompleted();
+      const file = await createImageFile(imageData);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+      }
+      dispatchFileInputEvents(fileInput);
+
+      const accepted = await waitForPreviewIncrease(countCompleted, previousCount);
+      if (accepted) {
+        pendingProviderImageUploads.delete(getProviderImageKey('yuanbao', imageData));
+        return createImageInjectionSuccess();
+      }
+
+      rememberPendingProviderImage('yuanbao', imageData, previousCount);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    } catch (error) {
+      console.error('[Image Injection] Yuanbao error:', error);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+    }
   }
 
   function getGrokComposer() {
@@ -2675,12 +2933,7 @@
   async function tryDragDropUpload(provider, imageData) {
     try {
       const selectors = PROVIDER_SELECTORS[provider];
-      let targetElement = null;
-
-      for (const selector of selectors) {
-        targetElement = findTextInputElement(selector);
-        if (targetElement) break;
-      }
+      const targetElement = findProviderInput(selectors);
 
       if (!targetElement) {
         console.warn('[Image Injection] No target element found for drag-drop');
@@ -2857,18 +3110,15 @@
         }
 
         const selectors = PROVIDER_SELECTORS[provider];
-        for (const selector of selectors) {
-          const element = findTextInputElement(selector);
-          if (element) {
-            const isTextarea = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
-            if (isTextarea) {
-              setFormControlValue(element, '');
-            } else {
-              clearRichTextInput(provider, element);
-            }
-            console.log('[Text Injection] Input cleared for', provider);
-            break;
+        const element = findProviderInput(selectors);
+        if (element) {
+          const isTextarea = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
+          if (isTextarea) {
+            setFormControlValue(element, '');
+          } else {
+            clearRichTextInput(provider, element);
           }
+          console.log('[Text Injection] Input cleared for', provider);
         }
       }
       return;
@@ -3018,27 +3268,17 @@
     }
 
     // Try each selector until we find an element
-    let element = null;
-    let matchedSelector = null;
-    for (const selector of selectors) {
-      element = findTextInputElement(selector);
-      if (element) {
-        matchedSelector = selector;
-        console.log('[Text Injection] Found input element with selector:', selector, 'for provider:', provider);
-        break;
-      }
-    }
+    const element = findProviderInput(selectors);
 
     if (element) {
       const success = injectTextIntoElement(element, text, provider);
       if (success) {
-        console.log('[Text Injection] Text injected into', provider, 'using selector:', matchedSelector);
+        console.log('[Text Injection] Text injected into', provider);
 
         // Auto-submit if requested (only from multi-panel context)
         if (shouldAutoSubmit) {
-          // Wait for UI to update, then click send button
-          // Use longer delay for DeepSeek to ensure DOM is ready
-          const delay = provider === 'deepseek' ? 800 : 500;
+          // Wait for framework-managed composer state to catch up before sending.
+          const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
           setTimeout(() => {
             console.log('[Text Injection] Attempting to click send button for', provider);
             const clicked = clickSendButton(provider, providerMode);
@@ -3058,22 +3298,13 @@
 
       retryDelays.forEach((delay, index) => {
         setTimeout(() => {
-          let retryElement = null;
-          let retrySelector = null;
-          for (const selector of selectors) {
-            retryElement = findTextInputElement(selector);
-            if (retryElement) {
-              retrySelector = selector;
-              console.log(`[Text Injection] Found input element on retry ${index + 1} with selector:`, selector);
-              break;
-            }
-          }
+          const retryElement = findProviderInput(selectors);
           if (retryElement) {
             const success = injectTextIntoElement(retryElement, text, provider);
             if (success) {
-              console.log('[Text Injection] Text injected on retry into', provider, 'using selector:', retrySelector);
+              console.log('[Text Injection] Text injected on retry into', provider);
               if (shouldAutoSubmit) {
-                const submitDelay = provider === 'deepseek' ? 800 : 500;
+                const submitDelay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
                 setTimeout(() => {
                   console.log('[Text Injection] Attempting to click send button for', provider, 'after retry');
                   clickSendButton(provider, providerMode);

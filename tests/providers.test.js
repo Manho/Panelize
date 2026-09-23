@@ -14,7 +14,7 @@ describe('providers module', () => {
 
   describe('PROVIDERS constant', () => {
     it('should contain all expected providers', () => {
-      expect(PROVIDERS).toHaveLength(12);
+      expect(PROVIDERS).toHaveLength(13);
       const providerIds = PROVIDERS.map((p) => p.id);
       expect(providerIds).toEqual([
         'chatgpt',
@@ -29,10 +29,11 @@ describe('providers module', () => {
         'qwen-global',
         'chatglm',
         'zai-global',
+        'yuanbao',
       ]);
     });
 
-    it('defines Qwen, Zhipu, and Z.ai sites as optional providers', () => {
+    it('defines providers requiring device-local site access as optional', () => {
       expect(getProviderById('qwen-cn')).toMatchObject({
         name: 'Qwen (China)',
         url: 'https://www.qianwen.com/',
@@ -56,6 +57,12 @@ describe('providers module', () => {
         icon: '/icons/providers/zhipu.svg',
         iconDark: '/icons/providers/dark/zhipu.svg',
         optionalOrigins: ['https://chat.z.ai/*'],
+      });
+      expect(getProviderById('yuanbao')).toMatchObject({
+        name: 'Yuanbao',
+        url: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
+        icon: '/icons/providers/yuanbao.png',
+        optionalOrigins: ['https://yuanbao.tencent.com/*'],
       });
     });
 

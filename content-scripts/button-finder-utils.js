@@ -139,6 +139,18 @@
     return null;
   };
 
+  /** Yuanbao uses the same control for Send and Stop Answering. */
+  window.ButtonFinderUtils.isYuanbaoSendControl = function(button) {
+    const label = button?.getAttribute('aria-label');
+    const className = String(button?.className || '');
+    return Boolean(
+      (label === 'Send' || label === '发送' || label === '發送') &&
+      button.getAttribute('aria-disabled') !== 'true' &&
+      !/(disabled|sendNot|loading|sending|sendStop)/i.test(className) &&
+      button.querySelector('svg')?.getAttribute('viewBox') === '0 0 48 48'
+    );
+  };
+
   /**
    * Try a single selector configuration
    * @private

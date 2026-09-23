@@ -58,6 +58,12 @@ function findProviderInput() {
            document.querySelector('textarea.input-scroll');
   }
 
+  // Yuanbao
+  if (host === 'yuanbao.tencent.com') {
+    return document.querySelector('.chat-command-editor-specail .ql-editor[contenteditable="true"]') ||
+           document.querySelector('.ql-editor[contenteditable="true"]');
+  }
+
   // Generic fallback: find any visible textarea or contenteditable
   const textarea = document.querySelector('textarea:not([hidden])');
   if (textarea && textarea.offsetParent !== null) return textarea;

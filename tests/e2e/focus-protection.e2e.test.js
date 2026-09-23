@@ -1,6 +1,7 @@
 import { test, expect, chromium } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getBrowserLaunchOptions } from './browser-launch-options.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,10 +15,10 @@ test.describe('Focus Protection E2E', () => {
   let page;
 
   test.beforeAll(async () => {
-    browser = await chromium.launch({
+    browser = await chromium.launch(getBrowserLaunchOptions({
       headless: false,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    }));
     context = await browser.newContext({
       viewport: { width: 1024, height: 768 }
     });

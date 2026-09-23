@@ -32,7 +32,8 @@
     "https://www.qianwen.com/*",
     "https://chat.qwen.ai/*",
     "https://chatglm.cn/*",
-    "https://chat.z.ai/*"
+    "https://chat.z.ai/*",
+    "https://yuanbao.tencent.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",

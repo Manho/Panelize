@@ -20,6 +20,7 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('qwen-global', 'https://chat.qwen.ai/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('chatglm', 'https://chatglm.cn/main/alltoolsdetail?lang=zh&cid=abc123')).toBe(true);
     expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/c/abc123')).toBe(true);
+    expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/agent123/chat456')).toBe(true);
   });
 
   it('accepts current Google pages for both AI Mode and Search', () => {
@@ -46,6 +47,13 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('chatglm', 'https://www.chatglm.cn/main/alltoolsdetail?cid=abc123')).toBe(false);
     expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/')).toBe(false);
     expect(isProviderAllowedUrl('zai-global', 'https://evil.example/chat')).toBe(false);
+    expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/naQivTmsDa')).toBe(false);
+    expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/agent123')).toBe(false);
+    expect(isProviderCurrentUrl(
+      'yuanbao',
+      'https://yuanbao.tencent.com/chat/agent123/chat456?chatMode=temp'
+    )).toBe(false);
+    expect(isProviderAllowedUrl('yuanbao', 'https://evil.example/chat/agent123/chat456')).toBe(false);
   });
 
   it('opens the reported current URL when it is valid', () => {
@@ -62,5 +70,8 @@ describe('provider open URL helpers', () => {
     expect(getProviderOpenUrl(getProviderById('qwen-cn'), 'https://www.qianwen.com/chat/abc123')).toBe('https://www.qianwen.com/');
     expect(getProviderOpenUrl(getProviderById('chatglm'), 'https://chatglm.cn/')).toBe('https://chatglm.cn/');
     expect(getProviderOpenUrl(getProviderById('zai-global'), 'https://z.ai/chat')).toBe('https://chat.z.ai/');
+    expect(getProviderOpenUrl(getProviderById('yuanbao'), 'https://yuanbao.tencent.com/chat/naQivTmsDa')).toBe(
+      'https://yuanbao.tencent.com/chat/naQivTmsDa'
+    );
   });
 });

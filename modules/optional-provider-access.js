@@ -70,6 +70,14 @@ export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze({
       'content-scripts/enter-behavior-zai-global.js'
     )),
     frameRule: Object.freeze(createFrameRule(1004, 'https://chat.z.ai/*'))
+  }),
+  yuanbao: Object.freeze({
+    origins: Object.freeze(['https://yuanbao.tencent.com/*']),
+    contentScript: Object.freeze(createContentScript(
+      'yuanbao-scripts',
+      ['https://yuanbao.tencent.com/*'],
+      'content-scripts/enter-behavior-yuanbao.js'
+    ))
   })
 });
 
@@ -174,16 +182,21 @@ async function syncFrameRules(allConfigs, desiredConfigs) {
     return;
   }
 
-  const managedRuleIds = new Set(allConfigs.map(({ frameRule }) => frameRule.id));
-  const desiredRuleIds = new Set(desiredConfigs.map(({ frameRule }) => frameRule.id));
+  const allFrameRules = allConfigs
+    .map(({ frameRule }) => frameRule)
+    .filter(Boolean);
+  const desiredFrameRules = desiredConfigs
+    .map(({ frameRule }) => frameRule)
+    .filter(Boolean);
+  const managedRuleIds = new Set(allFrameRules.map(({ id }) => id));
+  const desiredRuleIds = new Set(desiredFrameRules.map(({ id }) => id));
   const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
   const installedManagedRuleIds = dynamicRules
     .map(({ id }) => id)
     .filter((id) => managedRuleIds.has(id));
   const removeRuleIds = installedManagedRuleIds.filter((id) => !desiredRuleIds.has(id));
   const installedRuleIdSet = new Set(installedManagedRuleIds);
-  const addRules = desiredConfigs
-    .map(({ frameRule }) => frameRule)
+  const addRules = desiredFrameRules
     .filter(({ id }) => !installedRuleIdSet.has(id));
 
   if (removeRuleIds.length > 0 || addRules.length > 0) {

@@ -131,28 +131,47 @@ describe('chatgpt content script provider status', () => {
   });
 
   it('does not report idle when the stop button briefly reappears', async () => {
-    const postMessageSpy = window.parent.postMessage;
-    const { composer, getStopButton } = createChatgptComposerDom({ includeSendButton: true, includeStopButton: false });
-
-    dispatchMultiPanelMessage({
-      type: 'TRIGGER_SEND',
-      requestId: 'req-flicker',
-      context: 'multi-panel',
+    let notifyMutation;
+    vi.stubGlobal('MutationObserver', class {
+      constructor(callback) { notifyMutation = callback; }
+      observe() {}
+      disconnect() {}
     });
+    vi.useFakeTimers();
+    try {
+      const postMessageSpy = window.parent.postMessage;
+      const { composer, getStopButton } = createChatgptComposerDom({
+        includeSendButton: true,
+        includeStopButton: false,
+      });
 
-    composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
-    expect(await waitForProviderStatusCall(postMessageSpy, 'PANELIZE_PROVIDER_BUSY')).toHaveLength(1);
-    getStopButton()?.remove();
-    await wait(300);
-    composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
-    await wait(650);
+      dispatchMultiPanelMessage({
+        type: 'TRIGGER_SEND',
+        requestId: 'req-flicker',
+        context: 'multi-panel',
+      });
 
-    expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(0);
+      composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
+      notifyMutation();
+      expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_BUSY')).toHaveLength(1);
+      getStopButton()?.remove();
+      notifyMutation();
+      await vi.advanceTimersByTimeAsync(300);
+      composer.insertAdjacentHTML('beforeend', '<button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>');
+      notifyMutation();
+      await vi.advanceTimersByTimeAsync(650);
 
-    getStopButton()?.remove();
-    await wait(850);
+      expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(0);
 
-    expect(await waitForProviderStatusCall(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(1);
+      getStopButton()?.remove();
+      notifyMutation();
+      await vi.advanceTimersByTimeAsync(800);
+
+      expect(getProviderStatusCalls(postMessageSpy, 'PANELIZE_PROVIDER_IDLE')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('stops tracking when busy is never observed within 2 seconds', async () => {

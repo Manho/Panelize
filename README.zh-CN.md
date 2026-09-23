@@ -40,7 +40,7 @@
 
 ### 一次提问，同时对比
 
-在统一输入框中输入一次内容，就能同时发送到 ChatGPT、Claude、Gemini、Grok、Doubao、DeepSeek、Kimi、Qwen、Zhipu (China)、Z.ai (Global)、Google。
+在统一输入框中输入一次内容，就能同时发送到 ChatGPT、Claude、Gemini、Grok、Doubao、DeepSeek、Kimi、Qwen、Zhipu (China)、Z.ai (Global)、元宝、Google。
 
 ### 灵活布局
 
@@ -52,7 +52,7 @@
 
 ### 零配置
 
-不需要 API Key，也不需要额外账号。你在浏览器里登录过对应平台即可使用。
+不需要 API Key，也不需要额外账号。通常在浏览器里登录对应平台即可使用。
 
 ### Prompt Library
 
@@ -80,6 +80,7 @@
 - Qwen（海外版）
 - Zhipu (China)
 - Z.ai (Global)
+- 元宝
 - Google
 
 <p align="center">

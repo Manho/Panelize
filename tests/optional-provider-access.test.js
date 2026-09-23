@@ -60,6 +60,14 @@ describe('optional provider access', () => {
       },
       frameRule: { id: 1004 },
     });
+    expect(OPTIONAL_PROVIDER_CONFIGS.yuanbao).toMatchObject({
+      origins: ['https://yuanbao.tencent.com/*'],
+      contentScript: {
+        id: 'yuanbao-scripts',
+        matches: ['https://yuanbao.tencent.com/*'],
+      },
+    });
+    expect(OPTIONAL_PROVIDER_CONFIGS.yuanbao.frameRule).toBeUndefined();
   });
 
   it('places each provider-specific Enter behavior script explicitly in registration order', () => {
@@ -88,6 +96,13 @@ describe('optional provider access', () => {
       'content-scripts/button-finder-utils.js',
       'content-scripts/enter-behavior-utils.js',
       'content-scripts/enter-behavior-zai-global.js',
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js',
+    ]);
+    expect(OPTIONAL_PROVIDER_CONFIGS.yuanbao.contentScript.js).toEqual([
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      'content-scripts/enter-behavior-yuanbao.js',
       'content-scripts/text-injection-all-providers.js',
       'content-scripts/focus-toggle.js',
     ]);
@@ -122,6 +137,7 @@ describe('optional provider access', () => {
       'qwen-global',
       'chatglm',
       'zai-global',
+      'yuanbao',
     ])).resolves.toEqual(['chatgpt', 'qwen-global']);
   });
 
@@ -165,12 +181,28 @@ describe('optional provider access', () => {
     });
   });
 
+  it('registers providers without installing an unproven frame rule', async () => {
+    chrome.permissions.contains.mockImplementation(({ origins }) =>
+      Promise.resolve(
+        origins.includes('https://yuanbao.tencent.com/*')
+      )
+    );
+
+    await syncOptionalProviderAccess(['yuanbao']);
+
+    expect(chrome.scripting.registerContentScripts).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'yuanbao-scripts' }),
+    ]);
+    expect(chrome.declarativeNetRequest.updateDynamicRules).not.toHaveBeenCalled();
+  });
+
   it('removes managed scripts and rules when providers are disabled', async () => {
     chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
+      { id: 'yuanbao-scripts' },
       { id: 'unrelated-script' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
@@ -184,7 +216,13 @@ describe('optional provider access', () => {
     await syncOptionalProviderAccess([]);
 
     expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
-      ids: ['qwen-cn-scripts', 'qwen-global-scripts', 'chatglm-scripts', 'zai-global-scripts'],
+      ids: [
+        'qwen-cn-scripts',
+        'qwen-global-scripts',
+        'chatglm-scripts',
+        'zai-global-scripts',
+        'yuanbao-scripts',
+      ],
     });
     expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith({
       removeRuleIds: [1001, 1002, 1003, 1004],
@@ -201,6 +239,7 @@ describe('optional provider access', () => {
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
+      { id: 'yuanbao-scripts' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
@@ -209,7 +248,13 @@ describe('optional provider access', () => {
       { id: 1004 },
     ]);
 
-    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global', 'chatglm', 'zai-global']);
+    await syncOptionalProviderAccess([
+      'qwen-cn',
+      'qwen-global',
+      'chatglm',
+      'zai-global',
+      'yuanbao',
+    ]);
 
     expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
       ids: ['qwen-cn-scripts'],
@@ -228,6 +273,7 @@ describe('optional provider access', () => {
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
+      { id: 'yuanbao-scripts' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
@@ -236,7 +282,13 @@ describe('optional provider access', () => {
       { id: 1004 },
     ]);
 
-    await syncOptionalProviderAccess(['qwen-cn', 'qwen-global', 'chatglm', 'zai-global']);
+    await syncOptionalProviderAccess([
+      'qwen-cn',
+      'qwen-global',
+      'chatglm',
+      'zai-global',
+      'yuanbao',
+    ]);
 
     expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();
     expect(chrome.scripting.unregisterContentScripts).not.toHaveBeenCalled();
