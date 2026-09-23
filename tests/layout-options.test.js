@@ -7,6 +7,7 @@ const readProjectFile = (path) => readFileSync(resolve(process.cwd(), path), 'ut
 const multiPanelHtml = readProjectFile('multi-panel/multi-panel.html');
 const multiPanelCss = readProjectFile('multi-panel/multi-panel.css');
 const multiPanelJs = readProjectFile('multi-panel/multi-panel.js');
+const layoutAutoAdjustJs = readProjectFile('modules/layout-auto-adjust.js');
 const optionsHtml = readProjectFile('options/options.html');
 
 describe('twelve-panel layout options', () => {
@@ -22,11 +23,11 @@ describe('twelve-panel layout options', () => {
 
   it('raises the panel limit and declares the new capacities', () => {
     expect(multiPanelJs).toContain('const MAX_PANELS = 12;');
-    expect(multiPanelJs).toContain("'1x9': 9");
-    expect(multiPanelJs).toContain("'1x10': 10");
-    expect(multiPanelJs).toContain("'1x11': 11");
-    expect(multiPanelJs).toContain("'1x12': 12");
-    expect(multiPanelJs).toContain("'2x5': 10");
-    expect(multiPanelJs).toContain("'2x6': 12");
+    expect(layoutAutoAdjustJs).toContain("'1x9': 9");
+    expect(layoutAutoAdjustJs).toContain("'1x10': 10");
+    expect(layoutAutoAdjustJs).toContain("'1x11': 11");
+    expect(layoutAutoAdjustJs).toContain("'1x12': 12");
+    expect(layoutAutoAdjustJs).toContain("'2x5': 10");
+    expect(layoutAutoAdjustJs).toContain("'2x6': 12");
   });
 });
