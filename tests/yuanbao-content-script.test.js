@@ -110,49 +110,13 @@ function createYuanbaoDom({ previewDelayMs = 0 } = {}) {
   return { editor, newChatButton, sendButton, uploadedNames };
 }
 
-function createMimoDom({ previewDelayMs = 0 } = {}) {
-  document.body.innerHTML = `
-    <div class="relative rounded-2xl border" id="mimo-composer">
-      <textarea placeholder="Ask me anything">draft</textarea>
-      <input type="file" multiple
-             accept="image/jpeg,image/png,image/webp,image/bmp,text/plain,application/pdf">
-      <div id="mimo-previews"></div>
-      <button data-track-id="home_send_btn" disabled><svg viewBox="0 0 19 16"></svg></button>
-    </div>
-    <button data-track-id="navbar_new_chat_btn"></button>
-  `;
-
-  const editor = document.querySelector('textarea');
-  const fileInput = document.querySelector('input[type="file"]');
-  const sendButton = document.querySelector('[data-track-id="home_send_btn"]');
-  const newChatButton = document.querySelector('[data-track-id="navbar_new_chat_btn"]');
-  [editor, sendButton, newChatButton].forEach(markVisible);
-
-  editor.addEventListener('input', () => {
-    sendButton.disabled = editor.value.trim() === '';
-  });
-
-  const uploadedNames = [];
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files[0];
-    uploadedNames.push(file.name);
-    setTimeout(() => {
-      const preview = document.createElement('button');
-      preview.setAttribute('aria-label', file.name);
-      document.getElementById('mimo-previews').append(preview);
-    }, previewDelayMs);
-  });
-
-  return { editor, newChatButton, sendButton, uploadedNames };
-}
-
 function getActionResultCalls() {
   return window.parent.postMessage.mock.calls
     .map(([payload]) => payload)
     .filter(payload => payload?.type === 'PANELIZE_ACTION_RESULT');
 }
 
-describe('Yuanbao and MiMo content script integration', () => {
+describe('Yuanbao content script integration', () => {
   beforeAll(() => {
     window.eval(buttonFinderSource);
     window.eval(contentScriptSource);
@@ -182,7 +146,6 @@ describe('Yuanbao and MiMo content script integration', () => {
 
   it.each([
     ['Yuanbao', 'https://yuanbao.tencent.com/chat/naQivTmsDa', createYuanbaoDom],
-    ['MiMo', 'https://aistudio.xiaomimimo.com/#/c', createMimoDom],
   ])('appends text and uses the verified send control for %s', (_name, url, createDom) => {
     window.happyDOM.setURL(url);
     const { editor, sendButton } = createDom();
@@ -221,7 +184,6 @@ describe('Yuanbao and MiMo content script integration', () => {
 
   it.each([
     ['Yuanbao', 'https://yuanbao.tencent.com/chat/naQivTmsDa', createYuanbaoDom],
-    ['MiMo', 'https://aistudio.xiaomimimo.com/#/c', createMimoDom],
   ])('uses the provider-specific new chat control for %s', (_name, url, createDom) => {
     window.happyDOM.setURL(url);
     const { newChatButton } = createDom();
@@ -321,48 +283,8 @@ describe('Yuanbao and MiMo content script integration', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('targets MiMo composer when another textarea precedes it and the tooltip is open', () => {
-    window.happyDOM.setURL('https://aistudio.xiaomimimo.com/#/c');
-    const { editor, sendButton } = createMimoDom();
-    editor.placeholder = '随便问问';
-    document.body.insertAdjacentHTML('afterbegin', '<textarea id="unrelated">leave me alone</textarea>');
-    sendButton.setAttribute('data-state', 'open');
-    const clickSpy = vi.fn();
-    sendButton.addEventListener('click', clickSpy);
-
-    dispatchMultiPanelMessage({ type: 'INJECT_TEXT', text: ' + composer', autoSubmit: false });
-    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND' });
-
-    expect(editor.value).toContain('composer');
-    expect(document.getElementById('unrelated').value).toBe('leave me alone');
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(['0 0 24 24', '0 0 20 20'])(
-    'does not click MiMo stop or unknown icon %s on trigger send or auto-submit',
-    async (viewBox) => {
-      window.happyDOM.setURL('https://aistudio.xiaomimimo.com/#/c');
-      const { sendButton } = createMimoDom();
-      sendButton.querySelector('svg').setAttribute('viewBox', viewBox);
-      sendButton.disabled = false;
-      const clickSpy = vi.fn();
-      sendButton.addEventListener('click', clickSpy);
-
-      dispatchMultiPanelMessage({ type: 'TRIGGER_SEND' });
-      dispatchMultiPanelMessage({
-        type: 'INJECT_TEXT',
-        text: ' + queued',
-        autoSubmit: true,
-      });
-      await vi.advanceTimersByTimeAsync(900);
-
-      expect(clickSpy).not.toHaveBeenCalled();
-    }
-  );
-
   it.each([
     ['Yuanbao', 'https://yuanbao.tencent.com/chat/naQivTmsDa', createYuanbaoDom],
-    ['MiMo', 'https://aistudio.xiaomimimo.com/#/c', createMimoDom],
   ])('uploads and verifies an image preview for %s', async (_name, url, createDom) => {
     window.happyDOM.setURL(url);
     const { uploadedNames } = createDom();
@@ -378,28 +300,28 @@ describe('Yuanbao and MiMo content script integration', () => {
 
     expect(uploadedNames).toEqual(['sample.png']);
     expect(getActionResultCalls()).toContainEqual(expect.objectContaining({
-      provider: _name === 'Yuanbao' ? 'yuanbao' : 'mimo',
+      provider: 'yuanbao',
       status: 'succeeded',
       succeededImageIds: ['provider-sample-image'],
     }));
   });
 
-  it('reconciles a delayed MiMo preview without uploading the image twice', async () => {
-    window.happyDOM.setURL('https://aistudio.xiaomimimo.com/#/c');
-    const { uploadedNames } = createMimoDom({ previewDelayMs: 6500 });
+  it('reconciles a delayed Yuanbao preview without uploading the image twice', async () => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat/naQivTmsDa');
+    const { uploadedNames } = createYuanbaoDom({ previewDelayMs: 6500 });
 
     dispatchMultiPanelMessage({
       type: 'INJECT_TEXT_WITH_IMAGES',
       images: [SAMPLE_IMAGE],
       text: 'keep this draft',
       autoSubmit: false,
-      requestId: 'mimo-delayed-first',
+      requestId: 'yuanbao-delayed-first',
     });
     await vi.advanceTimersByTimeAsync(7500);
 
     expect(uploadedNames).toEqual(['sample.png']);
     expect(getActionResultCalls()).toContainEqual(expect.objectContaining({
-      requestId: 'mimo-delayed-first',
+      requestId: 'yuanbao-delayed-first',
       status: 'failed',
       reason: 'preview-timeout',
     }));
@@ -410,15 +332,15 @@ describe('Yuanbao and MiMo content script integration', () => {
       images: [SAMPLE_IMAGE],
       text: 'keep this draft',
       autoSubmit: false,
-      requestId: 'mimo-delayed-retry',
+      requestId: 'yuanbao-delayed-retry',
       retry: true,
     });
     await vi.advanceTimersByTimeAsync(2500);
 
     expect(uploadedNames).toEqual(['sample.png']);
-    expect(document.querySelector('textarea').value).toBe('draftkeep this draft');
+    expect(document.querySelector('.ql-editor').textContent).toBe('draftkeep this draft');
     expect(getActionResultCalls()).toContainEqual(expect.objectContaining({
-      requestId: 'mimo-delayed-retry',
+      requestId: 'yuanbao-delayed-retry',
       status: 'succeeded',
       succeededImageIds: ['provider-sample-image'],
     }));

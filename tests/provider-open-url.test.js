@@ -21,7 +21,6 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('chatglm', 'https://chatglm.cn/main/alltoolsdetail?lang=zh&cid=abc123')).toBe(true);
     expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/agent123/chat456')).toBe(true);
-    expect(isProviderCurrentUrl('mimo', 'https://aistudio.xiaomimimo.com/#/chat/abc123')).toBe(true);
   });
 
   it('accepts current Google pages for both AI Mode and Search', () => {
@@ -55,9 +54,6 @@ describe('provider open URL helpers', () => {
       'https://yuanbao.tencent.com/chat/agent123/chat456?chatMode=temp'
     )).toBe(false);
     expect(isProviderAllowedUrl('yuanbao', 'https://evil.example/chat/agent123/chat456')).toBe(false);
-    expect(isProviderCurrentUrl('mimo', 'https://aistudio.xiaomimimo.com/#/c')).toBe(false);
-    expect(isProviderCurrentUrl('mimo', 'https://aistudio.xiaomimimo.com/#/settings')).toBe(false);
-    expect(isProviderAllowedUrl('mimo', 'https://evil.example/#/chat/abc123')).toBe(false);
   });
 
   it('opens the reported current URL when it is valid', () => {
@@ -76,9 +72,6 @@ describe('provider open URL helpers', () => {
     expect(getProviderOpenUrl(getProviderById('zai-global'), 'https://z.ai/chat')).toBe('https://chat.z.ai/');
     expect(getProviderOpenUrl(getProviderById('yuanbao'), 'https://yuanbao.tencent.com/chat/naQivTmsDa')).toBe(
       'https://yuanbao.tencent.com/chat/naQivTmsDa'
-    );
-    expect(getProviderOpenUrl(getProviderById('mimo'), 'https://aistudio.xiaomimimo.com/#/c')).toBe(
-      'https://aistudio.xiaomimimo.com/#/c'
     );
   });
 });

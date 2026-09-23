@@ -68,14 +68,6 @@ describe('optional provider access', () => {
       },
     });
     expect(OPTIONAL_PROVIDER_CONFIGS.yuanbao.frameRule).toBeUndefined();
-    expect(OPTIONAL_PROVIDER_CONFIGS.mimo).toMatchObject({
-      origins: ['https://aistudio.xiaomimimo.com/*'],
-      contentScript: {
-        id: 'mimo-scripts',
-        matches: ['https://aistudio.xiaomimimo.com/*'],
-      },
-    });
-    expect(OPTIONAL_PROVIDER_CONFIGS.mimo.frameRule).toBeUndefined();
   });
 
   it('places each provider-specific Enter behavior script explicitly in registration order', () => {
@@ -114,13 +106,6 @@ describe('optional provider access', () => {
       'content-scripts/text-injection-all-providers.js',
       'content-scripts/focus-toggle.js',
     ]);
-    expect(OPTIONAL_PROVIDER_CONFIGS.mimo.contentScript.js).toEqual([
-      'content-scripts/button-finder-utils.js',
-      'content-scripts/enter-behavior-utils.js',
-      'content-scripts/enter-behavior-mimo.js',
-      'content-scripts/text-injection-all-providers.js',
-      'content-scripts/focus-toggle.js',
-    ]);
   });
 
   it('requests only the selected provider origin', async () => {
@@ -153,7 +138,6 @@ describe('optional provider access', () => {
       'chatglm',
       'zai-global',
       'yuanbao',
-      'mimo',
     ])).resolves.toEqual(['chatgpt', 'qwen-global']);
   });
 
@@ -200,18 +184,30 @@ describe('optional provider access', () => {
   it('registers providers without installing an unproven frame rule', async () => {
     chrome.permissions.contains.mockImplementation(({ origins }) =>
       Promise.resolve(
-        origins.includes('https://yuanbao.tencent.com/*') ||
-        origins.includes('https://aistudio.xiaomimimo.com/*')
+        origins.includes('https://yuanbao.tencent.com/*')
       )
     );
 
-    await syncOptionalProviderAccess(['yuanbao', 'mimo']);
+    await syncOptionalProviderAccess(['yuanbao']);
 
     expect(chrome.scripting.registerContentScripts).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'yuanbao-scripts' }),
-      expect.objectContaining({ id: 'mimo-scripts' }),
     ]);
     expect(chrome.declarativeNetRequest.updateDynamicRules).not.toHaveBeenCalled();
+  });
+
+  it('unregisters the retired provider without touching unrelated scripts', async () => {
+    chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
+      { id: 'mimo-scripts' },
+      { id: 'unrelated-script' },
+    ]);
+
+    await syncOptionalProviderAccess([]);
+
+    expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
+      ids: ['mimo-scripts'],
+    });
+    expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();
   });
 
   it('removes managed scripts and rules when providers are disabled', async () => {
@@ -221,7 +217,6 @@ describe('optional provider access', () => {
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
-      { id: 'mimo-scripts' },
       { id: 'unrelated-script' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
@@ -241,7 +236,6 @@ describe('optional provider access', () => {
         'chatglm-scripts',
         'zai-global-scripts',
         'yuanbao-scripts',
-        'mimo-scripts',
       ],
     });
     expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith({
@@ -260,7 +254,6 @@ describe('optional provider access', () => {
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
-      { id: 'mimo-scripts' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
@@ -275,7 +268,6 @@ describe('optional provider access', () => {
       'chatglm',
       'zai-global',
       'yuanbao',
-      'mimo',
     ]);
 
     expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
@@ -296,7 +288,6 @@ describe('optional provider access', () => {
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
-      { id: 'mimo-scripts' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
       { id: 1001 },
@@ -311,7 +302,6 @@ describe('optional provider access', () => {
       'chatglm',
       'zai-global',
       'yuanbao',
-      'mimo',
     ]);
 
     expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();

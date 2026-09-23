@@ -139,22 +139,6 @@
     return null;
   };
 
-  /** Find the textarea sharing MiMo's composer with its send control. */
-  window.ButtonFinderUtils.findMimoInput = function() {
-    const sendButton = document.querySelector('button[data-track-id="home_send_btn"]');
-    let ancestor = sendButton?.parentElement;
-    for (let depth = 0; ancestor && depth < 8; depth++, ancestor = ancestor.parentElement) {
-      const editors = ancestor.querySelectorAll('textarea');
-      if (editors.length === 1) return editors[0];
-    }
-    return null;
-  };
-
-  /** MiMo reuses this button for Stop, so unknown icons must not be clicked. */
-  window.ButtonFinderUtils.isMimoSendIcon = function(button) {
-    return button?.querySelector('svg')?.getAttribute('viewBox') === '0 0 19 16';
-  };
-
   /** Yuanbao uses the same control for Send and Stop Answering. */
   window.ButtonFinderUtils.isYuanbaoSendControl = function(button) {
     const label = button?.getAttribute('aria-label');

@@ -40,7 +40,7 @@ Ever found yourself copying the same prompt across multiple AI tabs just to comp
 
 ### 🎯 Ask Once, Compare All
 
-Type your question once and send it to ChatGPT, Claude, Gemini, Grok, Doubao, DeepSeek, Kimi, Qwen, Zhipu (China), Z.ai (Global), Yuanbao, MiMo, and Google simultaneously. See which AI gives you the best answer—no tab switching required.
+Type your question once and send it to ChatGPT, Claude, Gemini, Grok, Doubao, DeepSeek, Kimi, Qwen, Zhipu (China), Z.ai (Global), Yuanbao, and Google simultaneously. See which AI gives you the best answer—no tab switching required.
 
 ### 📐 Flexible Layouts
 
@@ -52,7 +52,7 @@ Choose from 22 different layouts to fit your workflow. Need a quick 2-way compar
 
 ### ⚡ Zero Setup
 
-No API keys. Log into your AI accounts normally, and Panelize uses those sessions. For MiMo, select its panel and open the dedicated MiMo tab to sign in; prompts and replies then sync with the panel.
+No API keys. Log into your AI accounts normally, and Panelize uses those sessions.
 
 ### 📚 Prompt Library
 
@@ -90,7 +90,7 @@ Save your best prompts and reuse them across all providers. Supports variables l
   </tr>
   <tr>
     <td align="center"><strong>Yuanbao</strong></td>
-    <td align="center"><strong>MiMo</strong></td>
+    <td></td>
     <td></td>
     <td></td>
   </tr>

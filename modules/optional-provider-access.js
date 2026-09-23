@@ -78,14 +78,6 @@ export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze({
       ['https://yuanbao.tencent.com/*'],
       'content-scripts/enter-behavior-yuanbao.js'
     ))
-  }),
-  mimo: Object.freeze({
-    origins: Object.freeze(['https://aistudio.xiaomimimo.com/*']),
-    contentScript: Object.freeze(createContentScript(
-      'mimo-scripts',
-      ['https://aistudio.xiaomimimo.com/*'],
-      'content-scripts/enter-behavior-mimo.js'
-    ))
   })
 });
 
@@ -164,6 +156,8 @@ async function syncContentScripts(allConfigs, desiredConfigs) {
   }
 
   const managedScriptIds = new Set(allConfigs.map(({ contentScript }) => contentScript.id));
+  // Retire the persisted registration from the unreleased provider experiment.
+  managedScriptIds.add('mimo-scripts');
   const desiredScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
   const registeredScripts = await chrome.scripting.getRegisteredContentScripts();
   const registeredManagedIds = registeredScripts

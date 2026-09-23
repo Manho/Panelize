@@ -33,8 +33,7 @@
     "https://chat.qwen.ai/*",
     "https://chatglm.cn/*",
     "https://chat.z.ai/*",
-    "https://yuanbao.tencent.com/*",
-    "https://aistudio.xiaomimimo.com/*"
+    "https://yuanbao.tencent.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",

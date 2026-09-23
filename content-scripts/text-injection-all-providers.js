@@ -22,9 +22,8 @@
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
   const YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS = 5000;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
-  const MIMO_BRIDGE_IMAGE_BATCH_TIMEOUT_MS = 30000;
   const SLOW_COMPOSER_PROVIDERS = new Set([
-    'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao', 'mimo'
+    'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao'
   ]);
   const IMAGE_INJECTION_REASONS = Object.freeze({
     CONTROL_NOT_FOUND: 'control-not-found',
@@ -37,11 +36,8 @@
   let multiPanelUserInteractionTracking = null;
   let yuanbaoTemporaryChatActivation = null;
   let yuanbaoTemporaryChatLastClickAt = -Infinity;
-  let mimoBridgeOwnedDraft = null;
-  let mimoBridgePendingText = '';
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
-  const pendingMimoBridgeImageBatches = new Map();
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
@@ -100,7 +96,6 @@
       '.chat-command-editor-specail .ql-editor[contenteditable="true"]',
       '.ql-editor[contenteditable="true"][data-placeholder]'
     ],
-    mimo: [],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -135,7 +130,6 @@
     chatglm: true,
     'zai-global': true,
     yuanbao: true,
-    mimo: true,
     google: true  // Google AI Mode supports images
   };
 
@@ -153,7 +147,6 @@
     chatglm: ['input.el-upload__input[type="file"]'],
     'zai-global': ['input[type="file"][multiple][accept*=".png"]'],
     yuanbao: ['input[type="file"][multiple][accept*="image"]'],
-    mimo: ['input[type="file"][multiple][accept*="image"]'],
     google: ['input[type="file"]']
   };
 
@@ -257,9 +250,6 @@
       '#yuanbao-send-btn[aria-label="Send"]',
       '#yuanbao-send-btn'
     ],
-    mimo: [
-      'button[data-track-id="home_send_btn"]'
-    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -335,9 +325,6 @@
       '[role="button"][aria-label="新建对话"]',
       '[role="button"][aria-label="新建對話"]'
     ],
-    mimo: [
-      'button[data-track-id="navbar_new_chat_btn"]'
-    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -360,7 +347,6 @@
     'zai-global': 'https://chat.z.ai/',
     // Keep this in sync with YUANBAO_DEFAULT_URL in modules/providers.js.
     yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
-    mimo: 'https://aistudio.xiaomimimo.com/#/c',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -412,8 +398,6 @@
       return 'zai-global';
     } else if (hostname === 'yuanbao.tencent.com') {
       return 'yuanbao';
-    } else if (hostname === 'aistudio.xiaomimimo.com') {
-      return 'mimo';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
@@ -545,7 +529,7 @@
   }
 
   function postMultiPanelActionResult(requestId, provider, result) {
-    if (!requestId || !provider) {
+    if (!requestId || !provider || window.parent === window) {
       return;
     }
 
@@ -566,16 +550,7 @@
       message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
     }
 
-    if (window.parent === window) {
-      if (provider === 'mimo') {
-        mimoBridgeOwnedDraft = findMimoInput()?.value || null;
-        mimoBridgePendingText = '';
-        void chrome.runtime.sendMessage({ type: 'PANELIZE_MIMO_RELAY', payload: message })
-          .catch(() => {});
-      }
-    } else {
-      window.parent.postMessage(message, '*');
-    }
+    window.parent.postMessage(message, '*');
   }
 
   function postTemporaryChatEnabled(provider = detectProvider()) {
@@ -952,10 +927,6 @@
       return window.ButtonFinderUtils?.isYuanbaoSendControl(element) === true;
     }
 
-    if (provider === 'mimo') {
-      return window.ButtonFinderUtils?.isMimoSendIcon(element) === true;
-    }
-
     return !element.classList.contains('disabled');
   }
 
@@ -1091,84 +1062,14 @@
     }
   }
 
-  function findMimoInput() {
-    return window.ButtonFinderUtils?.findMimoInput() || null;
-  }
-
-  function getMimoBridgeSnapshot() {
-    const editor = findMimoInput();
-    const draft = editor?.value || '';
-    if (!draft.trim()) {
-      mimoBridgeOwnedDraft = null;
-    }
-    const draftConflict = Boolean(
-      draft.trim() &&
-      draft !== mimoBridgeOwnedDraft &&
-      !(mimoBridgePendingText && draft.endsWith(mimoBridgePendingText))
-    );
-    const signInButton = [...document.querySelectorAll('button')].some(button =>
-      /^(sign in|登录|登入)$/i.test((button.textContent || '').trim()) &&
-      isVisibleElement(button)
-    );
-    const authenticated = Boolean(
-      editor && !signInButton && !/sign in|登录|登入/i.test(editor.placeholder || '')
-    );
-    const replies = document.querySelectorAll('#message-list .markdown-prose');
-    const responseText = authenticated && /^#\/chat\//.test(window.location.hash)
-      ? (replies[replies.length - 1]?.innerText || replies[replies.length - 1]?.textContent || '').slice(0, 50000)
-      : '';
-    return { provider: 'mimo', authenticated, draftConflict, responseText, url: window.location.href };
-  }
-
-  function stageMimoBridgeImage(message) {
-    const { requestId, image, index, total } = message;
-    if (
-      typeof requestId !== 'string' || !requestId ||
-      !Number.isInteger(total) || total < 1 || total > 10 ||
-      !Number.isInteger(index) || index < 0 || index >= total ||
-      typeof image?.dataUrl !== 'string' ||
-      image.dataUrl.length > 32 * 1024 * 1024
-    ) {
-      return { accepted: false, reason: 'invalid-image' };
-    }
-
-    let batch = pendingMimoBridgeImageBatches.get(requestId);
-    if (!batch) {
-      batch = { total, images: new Map() };
-      batch.timeoutId = setTimeout(() => {
-        if (pendingMimoBridgeImageBatches.get(requestId) === batch) {
-          pendingMimoBridgeImageBatches.delete(requestId);
-        }
-      }, MIMO_BRIDGE_IMAGE_BATCH_TIMEOUT_MS);
-      pendingMimoBridgeImageBatches.set(requestId, batch);
-    }
-    if (batch.total !== total) return { accepted: false, reason: 'invalid-image' };
-    batch.images.set(index, image);
-    return { accepted: true };
-  }
-
-  function consumeMimoBridgeImages(requestId) {
-    const batch = pendingMimoBridgeImageBatches.get(requestId);
-    if (!batch || batch.images.size !== batch.total) return null;
-    const images = Array.from({ length: batch.total }, (_, index) => batch.images.get(index));
-    if (images.some(image => !image)) return null;
-    clearTimeout(batch.timeoutId);
-    pendingMimoBridgeImageBatches.delete(requestId);
-    return images;
-  }
-
-  function* findProviderInputs(provider, selectors) {
-    if (provider === 'mimo') {
-      yield findMimoInput();
-      return;
-    }
+  function* findProviderInputs(selectors) {
     for (const selector of selectors) {
       yield findTextInputElement(selector);
     }
   }
 
-  function findProviderInput(provider, selectors) {
-    for (const element of findProviderInputs(provider, selectors)) {
+  function findProviderInput(selectors) {
+    for (const element of findProviderInputs(selectors)) {
       if (element) return element;
     }
     return null;
@@ -1714,7 +1615,7 @@
       return false;
     }
 
-    for (const element of findProviderInputs(provider, selectors)) {
+    for (const element of findProviderInputs(selectors)) {
       if (!element) continue;
       if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
         return true;
@@ -1927,9 +1828,6 @@
         break;
       case 'yuanbao':
         result = await injectImageToYuanbao(imageData, { retry });
-        break;
-      case 'mimo':
-        result = await injectImageToMimo(imageData, { retry });
         break;
       case 'google':
         result = await injectImageToGoogle(imageData);
@@ -2208,69 +2106,6 @@
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
     } catch (error) {
       console.error('[Image Injection] Yuanbao error:', error);
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
-    }
-  }
-
-  function getMimoComposer() {
-    const editor = findMimoInput();
-    return findClosestAncestorContaining(editor, 'input[type="file"]');
-  }
-
-  function findMimoFileInput(composer) {
-    return [...(composer?.querySelectorAll('input[type="file"]') || [])]
-      .find(input => input.multiple && acceptsImageFiles(input)) || null;
-  }
-
-  function countMimoCompletedPreviews(composer, fileName) {
-    const filenameEvidence = countFilenamePreviewEvidence(composer, fileName);
-    const uploadedImages = [...(composer?.querySelectorAll('img') || [])].filter(image => {
-      const source = image.getAttribute('src') || '';
-      const container = image.closest(
-        '[class*="attachment"], [class*="upload"], [class*="preview"], [class*="file"]'
-      );
-      return Boolean(container && /^https:\/\//.test(source));
-    }).length;
-    return Math.max(filenameEvidence, uploadedImages);
-  }
-
-  async function injectImageToMimo(imageData, { retry = false } = {}) {
-    try {
-      const composer = getMimoComposer();
-      const fileInput = findMimoFileInput(composer);
-      if (!composer || !fileInput) {
-        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
-      }
-
-      const countCompleted = () => countMimoCompletedPreviews(composer, imageData.name);
-      if (retry) {
-        const reconciled = await reconcilePendingProviderImage(
-          'mimo',
-          imageData,
-          countCompleted
-        );
-        if (reconciled) {
-          return reconciled;
-        }
-      }
-
-      const previousCount = countCompleted();
-      const file = await createImageFile(imageData);
-      if (!assignFilesToInput(fileInput, [file])) {
-        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
-      }
-      dispatchFileInputEvents(fileInput);
-
-      const accepted = await waitForPreviewIncrease(countCompleted, previousCount);
-      if (accepted) {
-        pendingProviderImageUploads.delete(getProviderImageKey('mimo', imageData));
-        return createImageInjectionSuccess();
-      }
-
-      rememberPendingProviderImage('mimo', imageData, previousCount);
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
-    } catch (error) {
-      console.error('[Image Injection] MiMo error:', error);
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
@@ -3098,7 +2933,7 @@
   async function tryDragDropUpload(provider, imageData) {
     try {
       const selectors = PROVIDER_SELECTORS[provider];
-      const targetElement = findProviderInput(provider, selectors);
+      const targetElement = findProviderInput(selectors);
 
       if (!targetElement) {
         console.warn('[Image Injection] No target element found for drag-drop');
@@ -3275,7 +3110,7 @@
         }
 
         const selectors = PROVIDER_SELECTORS[provider];
-        const element = findProviderInput(provider, selectors);
+        const element = findProviderInput(selectors);
         if (element) {
           const isTextarea = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
           if (isTextarea) {
@@ -3433,7 +3268,7 @@
     }
 
     // Try each selector until we find an element
-    const element = findProviderInput(provider, selectors);
+    const element = findProviderInput(selectors);
 
     if (element) {
       const success = injectTextIntoElement(element, text, provider);
@@ -3463,7 +3298,7 @@
 
       retryDelays.forEach((delay, index) => {
         setTimeout(() => {
-          const retryElement = findProviderInput(provider, selectors);
+          const retryElement = findProviderInput(selectors);
           if (retryElement) {
             const success = injectTextIntoElement(retryElement, text, provider);
             if (success) {
@@ -3489,53 +3324,4 @@
   // Listen for messages from the multi-panel host
   setupProviderLocationReporting();
   window.addEventListener('message', handleTextInjection);
-
-  if (window.location.hostname === 'aistudio.xiaomimimo.com') {
-    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (window.parent !== window) return;
-      if (message?.type === 'PANELIZE_MIMO_SNAPSHOT') {
-        sendResponse(getMimoBridgeSnapshot());
-        return;
-      }
-
-      if (message?.context !== 'multi-panel-bridge') return;
-      const snapshot = getMimoBridgeSnapshot();
-      if (!snapshot.authenticated || snapshot.draftConflict) {
-        sendResponse({
-          accepted: false,
-          reason: snapshot.draftConflict ? 'draft-conflict' : 'not-authenticated'
-        });
-        return;
-      }
-      if (message.type === 'PANELIZE_MIMO_STAGE_IMAGE') {
-        sendResponse(stageMimoBridgeImage(message));
-        return;
-      }
-      if (![
-        'INJECT_TEXT', 'INJECT_TEXT_WITH_IMAGES', 'TRIGGER_SEND', 'CLEAR_INPUT', 'NEW_CHAT'
-      ].includes(message.type)) {
-        return;
-      }
-      let data = message;
-      if (message.type === 'INJECT_TEXT_WITH_IMAGES' && message.stagedImageRequestId) {
-        const images = consumeMimoBridgeImages(message.stagedImageRequestId);
-        if (!images || message.stagedImageRequestId !== message.requestId) {
-          sendResponse({ accepted: false, reason: 'staging-incomplete' });
-          return;
-        }
-        data = { ...message, images };
-      }
-      if (message.type === 'INJECT_TEXT_WITH_IMAGES') {
-        mimoBridgePendingText = message.text || '';
-      }
-      handleTextInjection({ data: { ...data, context: 'multi-panel' } });
-      if (message.type === 'INJECT_TEXT') {
-        mimoBridgeOwnedDraft = findMimoInput()?.value || null;
-      } else if (message.type === 'NEW_CHAT' || message.type === 'CLEAR_INPUT') {
-        mimoBridgeOwnedDraft = null;
-        mimoBridgePendingText = '';
-      }
-      sendResponse({ accepted: true });
-    });
-  }
 })();

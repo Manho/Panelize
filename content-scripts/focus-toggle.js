@@ -64,11 +64,6 @@ function findProviderInput() {
            document.querySelector('.ql-editor[contenteditable="true"]');
   }
 
-  // MiMo
-  if (host === 'aistudio.xiaomimimo.com') {
-    return window.ButtonFinderUtils?.findMimoInput() || null;
-  }
-
   // Generic fallback: find any visible textarea or contenteditable
   const textarea = document.querySelector('textarea:not([hidden])');
   if (textarea && textarea.offsetParent !== null) return textarea;
