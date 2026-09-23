@@ -80,7 +80,9 @@ const MIMO_FIXTURE = `<!doctype html>
       <textarea placeholder="随便问问">draft</textarea>
       <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/bmp,text/plain">
       <div id="previews"></div>
-      <button data-track-id="home_send_btn" data-state="open" disabled>Send</button>
+      <button data-track-id="home_send_btn" data-state="open" disabled>
+        <svg viewBox="0 0 19 16"></svg>Send
+      </button>
     </div>
     <button data-track-id="navbar_new_chat_btn">New Chat</button>
     <script>
@@ -277,4 +279,24 @@ test.describe('Yuanbao and MiMo production content scripts', () => {
       await page.close();
     });
   }
+
+  test('MiMo generation keeps its stop control untouched by Enter and auto-submit', async () => {
+    const page = await context.newPage();
+    await page.goto(`http://aistudio.xiaomimimo.com:${port}/#/c`);
+    const editor = page.locator('#composer textarea');
+    await expect(editor).toBeVisible();
+    await page.locator('[data-track-id="home_send_btn"] svg')
+      .evaluate(svg => svg.setAttribute('viewBox', '0 0 24 24'));
+    await editor.focus();
+    await page.keyboard.press('Enter');
+    await postPanelMessage(page, {
+      type: 'INJECT_TEXT',
+      text: ' + queued',
+      autoSubmit: true,
+    });
+    await page.waitForTimeout(950);
+    expect(await page.evaluate(() => window.__sendCount)).toBe(0);
+    await expect(editor).toHaveValue(/queued/);
+    await page.close();
+  });
 });

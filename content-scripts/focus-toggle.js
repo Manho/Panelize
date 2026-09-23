@@ -66,13 +66,7 @@ function findProviderInput() {
 
   // MiMo
   if (host === 'aistudio.xiaomimimo.com') {
-    const sendButton = document.querySelector('button[data-track-id="home_send_btn"]');
-    let ancestor = sendButton?.parentElement;
-    for (let depth = 0; ancestor && depth < 8; depth++, ancestor = ancestor.parentElement) {
-      const editors = ancestor.querySelectorAll('textarea');
-      if (editors.length === 1) return editors[0];
-    }
-    return null;
+    return window.ButtonFinderUtils?.findMimoInput() || null;
   }
 
   // Generic fallback: find any visible textarea or contenteditable

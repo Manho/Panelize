@@ -93,7 +93,7 @@
       '.chat-command-editor-specail .ql-editor[contenteditable="true"]',
       '.ql-editor[contenteditable="true"][data-placeholder]'
     ],
-    mimo: ['textarea'],
+    mimo: [],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -325,8 +325,7 @@
       '[role="button"][aria-label="New Chat"]',
       '.yb-new-chat-entry__item[aria-label="New Chat"]',
       '.yb-projects-section__item-new-chat[aria-label="New Chat"]',
-      '[role="button"][aria-label="新建对话"]',
-      '[role="button"][aria-label="新对话"]'
+      '[role="button"][aria-label="新建对话"]'
     ],
     mimo: [
       'button[data-track-id="navbar_new_chat_btn"]'
@@ -351,6 +350,7 @@
     'qwen-global': 'https://chat.qwen.ai/c/new-chat',
     chatglm: 'https://chatglm.cn/',
     'zai-global': 'https://chat.z.ai/',
+    // Keep this in sync with YUANBAO_DEFAULT_URL in modules/providers.js.
     yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
     mimo: 'https://aistudio.xiaomimimo.com/#/c',
     google: 'https://www.google.com/search?udm=50'
@@ -367,8 +367,8 @@
     yuanbao: [
       '[role="button"][aria-label="Enter Temporary Chat"]',
       '[role="button"][aria-label="Exit Temporary Chat"]',
-      '[role="button"][aria-label*="临时对话"]',
-      '[role="button"][aria-label*="临时聊天"]'
+      '[role="button"][aria-label="进入临时对话"]',
+      '[role="button"][aria-label="退出临时对话"]'
     ]
   };
 
@@ -934,7 +934,9 @@
       return !/(disabled|sendNot|loading|sending)/i.test(className);
     }
 
-    if (provider === 'mimo') return true;
+    if (provider === 'mimo') {
+      return window.ButtonFinderUtils?.isMimoSendIcon(element) === true;
+    }
 
     return !element.classList.contains('disabled');
   }
@@ -1064,20 +1066,32 @@
     }
 
     try {
-      if (selector === 'textarea' && detectProvider() === 'mimo') {
-        const sendButton = document.querySelector('button[data-track-id="home_send_btn"]');
-        let ancestor = sendButton?.parentElement;
-        for (let depth = 0; ancestor && depth < 8; depth++, ancestor = ancestor.parentElement) {
-          const editors = ancestor.querySelectorAll('textarea');
-          if (editors.length === 1) return editors[0];
-        }
-        return null;
-      }
       return document.querySelector(selector);
     } catch (error) {
       console.error('Error finding element:', error);
       return null;
     }
+  }
+
+  function findMimoInput() {
+    return window.ButtonFinderUtils?.findMimoInput() || null;
+  }
+
+  function* findProviderInputs(provider, selectors) {
+    if (provider === 'mimo') {
+      yield findMimoInput();
+      return;
+    }
+    for (const selector of selectors) {
+      yield findTextInputElement(selector);
+    }
+  }
+
+  function findProviderInput(provider, selectors) {
+    for (const element of findProviderInputs(provider, selectors)) {
+      if (element) return element;
+    }
+    return null;
   }
 
   function clickGoogleSendButton(mode) {
@@ -1328,7 +1342,7 @@
       case 'yuanbao':
         return (
           currentUrl.searchParams.get('chatMode') === 'temp' ||
-          /^(Exit Temporary Chat|退出临时对话|退出临时聊天|关闭临时对话|关闭临时聊天)$/
+          /^(Exit Temporary Chat|退出临时对话)$/
             .test(control?.getAttribute('aria-label') || '')
         );
       default:
@@ -1590,22 +1604,20 @@
       return false;
     }
 
-    for (const selector of selectors) {
-      const element = findTextInputElement(selector);
-      if (element) {
-        if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
-          return true;
+    for (const element of findProviderInputs(provider, selectors)) {
+      if (!element) continue;
+      if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
+        return true;
+      }
+      const success = injectTextIntoElement(element, text, provider);
+      if (success) {
+        console.log('[Text Injection] Text injected via injectText helper for', provider);
+        if (autoSubmit) {
+          // Use longer delay for providers whose composer state updates asynchronously
+          const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
+          setTimeout(() => clickSendButton(provider, providerMode), delay);
         }
-        const success = injectTextIntoElement(element, text, provider);
-        if (success) {
-          console.log('[Text Injection] Text injected via injectText helper for', provider);
-          if (autoSubmit) {
-            // Use longer delay for providers whose composer state updates asynchronously
-            const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
-            setTimeout(() => clickSendButton(provider, providerMode), delay);
-          }
-          return true;
-        }
+        return true;
       }
     }
 
@@ -2091,7 +2103,7 @@
   }
 
   function getMimoComposer() {
-    const editor = findTextInputElement('textarea');
+    const editor = findMimoInput();
     return findClosestAncestorContaining(editor, 'input[type="file"]');
   }
 
@@ -2976,12 +2988,7 @@
   async function tryDragDropUpload(provider, imageData) {
     try {
       const selectors = PROVIDER_SELECTORS[provider];
-      let targetElement = null;
-
-      for (const selector of selectors) {
-        targetElement = findTextInputElement(selector);
-        if (targetElement) break;
-      }
+      const targetElement = findProviderInput(provider, selectors);
 
       if (!targetElement) {
         console.warn('[Image Injection] No target element found for drag-drop');
@@ -3158,18 +3165,15 @@
         }
 
         const selectors = PROVIDER_SELECTORS[provider];
-        for (const selector of selectors) {
-          const element = findTextInputElement(selector);
-          if (element) {
-            const isTextarea = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
-            if (isTextarea) {
-              setFormControlValue(element, '');
-            } else {
-              clearRichTextInput(provider, element);
-            }
-            console.log('[Text Injection] Input cleared for', provider);
-            break;
+        const element = findProviderInput(provider, selectors);
+        if (element) {
+          const isTextarea = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
+          if (isTextarea) {
+            setFormControlValue(element, '');
+          } else {
+            clearRichTextInput(provider, element);
           }
+          console.log('[Text Injection] Input cleared for', provider);
         }
       }
       return;
@@ -3319,21 +3323,12 @@
     }
 
     // Try each selector until we find an element
-    let element = null;
-    let matchedSelector = null;
-    for (const selector of selectors) {
-      element = findTextInputElement(selector);
-      if (element) {
-        matchedSelector = selector;
-        console.log('[Text Injection] Found input element with selector:', selector, 'for provider:', provider);
-        break;
-      }
-    }
+    const element = findProviderInput(provider, selectors);
 
     if (element) {
       const success = injectTextIntoElement(element, text, provider);
       if (success) {
-        console.log('[Text Injection] Text injected into', provider, 'using selector:', matchedSelector);
+        console.log('[Text Injection] Text injected into', provider);
 
         // Auto-submit if requested (only from multi-panel context)
         if (shouldAutoSubmit) {
@@ -3358,20 +3353,11 @@
 
       retryDelays.forEach((delay, index) => {
         setTimeout(() => {
-          let retryElement = null;
-          let retrySelector = null;
-          for (const selector of selectors) {
-            retryElement = findTextInputElement(selector);
-            if (retryElement) {
-              retrySelector = selector;
-              console.log(`[Text Injection] Found input element on retry ${index + 1} with selector:`, selector);
-              break;
-            }
-          }
+          const retryElement = findProviderInput(provider, selectors);
           if (retryElement) {
             const success = injectTextIntoElement(retryElement, text, provider);
             if (success) {
-              console.log('[Text Injection] Text injected on retry into', provider, 'using selector:', retrySelector);
+              console.log('[Text Injection] Text injected on retry into', provider);
               if (shouldAutoSubmit) {
                 const submitDelay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
                 setTimeout(() => {

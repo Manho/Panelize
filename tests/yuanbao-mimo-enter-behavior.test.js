@@ -7,8 +7,17 @@ const utilsSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/enter-behavior-utils.js'),
   'utf8'
 );
+const buttonFinderSource = readFileSync(
+  resolve(process.cwd(), 'content-scripts/button-finder-utils.js'),
+  'utf8'
+);
 
-function createHarness(providerId, { enabled = true, yuanbaoState = null, mimoState = 'closed' } = {}) {
+function createHarness(providerId, {
+  enabled = true,
+  yuanbaoState = null,
+  mimoState = 'closed',
+  mimoIcon = '0 0 19 16',
+} = {}) {
   const scriptSource = readFileSync(
     resolve(process.cwd(), `content-scripts/enter-behavior-${providerId}.js`),
     'utf8'
@@ -26,6 +35,9 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null, mimoSt
       if (name === 'data-state' && providerId === 'mimo') return mimoState;
       return null;
     }),
+    querySelector: vi.fn(() => ({
+      getAttribute: vi.fn((name) => name === 'viewBox' ? mimoIcon : null),
+    })),
     click: vi.fn(),
   };
   const editor = {
@@ -49,6 +61,9 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null, mimoSt
     setRangeText: vi.fn(),
     dispatchEvent: vi.fn(),
   };
+  if (providerId === 'mimo') {
+    sendButton.parentElement = editor.parentElement;
+  }
   const context = {
     chrome: {
       runtime: { lastError: null },
@@ -68,6 +83,7 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null, mimoSt
     },
     document: {
       activeElement: editor,
+      querySelector: vi.fn(() => sendButton),
       createElement: vi.fn((tagName) => ({ tagName })),
       execCommand: vi.fn(() => true),
     },
@@ -86,6 +102,7 @@ function createHarness(providerId, { enabled = true, yuanbaoState = null, mimoSt
   };
 
   vm.createContext(context);
+  vm.runInContext(buttonFinderSource, context);
   vm.runInContext(utilsSource, context);
   vm.runInContext(scriptSource, context);
   return { context, editor, sendButton };
@@ -163,6 +180,15 @@ describe.each(['yuanbao', 'mimo'])('%s Enter behavior', (providerId) => {
       context.handleEnterSwap(createEnterEvent());
       expect(sendButton.click).toHaveBeenCalledTimes(1);
     });
+
+    it.each(['0 0 24 24', '0 0 20 20'])(
+      'does not click MiMo when the icon viewBox is %s',
+      (mimoIcon) => {
+        const { context, sendButton } = createHarness(providerId, { mimoIcon });
+        context.handleEnterSwap(createEnterEvent());
+        expect(sendButton.click).not.toHaveBeenCalled();
+      }
+    );
   } else {
     it('inserts a paragraph at the caret if the first editing command fails', () => {
       const { context, sendButton } = createHarness(providerId);
