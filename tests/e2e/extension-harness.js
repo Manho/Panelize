@@ -110,14 +110,16 @@ export async function launchExtension({
  * @param {object} options
  * @param {string[]} options.providers - Provider ids, one panel each.
  * @param {string} [options.layout] - Grid layout id such as '1x1'.
+ * @param {string[]} [options.enabledProviders] - Providers offered by the add
+ *   panel menu; defaults to the open panels.
  * @returns {Promise<import('@playwright/test').Page>}
  */
-export async function openMultiPanel(extension, { providers, layout = '1x1' }) {
+export async function openMultiPanel(extension, { providers, layout = '1x1', enabledProviders = providers }) {
   await extension.serviceWorker.evaluate(async (settings) => {
     await chrome.storage.sync.set(settings);
   }, {
-    enabledProviders: providers,
-    providerOrder: providers,
+    enabledProviders,
+    providerOrder: enabledProviders,
     multiPanelProviders: providers,
     multiPanelLayout: layout,
   });
