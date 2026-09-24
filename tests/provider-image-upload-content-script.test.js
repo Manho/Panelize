@@ -165,7 +165,13 @@ function createDeepSeekDom({
   return { composer, fileInput, sendButton, uploadedNames };
 }
 
+/**
+ * Builds a Kimi composer. `current` mirrors the live 2026-09 DOM, where the
+ * hidden multi-file input without an accept attribute sits in the composer;
+ * `legacy` keeps the older toolkit menu whose label wraps the file input.
+ */
 function createKimiDom({
+  layout = 'current',
   uploadAvailable = true,
   previewOnChange = true,
   previewDelayMs = 0,
@@ -180,7 +186,8 @@ function createKimiDom({
     <div id="chat-box">
       <div class="chat-editor">
         <div class="chat-input-editor" contenteditable="true"></div>
-        <div class="toolkit-trigger-btn">+</div>
+        <div class="toolkit-trigger-btn" data-testid="toolkit-trigger-btn" role="button" aria-haspopup="menu">+</div>
+        ${layout === 'current' && uploadAvailable ? '<input class="hidden-input" type="file" multiple>' : ''}
         <div class="send-button-container">Send</div>
         <div id="kimi-previews"></div>
       </div>
@@ -223,8 +230,45 @@ function createKimiDom({
     }
   }
 
+  function handleFileChange(fileInput) {
+    const file = fileInput.files[0];
+    uploadedNames.push(file.name);
+    if (!previewOnChange) return;
+    const outcome = remoteErrorPreview ? 'error' : 'success';
+    if (previewDelayMs <= 0) {
+      appendThumbnail(outcome, file.name);
+      return;
+    }
+
+    const { thumbnail, image } = appendThumbnail('loading', file.name);
+    setTimeout(() => {
+      if (replacePreviewOnDelay) {
+        thumbnail.remove();
+        appendThumbnail(outcome, file.name);
+        return;
+      }
+      thumbnail.classList.replace('loading', outcome);
+      image.src = outcome === 'success'
+        ? `https://www.kimi.com/apiv2-files/sign-obj/${file.name}`
+        : `https://statics.moonshot.cn/kimi-upload-error/${file.name}`;
+    }, previewDelayMs);
+  }
+
+  const hiddenInput = composer.querySelector('input.hidden-input');
+  hiddenInput?.addEventListener('change', () => handleFileChange(hiddenInput));
+
   toolkitTrigger.addEventListener('click', () => {
-    if (!uploadAvailable || document.getElementById('kimi-upload-entry')) return;
+    if (document.getElementById('kimi-upload-entry') || document.getElementById('kimi-toolkit-menu')) return;
+    if (layout === 'current') {
+      // The current menu item only forwards a click to the hidden input.
+      const menu = document.createElement('div');
+      menu.id = 'kimi-toolkit-menu';
+      menu.setAttribute('role', 'menu');
+      menu.innerHTML = '<button role="menuitem" data-testid="toolkit-file-item"><span class="toolkit-item__label">Add files &amp; images</span></button>';
+      document.body.append(menu);
+      return;
+    }
+    if (!uploadAvailable) return;
     const entry = document.createElement('label');
     entry.id = 'kimi-upload-entry';
     entry.textContent = language === 'en' ? 'Files and images' : '文件和图片';
@@ -236,29 +280,7 @@ function createKimiDom({
     markVisible(entry);
     document.body.append(entry);
 
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files[0];
-      uploadedNames.push(file.name);
-      if (!previewOnChange) return;
-      const outcome = remoteErrorPreview ? 'error' : 'success';
-      if (previewDelayMs <= 0) {
-        appendThumbnail(outcome, file.name);
-        return;
-      }
-
-      const { thumbnail, image } = appendThumbnail('loading', file.name);
-      setTimeout(() => {
-        if (replacePreviewOnDelay) {
-          thumbnail.remove();
-          appendThumbnail(outcome, file.name);
-          return;
-        }
-        thumbnail.classList.replace('loading', outcome);
-        image.src = outcome === 'success'
-          ? `https://www.kimi.com/apiv2-files/sign-obj/${file.name}`
-          : `https://statics.moonshot.cn/kimi-upload-error/${file.name}`;
-      }, previewDelayMs);
-    });
+    fileInput.addEventListener('change', () => handleFileChange(fileInput));
   });
 
   return { composer, sendButton, uploadedNames };
@@ -433,12 +455,24 @@ describe('provider image upload adapters', () => {
     expect(unrelatedInput.files).toHaveLength(0);
   });
 
+  it('uploads one Kimi image through the hidden composer input without an accept attribute', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    const { composer, uploadedNames } = createKimiDom();
+
+    dispatchImageInjection();
+    await finishSuccessfulInjection();
+
+    expect(uploadedNames).toEqual(['sample-one.png']);
+    expect(composer.querySelector('.image-thumbnail.success img.image-main')).not.toBeNull();
+    expect(document.getElementById('kimi-toolkit-menu')).toBeNull();
+  });
+
   it.each([
     ['Chinese', 'zh'],
     ['English', 'en'],
-  ])('uploads one Kimi image through the native %s toolkit entry', async (_name, language) => {
+  ])('uploads one Kimi image through the legacy %s toolkit entry', async (_name, language) => {
     window.happyDOM.setURL('https://www.kimi.com/');
-    const { composer, uploadedNames } = createKimiDom({ language });
+    const { composer, uploadedNames } = createKimiDom({ layout: 'legacy', language });
 
     dispatchImageInjection();
     await finishSuccessfulInjection();

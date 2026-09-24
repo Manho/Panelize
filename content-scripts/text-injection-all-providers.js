@@ -1013,7 +1013,48 @@
     return fallbackInput;
   }
 
+  /**
+   * Finds the AI Mode composer "+" menu trigger. Its aria-label is localized
+   * ("添加文件、工具并选择模型"), so it is located structurally as the menu button
+   * sharing the smallest ancestor with the visible composer textarea. The page
+   * also renders an unrelated "添加笔记本" button that must not be clicked.
+   */
+  function findGoogleComposerMenuTrigger() {
+    const composerInput = findDeepFirstVisibleElement(GOOGLE_AI_INPUT_SELECTORS);
+    for (let ancestor = composerInput?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const trigger = [...ancestor.querySelectorAll('button[aria-haspopup="menu"]')]
+        .find(isVisibleElement);
+      if (trigger) {
+        return trigger;
+      }
+    }
+    return null;
+  }
+
+  function closeGoogleComposerMenu() {
+    const trigger = findGoogleComposerMenuTrigger();
+    if (trigger?.getAttribute('aria-expanded') !== 'true') {
+      return;
+    }
+    const escape = { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true };
+    (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', escape));
+  }
+
   async function openGoogleImagePicker() {
+    // The current AI Mode composer only renders its hidden file inputs inside
+    // the "+" menu ("添加图片" item), so the menu has to be opened first.
+    const menuTrigger = findGoogleComposerMenuTrigger();
+    if (menuTrigger) {
+      if (menuTrigger.getAttribute('aria-expanded') !== 'true') {
+        menuTrigger.click();
+      }
+      await sleep(150);
+      const menuInput = findGoogleFileInput();
+      if (menuInput) {
+        return menuInput;
+      }
+    }
+
     const uploadButton = findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.google);
     if (uploadButton) {
       uploadButton.click();
@@ -2366,6 +2407,32 @@
     return false;
   }
 
+  /**
+   * Returns Kimi's native upload input. The current composer keeps a hidden
+   * multi-file input (no accept attribute) next to the toolkit trigger, and its
+   * "Add files & images" menu item only forwards a click to it. Older builds
+   * rendered the input inside a "文件和图片" label in the toolkit menu.
+   */
+  async function findKimiFileInput(composer) {
+    const composerInput = composer.querySelector('input[type="file"]');
+    if (composerInput) {
+      return composerInput;
+    }
+
+    const toolkitTrigger = composer.querySelector('.toolkit-trigger-btn');
+    if (!toolkitTrigger) {
+      return null;
+    }
+
+    let uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
+    if (!uploadEntry) {
+      toolkitTrigger.click();
+      await sleep(100);
+      uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
+    }
+    return uploadEntry?.querySelector('input[type="file"]') || null;
+  }
+
   async function injectImageToKimi(imageData, { retry = false } = {}) {
     try {
       const composer = getKimiComposer();
@@ -2396,23 +2463,11 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
       }
 
-      const toolkitTrigger = composer.querySelector('.toolkit-trigger-btn');
-      if (!toolkitTrigger) {
+      const fileInput = await findKimiFileInput(composer);
+      if (!fileInput) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
       }
-
-      let uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
-      if (!uploadEntry) {
-        toolkitTrigger.click();
-        await sleep(100);
-        uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
-      }
-      if (!uploadEntry) {
-        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
-      }
-
-      const fileInput = uploadEntry.querySelector('input[type="file"]');
-      if (!fileInput || !acceptsImageFiles(fileInput)) {
+      if (!acceptsImageFiles(fileInput)) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
@@ -2598,6 +2653,10 @@
           return false;
         }
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // Close the "+" menu only after the change event: the inputs live in
+        // the menu, and closing it first could detach them from the page.
+        await sleep(50);
+        closeGoogleComposerMenu();
         console.log('[Image Injection] Google: File input triggered');
         return true;
       }

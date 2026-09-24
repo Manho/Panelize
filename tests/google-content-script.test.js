@@ -65,6 +65,69 @@ function createGoogleAiImageUploadDom() {
   return { aiInput, addButton, sendButton };
 }
 
+/**
+ * Trimmed from the live AI Mode page (2026-09): the file inputs only exist
+ * inside the "+" menu, next to model and "generate image" options, and the page
+ * also shows an unrelated "添加笔记本" button.
+ */
+function createGoogleAiModeMenuDom() {
+  document.body.innerHTML = `
+    <button type="button" class="WET9nf" id="add-notebook">添加笔记本</button>
+    <div class="esoFne" role="presentation">
+      <textarea class="ITIRGe" aria-label="尽情提问" placeholder="尽情提问" maxlength="8192"></textarea>
+      <button class="uMMzHc hhGtFb" aria-label="添加文件、工具并选择模型" aria-haspopup="menu" aria-expanded="false">+</button>
+      <button type="button" data-xid="input-plate-send-button">Send</button>
+    </div>
+  `;
+
+  const aiInput = document.querySelector('textarea.ITIRGe');
+  const menuTrigger = document.querySelector('button[aria-haspopup="menu"]');
+  const notebookButton = document.getElementById('add-notebook');
+  [aiInput, menuTrigger, notebookButton].forEach(markVisible);
+  const clicked = [];
+  notebookButton.addEventListener('click', () => clicked.push('notebook'));
+
+  function closeMenu() {
+    document.querySelector('[data-is-aim-input-menu]')?.remove();
+    menuTrigger.setAttribute('aria-expanded', 'false');
+  }
+
+  menuTrigger.addEventListener('click', () => {
+    if (document.querySelector('[data-is-aim-input-menu]')) {
+      closeMenu();
+      return;
+    }
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('data-is-aim-input-menu', 'true');
+    menu.innerHTML = `
+      <button aria-label="添加图片" role="menuitem">添加图片
+        <input type="file" hidden="true" accept="image/avif,image/bmp,image/heic,image/heif,image/jpeg,image/png,image/tiff,image/webp" multiple="true">
+      </button>
+      <button aria-label="添加文件" role="menuitem">添加文件<input type="file" hidden="true" accept="" multiple="true"></button>
+      <button aria-label="生成图片" role="menuitemradio" aria-checked="false">生成图片</button>
+    `;
+    menu.querySelectorAll('button').forEach((item) => {
+      markVisible(item);
+      item.addEventListener('click', () => clicked.push(item.getAttribute('aria-label')));
+    });
+    document.body.append(menu);
+    menuTrigger.setAttribute('aria-expanded', 'true');
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMenu();
+  });
+
+  const uploads = [];
+  document.addEventListener('change', (event) => {
+    if (event.target.type === 'file') {
+      uploads.push({ accept: event.target.accept, names: [...event.target.files].map((file) => file.name) });
+    }
+  });
+
+  return { menuTrigger, clicked, uploads };
+}
+
 describe('google content script integration', () => {
   beforeAll(() => {
     if (typeof DataTransfer === 'undefined') {
@@ -237,5 +300,32 @@ describe('google content script integration', () => {
     expect(changeEventCount).toBe(1);
     expect(fileInput.files).toHaveLength(1);
     expect(fileInput.files[0].name).toBe('sample.png');
+  });
+
+  it('uploads through the image input inside the current AI Mode "+" menu', async () => {
+    window.happyDOM.setURL('https://www.google.com/search?udm=50');
+    const { menuTrigger, clicked, uploads } = createGoogleAiModeMenuDom();
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      text: '',
+      images: [{
+        name: 'sample.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII='
+      }],
+      autoSubmit: false,
+      providerMode: 'ai',
+      context: 'multi-panel',
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    expect(uploads).toEqual([{
+      accept: 'image/avif,image/bmp,image/heic,image/heif,image/jpeg,image/png,image/tiff,image/webp',
+      names: ['sample.png'],
+    }]);
+    expect(clicked).toEqual([]);
+    expect(menuTrigger.getAttribute('aria-expanded')).toBe('false');
   });
 });
