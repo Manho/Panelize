@@ -1,92 +1,28 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, it, expect } from 'vitest';
+import {
+  LAYOUT_PANEL_COUNTS,
+  getAutoAdjustedLayout,
+  getAutoShrunkLayout
+} from '../modules/layout-auto-adjust.js';
 
-// 模拟 LAYOUT_PANEL_COUNTS 常量
-const LAYOUT_PANEL_COUNTS = {
-  '1x1': 1,
-  '1x2': 2,
-  '1x3': 3,
-  '1x4': 4,
-  '1x5': 5,
-  '1x6': 6,
-  '1x7': 7,
-  '1x8': 8,
-  '1x9': 9,
-  '1x10': 10,
-  '1x11': 11,
-  '1x12': 12,
-  '2x1': 2,
-  '2x2': 4,
-  '2x3': 6,
-  '2x4': 8,
-  '2x5': 10,
-  '2x6': 12,
-  '3x1': 3,
-  '3x2': 6,
-  '3x3': 9,
-  '4x2': 8
-};
+describe('LAYOUT_PANEL_COUNTS', () => {
+  it('covers every layout offered by the multi-panel layout picker', () => {
+    const html = readFileSync(resolve(process.cwd(), 'multi-panel/multi-panel.html'), 'utf8');
+    const pickerLayouts = [...new Set([...html.matchAll(/data-layout="([^"]+)"/g)].map(([, layout]) => layout))];
 
-// 被测试的函数（从 multi-panel.js 复制）
-function getAutoAdjustedLayout(currentLayout, newPanelCount) {
-  if (currentLayout === '4x2' && newPanelCount === 9) {
-    return '1x9';
-  }
+    expect(pickerLayouts.length).toBeGreaterThan(0);
+    expect(Object.keys(LAYOUT_PANEL_COUNTS).sort()).toEqual(pickerLayouts.sort());
+  });
 
-  // Only handle 1xN layouts.
-  const match = currentLayout.match(/^1x(\d+)$/);
-  if (!match) return null;
-  
-  const currentCols = parseInt(match[1]);
-  const currentCapacity = LAYOUT_PANEL_COUNTS[currentLayout];
-  
-  // Keep the current layout while the new panel still fits.
-  if (newPanelCount <= currentCapacity) return null;
-  
-  if (currentLayout === '1x7' && newPanelCount === 8) {
-    return '4x2';
-  }
-
-  // Advance to the next 1xN layout.
-  const nextCols = currentCols + 1;
-  const nextLayout = `1x${nextCols}`;
-  
-  // 1x8 remains manual because auto-expand prefers 4x2 for the 8th panel.
-  if (LAYOUT_PANEL_COUNTS[nextLayout]) {
-    return nextLayout;
-  }
-  
-  return null;
-}
-
-// New auto-shrink function (from multi-panel.js)
-function getAutoShrunkLayout(currentLayout, newPanelCount) {
-  if (currentLayout === '1x9' && newPanelCount === 8) {
-    return '4x2';
-  }
-
-  if (currentLayout === '4x2' && newPanelCount === 7) {
-    return '1x7';
-  }
-
-  // Only handle 1xN layouts (consistent with auto-expand behavior)
-  const match = currentLayout.match(/^1x(\d+)$/);
-  if (!match) return null;
-
-  const currentCols = parseInt(match[1]);
-
-  // No need to shrink if panel count already matches or exceeds column count
-  if (newPanelCount >= currentCols) return null;
-
-  // Shrink to match panel count (minimum 1x1)
-  const targetCols = Math.max(newPanelCount, 1);
-  const targetLayout = `1x${targetCols}`;
-
-  if (LAYOUT_PANEL_COUNTS[targetLayout]) {
-    return targetLayout;
-  }
-
-  return null;
-}
+  it('matches rows x columns for every layout', () => {
+    for (const [layout, count] of Object.entries(LAYOUT_PANEL_COUNTS)) {
+      const [rows, cols] = layout.split('x').map(Number);
+      expect(count, layout).toBe(rows * cols);
+    }
+  });
+});
 
 describe('Layout Auto-Adjust', () => {
   describe('getAutoAdjustedLayout', () => {

@@ -174,6 +174,31 @@ describe('Qwen content script integration', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
+  // Markup captured from the live sites on 2026-09-23: the controls are no
+  // longer <button> elements.
+  it.each([
+    ['China', 'https://www.qianwen.com/', `
+      <aside id="new-nav-tab-wrapper">
+        <div data-session-switch-target="new-chat" class="cursor-pointer">
+          <span data-role="icon" data-icon-type="qwpcicon-newDialogue"></span>
+        </div>
+      </aside>
+    `],
+    ['Global', 'https://chat.qwen.ai/', `
+      <div role="button" tabindex="0" aria-label="New Chat" class="new-chat"></div>
+    `],
+  ])('uses the current div-based new chat control for Qwen %s', (_name, url, markup) => {
+    window.happyDOM.setURL(url);
+    document.body.innerHTML = markup;
+    const newChatControl = document.querySelector('[data-session-switch-target="new-chat"], .new-chat');
+    const clickSpy = vi.fn();
+    newChatControl.addEventListener('click', clickSpy);
+
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
   function dispatchImageInjection({ requestId } = {}) {
     dispatchMultiPanelMessage({
       type: 'INJECT_TEXT_WITH_IMAGES',

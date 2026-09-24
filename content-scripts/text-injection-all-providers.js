@@ -14,6 +14,8 @@
   const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
   const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
   const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
+  const PANELIZE_RESTORE_USER_FOCUS = 'PANELIZE_RESTORE_USER_FOCUS';
+  const USER_FOCUS_RESTORE_WINDOW_MS = 2000;
   const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
   const CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS = 2000;
@@ -36,6 +38,9 @@
   let multiPanelUserInteractionTracking = null;
   let yuanbaoTemporaryChatActivation = null;
   let yuanbaoTemporaryChatLastClickAt = -Infinity;
+  // Element the user focused with the interaction reported to multi-panel,
+  // in case the parent's focus restore took focus away before it heard back.
+  let lastUserFocus = null;
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
 
@@ -207,6 +212,8 @@
       'form button:has(svg)'
     ],
     deepseek: [
+      // Current site: a design-system div button that is disabled by class.
+      'div[role="button"].ds-button--primary.ds-button--filled:not(.ds-button--disabled)',
       'button[aria-label="Send"]',
       'button[type="submit"]'
     ],
@@ -285,6 +292,9 @@
       'a[href*="new"]'
     ],
     deepseek: [
+      // Current site: the sidebar "New chat" item is a focusable div with an
+      // icon and a label and no role; its only class is a build hash.
+      'div[tabindex="0"]:not([role]):has(> .ds-icon):has(> span)',
       'button[aria-label*="New"]',
       'a[href="/"]',
       'div[class*="new-chat"]'
@@ -295,6 +305,7 @@
       '.sidebar a[href="/"]'
     ],
     doubao: [
+      '#flow_chat_sidebar [data-testid="create_conversation_button"]',
       '#flow_chat_sidebar > div.cursor-pointer',
       '#flow_chat_sidebar > div[class*="cursor-pointer"]',
       'button[data-testid="new-chat-button"]',
@@ -307,10 +318,12 @@
       'button[aria-label*="新建"]'
     ],
     'qwen-cn': [
+      '#new-nav-tab-wrapper [data-session-switch-target="new-chat"]',
       '#new-nav-tab-wrapper button:has([data-icon-type="qwpcicon-newDialogue"])'
     ],
     'qwen-global': [
       'button.new-chat',
+      '[role="button"].new-chat',
       '[data-testid="sidebar-new-chat-button"]'
     ],
     chatglm: ['.aside-subjects .new-session'],
@@ -615,6 +628,33 @@
     reportIfChanged();
   }
 
+  function rememberUserFocus() {
+    const entry = { element: null, at: Date.now() };
+    lastUserFocus = entry;
+    // Focus moves after pointerdown, so capture the element it lands on.
+    const captureFocus = (event) => {
+      if (lastUserFocus === entry && !entry.element) {
+        entry.element = event.target;
+      }
+    };
+    document.addEventListener('focusin', captureFocus, { capture: true, once: true });
+    setTimeout(() => document.removeEventListener('focusin', captureFocus, true), USER_FOCUS_RESTORE_WINDOW_MS);
+  }
+
+  function restoreUserFocus() {
+    const entry = lastUserFocus;
+    lastUserFocus = null;
+    if (!entry?.element?.isConnected || Date.now() - entry.at > USER_FOCUS_RESTORE_WINDOW_MS) {
+      return;
+    }
+
+    try {
+      entry.element.focus({ preventScroll: true });
+    } catch {
+      entry.element.focus();
+    }
+  }
+
   function stopMultiPanelUserInteractionTracking() {
     const tracking = multiPanelUserInteractionTracking;
     if (!tracking) {
@@ -652,6 +692,7 @@
         return;
       }
 
+      rememberUserFocus();
       postMultiPanelProviderStatus(
         PANELIZE_PROVIDER_USER_INTERACTION,
         tracking.requestId,
@@ -3088,6 +3129,11 @@
   function handleTextInjection(event) {
     // Validate event data structure
     if (!event || !event.data || typeof event.data !== 'object') {
+      return;
+    }
+
+    if (event.data.type === PANELIZE_RESTORE_USER_FOCUS && event.data.context === 'multi-panel') {
+      restoreUserFocus();
       return;
     }
 

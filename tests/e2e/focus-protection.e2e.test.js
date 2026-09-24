@@ -1,299 +1,269 @@
-import { test, expect, chromium } from '@playwright/test';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { getBrowserLaunchOptions } from './browser-launch-options.js';
+import { test, expect } from '@playwright/test';
+import { launchExtension, openMultiPanel } from './extension-harness.js';
+import { renderChatgptFixture } from './fixtures/chatgpt-fixture.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const EXTENSION_PATH = path.resolve(__dirname, '../..');
+// Mirrors LOAD_GRACE_PERIOD in multi-panel.js: panels keep focus protection
+// for this long after their iframe fires `load`.
+const LOAD_GRACE_PERIOD_MS = 3000;
+const PROVIDER_HOSTS = {
+  chatgpt: 'chatgpt.com',
+  gemini: 'gemini.google.com',
+  grok: 'grok.com',
+};
 
-test.describe('Focus Protection E2E', () => {
-  test.setTimeout(60000);
+/**
+ * Focus protection runs against the real multi-panel page and the real content
+ * script. Provider sites are replaced by fixture pages that autofocus their
+ * composer the way live SPAs do, so every assertion exercises production code.
+ */
+test.describe('Focus protection E2E', () => {
+  test.setTimeout(45000);
 
-  let browser;
-  let context;
+  let extension;
   let page;
+  let fixtureConfigByHost = {};
 
   test.beforeAll(async () => {
-    browser = await chromium.launch(getBrowserLaunchOptions({
-      headless: false,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }));
-    context = await browser.newContext({
-      viewport: { width: 1024, height: 768 }
-    });
-  });
-
-  test.beforeEach(async () => {
-    page = await context.newPage();
-    await page.goto(`file://${EXTENSION_PATH}/tests/e2e/test-focus-protection.html`);
-    await page.waitForLoadState('networkidle');
+    extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+    for (const host of Object.values(PROVIDER_HOSTS)) {
+      await extension.context.route(`https://${host}/**`, (route) => route.fulfill({
+        contentType: 'text/html',
+        body: renderChatgptFixture(fixtureConfigByHost[host]),
+      }));
+    }
   });
 
   test.afterEach(async () => {
-    await page.close();
+    await page?.close();
+    page = null;
+    fixtureConfigByHost = {};
   });
 
   test.afterAll(async () => {
-    await browser.close().catch(() => {});
+    await extension?.close();
   });
 
-  test('Test 0: Unified input should be focused when page first opens', async () => {
-    await page.waitForFunction(() => window.getActiveElementId() === 'unified-input');
+  async function openPanels(configByProvider, layout = '1x1') {
+    const providers = Object.keys(configByProvider);
+    fixtureConfigByHost = Object.fromEntries(
+      providers.map((providerId) => [PROVIDER_HOSTS[providerId], configByProvider[providerId]])
+    );
+    page = await openMultiPanel(extension, { providers, layout });
+    await Promise.all(providers.map((providerId) => waitForFixtureReady(providerId)));
+  }
 
-    let activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+  function providerFrame(providerId) {
+    const host = PROVIDER_HOSTS[providerId];
+    return page.frames().find((frame) => new URL(frame.url()).host === host);
+  }
 
-    await page.evaluate(() => window.addFocusStealingIframe(100));
-    await page.waitForTimeout(800);
+  async function waitForFixtureReady(providerId) {
+    await expect.poll(async () => {
+      const frame = providerFrame(providerId);
+      return frame ? frame.evaluate(() => Boolean(window.__fixture)).catch(() => false) : false;
+    }).toBe(true);
+  }
 
-    activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
-  });
+  async function fixtureState(providerId) {
+    return providerFrame(providerId).evaluate(() => window.__fixture);
+  }
 
-  test('Test 1: Focus should stay on textarea when iframe steals focus during loading', async () => {
+  async function waitForSteals(providerId, reason, count) {
+    await expect.poll(async () => {
+      const state = await fixtureState(providerId);
+      return state.steals.filter((steal) => steal.reason === reason).length;
+    }, { timeout: 20000 }).toBe(count);
+    // Let the multi-panel blur handler and requestAnimationFrame refocus settle.
+    await page.waitForTimeout(300);
+  }
+
+  async function activeElementLabel() {
+    return page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
+  }
+
+  async function waitForLoadGracePeriod() {
+    await page.waitForTimeout(LOAD_GRACE_PERIOD_MS + 300);
+  }
+
+  async function stealFocusFromProvider(providerId) {
+    await providerFrame(providerId).evaluate(() => {
+      document.getElementById('prompt-textarea').focus();
+    });
+  }
+
+  test('control: a loaded provider panel can take focus once protection ends', async () => {
+    await openPanels({ chatgpt: {} });
+    await waitForLoadGracePeriod();
     await page.click('#unified-input');
-    await page.waitForTimeout(100);
 
-    let activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    await stealFocusFromProvider('chatgpt');
 
-    // Add iframe that tries to steal focus (it will be in "loading" state)
-    await page.evaluate(() => window.addFocusStealingIframe(100));
-
-    // Wait for focus steal attempt
-    await page.waitForTimeout(800);
-
-    // Focus should still be on textarea (protected while loading)
-    activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    // Without this, every "focus stays on the unified input" assertion below
+    // could pass simply because the fixture iframe is unable to take focus.
+    await expect.poll(activeElementLabel).toBe('IFRAME');
   });
 
-  test('Test 2: Focus should stay on textarea while typing when iframe loads', async () => {
+  test('keeps the unified input focused while a panel autofocuses during load', async () => {
+    await openPanels({ chatgpt: { loadStealDelays: [300, 800, 1500] } });
+    await expect.poll(activeElementLabel).toBe('unified-input');
+
+    await page.keyboard.type('hello world', { delay: 80 });
+    await waitForSteals('chatgpt', 'load', 3);
+
+    expect(await activeElementLabel()).toBe('unified-input');
+    await expect(page.locator('#unified-input')).toHaveValue('hello world');
+  });
+
+  test('keeps focus while several panels autofocus at different times', async () => {
+    await openPanels({
+      chatgpt: { loadStealDelays: [200] },
+      gemini: { loadStealDelays: [700] },
+      grok: { loadStealDelays: [1400] },
+    }, '1x3');
     await page.click('#unified-input');
-    await page.waitForTimeout(50);
-    await page.keyboard.type('hel', { delay: 80 });
 
-    // Add iframe that steals focus quickly
-    await page.evaluate(() => window.addFocusStealingIframe(50));
+    await Promise.all([
+      waitForSteals('chatgpt', 'load', 1),
+      waitForSteals('gemini', 'load', 1),
+      waitForSteals('grok', 'load', 1),
+    ]);
 
-    // Continue typing
-    await page.keyboard.type('lo world', { delay: 80 });
+    expect(await activeElementLabel()).toBe('unified-input');
+  });
+
+  test('lets the user click into a panel after loading finishes', async () => {
+    await openPanels({ chatgpt: {} });
+    await waitForLoadGracePeriod();
+    await page.click('#unified-input');
+
+    await page.frameLocator('iframe').locator('#prompt-textarea').click();
     await page.waitForTimeout(500);
 
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
-
-    const value = await page.inputValue('#unified-input');
-    expect(value).toContain('hel');
+    expect(await activeElementLabel()).toBe('IFRAME');
   });
 
-  test('Test 3: Focus should stay when multiple iframes load at different times', async () => {
+  test('re-enables protection when a panel is refreshed', async () => {
+    await openPanels({ chatgpt: {} });
+    await waitForLoadGracePeriod();
+
+    fixtureConfigByHost[PROVIDER_HOSTS.chatgpt] = { loadStealDelays: [400, 1000] };
+    await page.click('.refresh-panel-btn');
     await page.click('#unified-input');
-    await page.keyboard.type('test', { delay: 50 });
+    await waitForFixtureReady('chatgpt');
+    await waitForSteals('chatgpt', 'load', 2);
 
-    // Add multiple iframes with staggered timings
-    await page.evaluate(() => {
-      window.addFocusStealingIframe(100);
-      window.addFocusStealingIframe(300);
-      window.addFocusStealingIframe(600);
-    });
-
-    await page.waitForTimeout(1200);
-
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    expect(await activeElementLabel()).toBe('unified-input');
   });
 
-  test('Test 4: After all iframes loaded, user can click into iframe freely', async () => {
-    await page.click('#unified-input');
-    await page.waitForTimeout(50);
-
-    // Add iframe and wait for it to fully load + grace period (3s)
-    await page.evaluate(() => window.addFocusStealingIframe(50));
-    await page.waitForTimeout(4000);
-
-    // Verify loading count is 0 (all loaded)
-    const loadingCount = await page.evaluate(() => window.getLoadingCount());
-    expect(loadingCount).toBe(0);
-
-    // Now simulate user clicking the iframe — focus should NOT be pulled back
-    // Dispatch mousedown on iframe (simulates real click) then focus it
-    const moved = await page.evaluate(() => {
-      const iframe = document.querySelector('iframe');
-      iframe.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      iframe.focus();
-      return document.activeElement === iframe;
-    });
-    expect(moved).toBe(true);
-
-    await page.waitForTimeout(200);
-
-    // Focus should stay on iframe (no protection since loading is done)
-    const activeTag = await page.evaluate(() => window.getActiveElementTag());
-    expect(activeTag).toBe('IFRAME');
-  });
-
-  test('Test 5: Rapid iframe reloads should not steal focus', async () => {
-    await page.click('#unified-input');
-    await page.keyboard.type('important text', { delay: 30 });
-
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate((delay) => window.addFocusStealingIframe(delay), 50 + i * 100);
-      await page.waitForTimeout(50);
-    }
-
-    await page.waitForTimeout(1000);
-
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
-  });
-
-  test('Test 6: Focus protection re-activates when new iframe starts loading', async () => {
+  test('new chat restore beats delayed composer autofocus', async () => {
+    await openPanels({ chatgpt: { newChatStealDelays: [100, 300, 900] } });
+    await waitForLoadGracePeriod();
     await page.click('#unified-input');
 
-    // Add iframe and wait for it to finish loading + grace period
-    await page.evaluate(() => window.addFocusStealingIframe(50));
-    await page.waitForTimeout(4000);
-
-    let loadingCount = await page.evaluate(() => window.getLoadingCount());
-    expect(loadingCount).toBe(0);
-
-    // Now add a new iframe (simulates adding a new panel)
-    // Focus should be protected again while it loads
-    await page.click('#unified-input');
-    await page.waitForTimeout(50);
-    await page.evaluate(() => window.addFocusStealingIframe(100));
-
-    await page.waitForTimeout(500);
-
-    // Focus should still be on textarea (protected during second load)
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
-  });
-
-  test('Test 7: New chat focus restore should beat delayed iframe autofocus', async () => {
-    await page.evaluate(() => window.addControlledIframe());
-    await page.evaluate(() => window.setNewChatFocusStealDelays([100, 300, 900]));
-
-    await page.click('#unified-input');
-    await page.waitForTimeout(50);
     await page.click('#new-chat-btn');
-    await page.waitForTimeout(1300);
+    await waitForSteals('chatgpt', 'new-chat', 3);
 
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    expect((await fixtureState('chatgpt')).newChats).toBe(1);
+    expect(await activeElementLabel()).toBe('unified-input');
   });
 
-  test('Test 8: User interaction should cancel new chat focus restore', async () => {
-    await page.evaluate(() => window.addControlledIframe());
-    await page.waitForTimeout(3200);
-    await page.evaluate(() => window.setNewChatFocusStealDelays([100, 300, 900]));
-
+  test('clicking elsewhere cancels the new chat focus restore', async () => {
+    await openPanels({ chatgpt: { newChatStealDelays: [900] } });
+    await waitForLoadGracePeriod();
     await page.click('#unified-input');
-    await page.waitForTimeout(50);
+
     await page.click('#new-chat-btn');
     await page.waitForTimeout(150);
+    await page.click('.panel-header-left span');
+    await waitForSteals('chatgpt', 'new-chat', 1);
 
-    await page.click('#other-control-input');
-    const debugState = await page.evaluate(() => window.getNewChatRestoreDebugState());
-    expect(debugState.userIntentCancelCount).toBeGreaterThan(0);
-    expect(debugState.pendingTimerCount).toBe(0);
-
-    await page.focus('#other-control-input');
-    await page.waitForTimeout(1000);
-
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).not.toBe('unified-input');
+    // The restore timers at 1000-1500ms must not pull focus back.
+    await page.waitForTimeout(800);
+    expect(await activeElementLabel()).toBe('IFRAME');
   });
 
-  test('Test 9: Send all button should keep unified input focused', async () => {
-    await page.evaluate(() => window.addControlledIframe());
-    await page.evaluate(() => {
-      window.setSendFocusStealDelays([100, 1000, 4000, 9000, 12500]);
-      window.setSendProviderStatusTimeline([
-        { delay: 100, type: 'PANELIZE_PROVIDER_BUSY' },
-        { delay: 13000, type: 'PANELIZE_PROVIDER_IDLE' }
-      ]);
+  test('send all keeps focus while ChatGPT streams, then releases it', async () => {
+    test.setTimeout(60000);
+    await openPanels({
+      chatgpt: { sendStealDelays: [100, 1000, 4000, 9000, 12500], busyAfterSendMs: 13000 },
     });
+    await waitForLoadGracePeriod();
 
     await page.fill('#unified-input', 'hello');
     await page.click('#send-all-btn');
-    await page.waitForTimeout(12800);
+    await waitForSteals('chatgpt', 'send', 5);
 
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    expect((await fixtureState('chatgpt')).sentTexts).toEqual(['hello']);
+    expect(await activeElementLabel()).toBe('unified-input');
+
+    // Once the stop button is gone the content script reports IDLE and the
+    // panel may take focus again.
+    await providerFrame('chatgpt').waitForSelector('[data-testid="stop-button"]', { state: 'detached' });
+    await page.waitForTimeout(1200);
+    await stealFocusFromProvider('chatgpt');
+    await expect.poll(activeElementLabel).toBe('IFRAME');
   });
 
-  test('Test 10: Enter send should keep unified input focused', async () => {
-    await page.evaluate(() => window.addControlledIframe());
-    await page.evaluate(() => window.setSendFocusStealDelays([100, 1200, 4200]));
+  test('Enter send keeps the unified input focused', async () => {
+    await openPanels({ chatgpt: { sendStealDelays: [100, 1200, 4200] } });
+    await waitForLoadGracePeriod();
 
-    await page.focus('#unified-input');
+    await page.click('#unified-input');
     await page.keyboard.type('hello');
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(4800);
+    await waitForSteals('chatgpt', 'send', 3);
 
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    expect((await fixtureState('chatgpt')).sentTexts).toEqual(['hello']);
+    expect(await activeElementLabel()).toBe('unified-input');
   });
 
-  test('Test 11: Trigger-send path should keep unified input focused', async () => {
-    await page.evaluate(() => window.addControlledIframe());
-    await page.evaluate(() => window.setSendFocusStealDelays([100, 1000, 2500]));
+  test('sending after fill triggers provider send buttons and keeps focus', async () => {
+    await openPanels({ chatgpt: { sendStealDelays: [100, 1000, 2500] } });
+    await waitForLoadGracePeriod();
 
-    await page.focus('#unified-input');
-    await page.waitForTimeout(50);
-    await page.evaluate(() => window.triggerSendAllWithoutText());
-    await page.waitForTimeout(3200);
+    await page.fill('#unified-input', 'filled first');
+    await page.click('#fill-input-btn');
+    await expect(page.frameLocator('iframe').locator('#prompt-textarea')).toHaveText('filled first');
 
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).toBe('unified-input');
+    await page.fill('#unified-input', '');
+    await page.click('#send-all-btn');
+    await waitForSteals('chatgpt', 'send', 3);
+
+    expect((await fixtureState('chatgpt')).sentTexts).toEqual(['filled first']);
+    expect(await activeElementLabel()).toBe('unified-input');
   });
 
-  test('Test 12: User interaction should cancel send focus restore', async () => {
-    await page.evaluate(() => window.addControlledIframe());
-    await page.waitForTimeout(3200);
-    await page.evaluate(() => window.setSendFocusStealDelays([100, 1000, 4000]));
+  test('clicking elsewhere cancels the send focus restore', async () => {
+    await openPanels({ chatgpt: { sendStealDelays: [1000] } });
+    await waitForLoadGracePeriod();
 
     await page.fill('#unified-input', 'hello');
     await page.click('#send-all-btn');
     await page.waitForTimeout(150);
+    await page.click('.panel-header-left span');
+    await waitForSteals('chatgpt', 'send', 1);
 
-    await page.click('#other-control-input');
-    const debugState = await page.evaluate(() => window.getSendRestoreDebugState());
-    expect(debugState.userIntentCancelCount).toBeGreaterThan(0);
-    expect(debugState.pendingTimerCount).toBe(0);
-
-    await page.focus('#other-control-input');
-    await page.waitForTimeout(4200);
-
-    const activeId = await page.evaluate(() => window.getActiveElementId());
-    expect(activeId).not.toBe('unified-input');
+    // Restore timers at 1500ms and later must not pull focus back.
+    await page.waitForTimeout(1500);
+    expect(await activeElementLabel()).toBe('IFRAME');
   });
 
-  test('Test 13: Provider interaction message should cancel send focus restore', async () => {
-    await page.evaluate(() => {
-      window.setControlledIframeProvider('gemini');
-      return window.addControlledIframe();
-    });
-    await page.waitForTimeout(3200);
-    await page.evaluate(() => {
-      window.setSendFocusStealDelays([100, 1000, 4000]);
-      window.setSendProviderStatusTimeline([
-        { delay: 300, type: 'PANELIZE_PROVIDER_USER_INTERACTION' }
-      ]);
-    });
+  test('clicking inside a provider panel cancels the send focus restore', async () => {
+    // Regression: the unified input blur handler used to refocus before the
+    // provider's USER_INTERACTION message arrived, undoing the first click.
+    await openPanels({ chatgpt: {} });
+    await waitForLoadGracePeriod();
 
     await page.fill('#unified-input', 'hello');
     await page.click('#send-all-btn');
-    await page.waitForTimeout(4200);
+    await expect.poll(async () => (await fixtureState('chatgpt')).sends).toBe(1);
 
-    const debugState = await page.evaluate(() => window.getSendRestoreDebugState());
-    expect(debugState.pendingTimerCount).toBe(0);
-    expect(debugState.activePanelCount).toBe(0);
+    // A trusted click inside the iframe makes the content script report
+    // PANELIZE_PROVIDER_USER_INTERACTION, which must stop the restore loop.
+    await page.frameLocator('iframe').locator('#prompt-textarea').click();
+    await page.waitForTimeout(2800);
 
-    const activeTag = await page.evaluate(() => window.getActiveElementTag());
-    expect(activeTag).toBe('IFRAME');
+    expect(await activeElementLabel()).toBe('IFRAME');
+    expect(await providerFrame('chatgpt').evaluate(() => document.activeElement?.id)).toBe('prompt-textarea');
   });
 });
