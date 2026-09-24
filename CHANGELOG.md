@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0 - 2026-09-24
+- Added Tencent Yuanbao as an optional provider with text fill, Enter to send, new chat, image upload and temporary chat.
+- Fixed Send All and New Chat for DeepSeek with its current site controls.
+- Fixed New Chat for All on Doubao and Qwen with their current site controls.
+- Fixed the first click into a panel being pulled back to the unified input right after Send All.
+- Fixed image fill for Kimi and Google AI Mode with their current upload controls.
+
 ## 1.2.9 - 2026-09-22
 - Fix Doubao text injection for the current TipTap/ProseMirror composer.
 
