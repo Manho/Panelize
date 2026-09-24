@@ -29,8 +29,21 @@ const NEW_CHAT_VIA_URL_IN_PANEL = {
 
 const LIVE_TOKEN_PREFIX = 'panelize-live-';
 
+const LIVE_TOKEN_PATTERN = /panelize-live-[a-z-]+-\d+/g;
+
 /** Time for a site to save or restore a composer draft (Claude needs over 2s). */
 const DRAFT_SAVE_DELAY_MS = 4000;
+
+/** How long a reloaded panel is watched for a restored draft. */
+const DRAFT_RESTORE_WATCH_MS = 10000;
+
+/**
+ * Composer text with every live test token removed, i.e. what the user wrote.
+ * @param {string} text
+ */
+function withoutLiveTokens(text) {
+  return text.replace(LIVE_TOKEN_PATTERN, '').trim();
+}
 
 const providers = getSelectedProviders();
 const providerIds = providers.map((provider) => provider.id);
@@ -119,20 +132,67 @@ test.describe('Live provider smoke', () => {
   }
 
   /**
+   * Text of the provider's composer, found with the production
+   * PROVIDER_SELECTORS. Unlike composerContains it throws when the composer is
+   * missing or the frame cannot be read, so a check cannot pass by accident.
+   * @param {string} providerId
+   * @returns {Promise<string>}
+   */
+  async function readComposerText(providerId) {
+    const text = await panelFrame.evaluate((selectors) => {
+      for (const selector of selectors) {
+        const elements = [...document.querySelectorAll(selector)];
+        if (elements.length > 0) {
+          return elements.map((element) => {
+            if (element.value !== undefined) {
+              return element.value;
+            }
+            // Slate (qwen-cn) renders its placeholder as a non-editable node
+            // plus a zero-width character; neither is text the user typed.
+            const copy = element.cloneNode(true);
+            copy.querySelectorAll('[contenteditable="false"]').forEach((node) => node.remove());
+            return copy.textContent.replace(/[\u200B-\u200D\uFEFF]/g, '');
+          }).join('\n');
+        }
+      }
+      return null;
+    }, PROVIDER_SELECTORS[providerId]);
+    if (text === null) {
+      throw new Error(`${providerId}: no PROVIDER_SELECTORS composer on the page`);
+    }
+    return text;
+  }
+
+  /**
    * Empties the composer that holds `token`. Several sites (claude.ai among
    * them) save composer drafts, so a leftover token would reappear for the user.
    * Retries because a site can re-render the composer between steps.
    */
   async function clearComposer(token) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const marked = await panelFrame.evaluate((text) => {
+      const found = await panelFrame.evaluate((text) => {
         const element = [...document.querySelectorAll('textarea, input, [contenteditable]:not([contenteditable="false"])')]
           .find((candidate) => (candidate.value ?? candidate.textContent ?? '').includes(text));
-        element?.setAttribute('data-panelize-live-clear', '');
-        return Boolean(element);
-      }, token).catch(() => false);
-      if (!marked) {
+        if (!element) {
+          return null;
+        }
+        element.setAttribute('data-panelize-live-clear', '');
+        if (element.value !== undefined) {
+          return element.value;
+        }
+        // Same placeholder handling as readComposerText.
+        const copy = element.cloneNode(true);
+        copy.querySelectorAll('[contenteditable="false"]').forEach((node) => node.remove());
+        return copy.textContent.replace(/[\u200B-\u200D\uFEFF]/g, '');
+      }, token).catch(() => null);
+      if (found === null) {
         return;
+      }
+      // Select-all + delete must only ever remove test tokens.
+      if (withoutLiveTokens(found)) {
+        await panelFrame.evaluate(() => document.querySelector('[data-panelize-live-clear]')
+          ?.removeAttribute('data-panelize-live-clear')).catch(() => {});
+        throw new Error('The composer also holds user text; left it untouched');
       }
       // Key presses go through the element: page.keyboard can land in the
       // unified input when the multi-panel focus restore takes focus back, and
@@ -193,6 +253,13 @@ test.describe('Live provider smoke', () => {
         `${provider.id}: Cloudflare challenge in the panel; click it in the window and rerun`
       ).toBe(false);
 
+      // Fill adds to what is already in the composer, and the cleanup below
+      // empties it, so never run on top of a draft the user wrote. Wait for a
+      // saved draft to be restored first.
+      await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
+      const userDraft = withoutLiveTokens(await readComposerText(provider.id));
+      test.skip(Boolean(userDraft), `${provider.id}: the composer holds a user draft; skipped so it is not touched`);
+
       await page.fill('#unified-input', token);
       await page.click('#fill-input-btn');
 
@@ -227,17 +294,35 @@ test.describe('Live provider smoke', () => {
         // Sites that save drafts (Claude, Kimi) debounce the save, so give the
         // empty state time to persist, then reload to prove nothing is left.
         await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
-        await panelFrame.evaluate(() => location.reload()).catch(() => {});
+        // waitForLoadState alone resolves at once with the old document's
+        // state, so tag the old document and wait until it is gone.
+        await panelFrame.evaluate(() => {
+          window.panelizeLiveBeforeReload = true;
+          location.reload();
+        }).catch(() => {});
+        await expect.poll(() => panelFrame.evaluate(() => !window.panelizeLiveBeforeReload).catch(() => false), {
+          timeout: 45000,
+          message: `${provider.id}: the panel did not reload`,
+        }).toBe(true);
         await panelFrame.waitForLoadState('load', { timeout: 45000 });
-        await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
-        // Match any run's token, so drafts left by an earlier interrupted run
-        // are reported (and removed) too.
-        const draftLeft = await composerContains(LIVE_TOKEN_PREFIX);
-        if (draftLeft) {
+        await expect.poll(() => firstMatchingSelector(PROVIDER_SELECTORS[provider.id]), {
+          timeout: 30000,
+          message: `${provider.id}: the composer did not come back after reload`,
+        }).not.toBeNull();
+        // Drafts are restored some time after the composer renders, so watch
+        // for a while. Any run's token counts, so drafts left by an earlier
+        // interrupted run are reported (and removed) too.
+        let restoredDraft = '';
+        for (const deadline = Date.now() + DRAFT_RESTORE_WATCH_MS; Date.now() < deadline && !restoredDraft;) {
+          const text = await readComposerText(provider.id);
+          restoredDraft = text.match(LIVE_TOKEN_PATTERN) ? text : '';
+          await page.waitForTimeout(500);
+        }
+        if (restoredDraft) {
           await clearComposer(LIVE_TOKEN_PREFIX);
           await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
         }
-        expect(draftLeft, `${provider.id}: filled text came back as a saved draft after reload`).toBe(false);
+        expect(restoredDraft, `${provider.id}: filled text came back as a saved draft after reload`).toBe('');
         return;
       }
 
