@@ -67,15 +67,15 @@ export async function fetchLatestRelease() {
     }
 
     const version = versionMatch[1];
-    const expectedAssetName = `panelize-${version}-release.zip`;
-    const releaseAsset = Array.isArray(release.assets)
-      ? release.assets.find(asset => asset?.name === expectedAssetName)
-      : null;
 
+    // Do not surface a direct asset download link: GitHub release assets are
+    // not signed, so there is no way to verify artifact integrity before
+    // download. Always send users to the release page, where they can review
+    // the release and download it through GitHub's UI.
     return {
       version,
       releaseUrl: release.html_url,
-      downloadUrl: releaseAsset?.browser_download_url || release.html_url
+      downloadUrl: release.html_url
     };
   } catch (error) {
     console.error('Error fetching latest GitHub release:', error);
