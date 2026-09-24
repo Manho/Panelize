@@ -14,6 +14,24 @@ import {
 
 const SEND_BUTTON_SELECTORS = readContentScriptSelectorTable('SEND_BUTTON_SELECTORS');
 const NEW_CHAT_BUTTON_SELECTORS = readContentScriptSelectorTable('NEW_CHAT_BUTTON_SELECTORS');
+const NEW_CHAT_URLS = readContentScriptSelectorTable('NEW_CHAT_URLS');
+const PROVIDER_SELECTORS = readContentScriptSelectorTable('PROVIDER_SELECTORS');
+
+/**
+ * Providers whose page renders no new chat control inside the panel iframe, so
+ * NEW_CHAT always uses the NEW_CHAT_URLS fallback there. Checked live on
+ * 2026-09-24: claude.ai shows its sidebar (with `a[href="/new"]`) as a top-level
+ * page but not in an iframe of the same width.
+ */
+const NEW_CHAT_VIA_URL_IN_PANEL = {
+  claude: 'claude.ai hides its sidebar when embedded in an iframe',
+};
+
+const LIVE_TOKEN_PREFIX = 'panelize-live-';
+
+/** Time for a site to save or restore a composer draft (Claude needs over 2s). */
+const DRAFT_SAVE_DELAY_MS = 4000;
+
 const providers = getSelectedProviders();
 const providerIds = providers.map((provider) => provider.id);
 
@@ -30,6 +48,7 @@ test.describe('Live provider smoke', () => {
   let page;
   let panelFrame;
   let currentProviderId;
+  let currentToken;
 
   test.beforeAll(async () => {
     const extensionPath = await prepareLiveExtension();
@@ -55,6 +74,13 @@ test.describe('Live provider smoke', () => {
         await testInfo.attach(`${currentProviderId}-frame.html`, { path: htmlPath, contentType: 'text/html' });
       }
     }
+    // Also after failures: a filled token left in a draft-saving composer
+    // would show up in the user's account.
+    if (page && currentToken && !LIVE_SEND_ENABLED && await composerContains(currentToken)) {
+      await clearComposer(currentToken).catch(() => {});
+      await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
+    }
+    currentToken = null;
     await page?.close();
     page = null;
     panelFrame = null;
@@ -66,9 +92,17 @@ test.describe('Live provider smoke', () => {
 
   async function openProviderPanel(providerId) {
     currentProviderId = providerId;
-    await configureLiveProviders(extension.serviceWorker, providerIds, {
-      panelOrder: [providerId, ...providerIds.filter((id) => id !== providerId)],
-    });
+    // Bounded so a service worker that stops answering fails fast and says so
+    // (seen once in about ten runs, not reproduced in isolation).
+    let timer;
+    await Promise.race([
+      configureLiveProviders(extension.serviceWorker, providerIds, {
+        panelOrder: [providerId, ...providerIds.filter((id) => id !== providerId)],
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Extension service worker did not answer within 15s')), 15000);
+      }),
+    ]).finally(() => clearTimeout(timer));
     page = await extension.context.newPage();
     await page.goto(extension.extensionUrl('multi-panel/multi-panel.html'));
     const iframe = page.locator('#panel-grid iframe');
@@ -84,6 +118,52 @@ test.describe('Live provider smoke', () => {
     ), token).catch(() => false);
   }
 
+  /**
+   * Empties the composer that holds `token`. Several sites (claude.ai among
+   * them) save composer drafts, so a leftover token would reappear for the user.
+   * Retries because a site can re-render the composer between steps.
+   */
+  async function clearComposer(token) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const marked = await panelFrame.evaluate((text) => {
+        const element = [...document.querySelectorAll('textarea, input, [contenteditable]:not([contenteditable="false"])')]
+          .find((candidate) => (candidate.value ?? candidate.textContent ?? '').includes(text));
+        element?.setAttribute('data-panelize-live-clear', '');
+        return Boolean(element);
+      }, token).catch(() => false);
+      if (!marked) {
+        return;
+      }
+      // Key presses go through the element: page.keyboard can land in the
+      // unified input when the multi-panel focus restore takes focus back, and
+      // fill('') leaves ProseMirror composers (ChatGPT) unchanged.
+      const composer = panelFrame.locator('[data-panelize-live-clear]');
+      try {
+        await composer.click({ timeout: 5000 });
+        await composer.press('ControlOrMeta+A', { timeout: 5000 });
+        await composer.press('Backspace', { timeout: 5000 });
+        await composer.evaluate((element) => element.removeAttribute('data-panelize-live-clear'), null, { timeout: 5000 });
+      } catch {
+        // The composer was replaced; mark the current one on the next attempt.
+      }
+      if (!(await composerContains(token))) {
+        return;
+      }
+    }
+  }
+
+  /**
+   * Cloudflare's interstitial replaces the site until someone clicks it. Its
+   * checkbox sits in a closed shadow root, so look at the page shell instead.
+   */
+  function hasCloudflareChallenge() {
+    return panelFrame.evaluate(() => (
+      '_cf_chl_opt' in window
+      || /^Just a moment/.test(document.title)
+      || Boolean(document.querySelector('script[src*="challenges.cloudflare.com"], #challenge-form'))
+    )).catch(() => false);
+  }
+
   function firstMatchingSelector(selectors = []) {
     return panelFrame.evaluate((candidates) => candidates.find((selector) => {
       try {
@@ -97,26 +177,67 @@ test.describe('Live provider smoke', () => {
   for (const provider of providers) {
     test(`${provider.id}: fill reaches the composer and controls are found`, async () => {
       await openProviderPanel(provider.id);
-      const token = `panelize-live-${provider.id}-${Date.now()}`;
+      const token = `${LIVE_TOKEN_PREFIX}${provider.id}-${Date.now()}`;
+      currentToken = token;
+
+      // A user presses Fill once the composer is on screen; the iframe load
+      // event fires before single-page sites like Doubao render it.
+      await expect.poll(async () => (
+        await hasCloudflareChallenge() ? 'cloudflare' : await firstMatchingSelector(PROVIDER_SELECTORS[provider.id])
+      ), {
+        timeout: 30000,
+        message: `${provider.id}: no PROVIDER_SELECTORS composer appeared (logged out or input selectors changed?)`,
+      }).not.toBeNull();
+      expect(
+        await hasCloudflareChallenge(),
+        `${provider.id}: Cloudflare challenge in the panel; click it in the window and rerun`
+      ).toBe(false);
 
       await page.fill('#unified-input', token);
       await page.click('#fill-input-btn');
 
       await expect.poll(() => composerContains(token), {
         timeout: 30000,
-        message: `${provider.id}: filled text never reached a composer (logged out, captcha, or input selectors changed?)`,
+        message: `${provider.id}: filled text never reached the composer`,
       }).toBe(true);
 
       expect.soft(
         await firstMatchingSelector(SEND_BUTTON_SELECTORS[provider.id]),
         `${provider.id}: no SEND_BUTTON_SELECTORS entry matches`
       ).not.toBeNull();
-      expect.soft(
-        await firstMatchingSelector(NEW_CHAT_BUTTON_SELECTORS[provider.id]),
-        `${provider.id}: no NEW_CHAT_BUTTON_SELECTORS entry matches (falls back to reloading the URL)`
-      ).not.toBeNull();
+      if (NEW_CHAT_VIA_URL_IN_PANEL[provider.id]) {
+        test.info().annotations.push({
+          type: 'new-chat',
+          description: `URL fallback: ${NEW_CHAT_VIA_URL_IN_PANEL[provider.id]}`,
+        });
+        expect.soft(NEW_CHAT_URLS[provider.id], `${provider.id}: NEW_CHAT_URLS entry missing`).toBeTruthy();
+      } else {
+        expect.soft(
+          await firstMatchingSelector(NEW_CHAT_BUTTON_SELECTORS[provider.id]),
+          `${provider.id}: no NEW_CHAT_BUTTON_SELECTORS entry matches (falls back to reloading the URL)`
+        ).not.toBeNull();
+      }
 
       if (!LIVE_SEND_ENABLED) {
+        await clearComposer(token);
+        await expect.poll(() => composerContains(token), {
+          timeout: 5000,
+          message: `${provider.id}: the filled text could not be cleared from the composer`,
+        }).toBe(false);
+        // Sites that save drafts (Claude, Kimi) debounce the save, so give the
+        // empty state time to persist, then reload to prove nothing is left.
+        await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
+        await panelFrame.evaluate(() => location.reload()).catch(() => {});
+        await panelFrame.waitForLoadState('load', { timeout: 45000 });
+        await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
+        // Match any run's token, so drafts left by an earlier interrupted run
+        // are reported (and removed) too.
+        const draftLeft = await composerContains(LIVE_TOKEN_PREFIX);
+        if (draftLeft) {
+          await clearComposer(LIVE_TOKEN_PREFIX);
+          await page.waitForTimeout(DRAFT_SAVE_DELAY_MS);
+        }
+        expect(draftLeft, `${provider.id}: filled text came back as a saved draft after reload`).toBe(false);
         return;
       }
 
