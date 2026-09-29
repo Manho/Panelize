@@ -92,6 +92,7 @@ ${composerHtml}
 const COMPOSER_HTML = {
   legacy: `
   <form data-type="unified-composer">
+    <input type="file" accept="image/*" multiple hidden>
     <div id="prompt-textarea" contenteditable="true" role="textbox" aria-label="Chat with ChatGPT"></div>
     <button type="button" data-testid="send-button" aria-label="Send prompt">Send</button>
   </form>`,

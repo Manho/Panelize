@@ -1787,7 +1787,9 @@
     console.log(`[Image Injection] Injecting ${images.length} images to ${provider}`);
 
     try {
-      if (autoSubmit && requestId) {
+      // Fills protect the unified input's focus too, so report a click in
+      // the panel to hand focus back to the user.
+      if (requestId) {
         startMultiPanelUserInteractionTracking(requestId, provider);
       } else {
         stopMultiPanelUserInteractionTracking();
@@ -3350,18 +3352,17 @@
       ? normalizeGoogleProviderMode(event.data.providerMode)
       : null;
 
-    if (provider === 'chatgpt') {
-      if (shouldAutoSubmit && event.data.requestId) {
-        startMultiPanelUserInteractionTracking(event.data.requestId, provider);
-        startChatgptSendTracking(event.data.requestId);
-      } else {
-        stopMultiPanelUserInteractionTracking();
-        stopChatgptSendTracking();
-      }
-    } else if (shouldAutoSubmit && event.data.requestId) {
+    if (event.data.requestId) {
       startMultiPanelUserInteractionTracking(event.data.requestId, provider);
     } else {
       stopMultiPanelUserInteractionTracking();
+    }
+    if (provider === 'chatgpt') {
+      if (shouldAutoSubmit && event.data.requestId) {
+        startChatgptSendTracking(event.data.requestId);
+      } else {
+        stopChatgptSendTracking();
+      }
     }
 
     if (provider === 'google') {
