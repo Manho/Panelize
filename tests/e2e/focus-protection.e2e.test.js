@@ -266,4 +266,25 @@ test.describe('Focus protection E2E', () => {
     expect(await activeElementLabel()).toBe('IFRAME');
     expect(await providerFrame('chatgpt').evaluate(() => document.activeElement?.id)).toBe('prompt-textarea');
   });
+
+  test('clicking inside a provider panel wins when the blur refocus frame runs late', async () => {
+    // CI flake: the blur handler queues its refocus for the next frame. When
+    // that frame ran after the click had already cancelled the restore, it
+    // pulled focus back to the unified input. Slow frames down to force it.
+    await openPanels({ chatgpt: {} });
+    await waitForLoadGracePeriod();
+    await page.evaluate(() => {
+      window.requestAnimationFrame = (callback) => setTimeout(() => callback(performance.now()), 300);
+    });
+
+    await page.fill('#unified-input', 'hello');
+    await page.click('#send-all-btn');
+    await expect.poll(async () => (await fixtureState('chatgpt')).sends).toBe(1);
+
+    await page.frameLocator('iframe').locator('#prompt-textarea').click();
+    await page.waitForTimeout(1500);
+
+    expect(await activeElementLabel()).toBe('IFRAME');
+    expect(await providerFrame('chatgpt').evaluate(() => document.activeElement?.id)).toBe('prompt-textarea');
+  });
 });

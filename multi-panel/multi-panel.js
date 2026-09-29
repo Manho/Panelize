@@ -65,6 +65,7 @@ let fillActionRequestCounter = 0;
 let fillPayloadRevision = 0;
 let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
+let focusRestoreGeneration = 0; // Bumped on every cancel so queued refocus frames are dropped
 let isRestoringFocusAfterNewChat = false;
 let sendFocusRestoreTimerIds = [];
 let isRestoringFocusAfterSend = false;
@@ -217,7 +218,12 @@ function focusUnifiedInput({ force = false } = {}) {
     return;
   }
 
+  // A click into a panel can cancel the protection before this frame runs.
+  const generation = focusRestoreGeneration;
   requestAnimationFrame(() => {
+    if (generation !== focusRestoreGeneration || (!force && !shouldPreserveUnifiedInputFocus())) {
+      return;
+    }
     try {
       inputTextarea.focus({ preventScroll: true });
     } catch {
@@ -509,12 +515,14 @@ function registerStorageChangeListener() {
 }
 
 function cancelUnifiedInputFocusRestore() {
+  focusRestoreGeneration += 1;
   newChatFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
   newChatFocusRestoreTimerIds = [];
   isRestoringFocusAfterNewChat = false;
 }
 
 function cancelUnifiedInputFocusRestoreAfterSend() {
+  focusRestoreGeneration += 1;
   sendFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
   sendFocusRestoreTimerIds = [];
   sendFocusBusyDetectionTimeoutIds.forEach(timerId => clearTimeout(timerId));
@@ -666,11 +674,11 @@ function restoreUnifiedInputFocusAfterNewChat() {
         return;
       }
 
-      focusUnifiedInput({ force: true });
-
       if (index === restoreDelays.length - 1) {
         cancelUnifiedInputFocusRestore();
       }
+
+      focusUnifiedInput({ force: true });
     }, delay);
 
     newChatFocusRestoreTimerIds.push(timerId);
@@ -777,12 +785,13 @@ function restoreUnifiedInputFocusAfterSend(trackedPanels = [], requestId = creat
         return;
       }
 
-      focusUnifiedInput({ force: true });
-
       if (index === SEND_FOCUS_RESTORE_DELAYS.length - 1) {
         sendFocusRestoreTimerIds = [];
         maybeStopSendFocusRestore();
       }
+
+      // After the stop above, so a finished restore still gets this frame.
+      focusUnifiedInput({ force: true });
     }, delay);
 
     sendFocusRestoreTimerIds.push(timerId);
