@@ -10,7 +10,7 @@ function findProviderInput() {
 
   // ChatGPT
   if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) {
-    return document.querySelector('#prompt-textarea') ||
+    return window.PanelizeChatgptComposer?.findEditor() ||
            document.querySelector('textarea[data-id="root"]');
   }
 

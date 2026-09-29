@@ -9,13 +9,17 @@ import {
   configureLiveProviders,
   getSelectedProviders,
   prepareLiveExtension,
+  readChatgptEditorSelectors,
   readContentScriptSelectorTable,
 } from './live-harness.js';
 
 const SEND_BUTTON_SELECTORS = readContentScriptSelectorTable('SEND_BUTTON_SELECTORS');
 const NEW_CHAT_BUTTON_SELECTORS = readContentScriptSelectorTable('NEW_CHAT_BUTTON_SELECTORS');
 const NEW_CHAT_URLS = readContentScriptSelectorTable('NEW_CHAT_URLS');
-const PROVIDER_SELECTORS = readContentScriptSelectorTable('PROVIDER_SELECTORS');
+const PROVIDER_SELECTORS = {
+  ...readContentScriptSelectorTable('PROVIDER_SELECTORS'),
+  chatgpt: readChatgptEditorSelectors(),
+};
 
 /**
  * Providers whose page renders no new chat control inside the panel iframe, so

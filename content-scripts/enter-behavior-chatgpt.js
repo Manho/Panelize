@@ -17,15 +17,15 @@ function createEnterEvent(modifiers = {}) {
   });
 }
 
-// Helper: Find ChatGPT's Send button (works for both main prompt and editing)
-function findSendButton() {
+// Helper: Find ChatGPT's Send button within `root` (works for both main prompt and editing)
+function findSendButton(root = document) {
   // Try specific data-testid attributes first (faster)
-  const byTestId = document.querySelector('button[data-testid="send-button"]') ||
-                   document.querySelector('button[data-testid="fruitjuice-send-button"]');
+  const byTestId = root.querySelector('button[data-testid="send-button"]') ||
+                   root.querySelector('button[data-testid="fruitjuice-send-button"]');
   if (byTestId) return byTestId;
 
   // Fallback: search by text content or aria-label
-  return Array.from(document.querySelectorAll('button')).find(btn =>
+  return Array.from(root.querySelectorAll('button')).find(btn =>
     btn.textContent.trim() === 'Send' ||
     btn.getAttribute('aria-label')?.includes('Send') ||
     btn.getAttribute('aria-label')?.includes('send')
@@ -47,12 +47,10 @@ function handleEnterSwap(event) {
   const activeElement = document.activeElement;
 
   // Check if this is ChatGPT's input area:
-  // 1. Main prompt: ProseMirror div with id="prompt-textarea"
+  // 1. Main prompt: contenteditable composer editor (see chatgpt-composer.js)
   // 2. Editing area: Regular textarea element (appears when editing old messages)
-  const isMainPrompt = activeElement &&
-                       activeElement.id === "prompt-textarea" &&
-                       activeElement.contentEditable === "true" &&
-                       activeElement.classList.contains("ProseMirror");
+  const isMainPrompt = Boolean(window.PanelizeChatgptComposer?.isEditor(activeElement)) &&
+                       activeElement.contentEditable === "true";
 
   const isEditingTextarea = activeElement &&
                            activeElement.tagName === "TEXTAREA" &&
@@ -83,8 +81,10 @@ function handleEnterSwap(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    // Find and click the Send button (more reliable for both element types)
-    const sendButton = findSendButton();
+    // Find and click the Send button (more reliable for both element types).
+    // The main prompt's own form holds its button, so another form's Send is never clicked.
+    const composerForm = isMainPrompt ? window.PanelizeChatgptComposer.findForm(activeElement) : null;
+    const sendButton = findSendButton(composerForm || document);
 
     if (sendButton && !sendButton.disabled) {
       sendButton.click();

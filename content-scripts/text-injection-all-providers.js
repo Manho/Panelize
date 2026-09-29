@@ -44,12 +44,9 @@
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
 
-  // Provider-specific selectors
+  // Provider-specific selectors. ChatGPT's composer lookup lives in
+  // chatgpt-composer.js, shared with the other ChatGPT content scripts.
   const PROVIDER_SELECTORS = {
-    chatgpt: [
-      'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"]',
-      '#prompt-textarea'
-    ],
     claude: [
       '.ProseMirror[role="textbox"]',
       '.ProseMirror[contenteditable="true"]',
@@ -728,12 +725,6 @@
     return document.querySelector(CHATGPT_STOP_BUTTON_SELECTOR);
   }
 
-  function getChatgptComposerRoot() {
-    return document.querySelector('form[data-type="unified-composer"]') ||
-      document.querySelector('#prompt-textarea')?.closest('form') ||
-      document.body;
-  }
-
   function stopChatgptSendTracking({ reportIdle = false } = {}) {
     const tracking = chatgptSendTracking;
     if (!tracking) {
@@ -820,7 +811,7 @@
       noBusyTimerId: null
     };
 
-    const observerTarget = document.body || getChatgptComposerRoot();
+    const observerTarget = document.body;
     if (observerTarget) {
       tracking.observer = new MutationObserver(() => {
         if (chatgptSendTracking !== tracking) {
@@ -1147,14 +1138,34 @@
     }
   }
 
-  function* findProviderInputs(selectors) {
-    for (const selector of selectors) {
+  function getChatgptComposer() {
+    const composer = window.PanelizeChatgptComposer;
+    if (!composer) {
+      console.warn('[Text Injection] ChatGPT composer lookup missing; chatgpt-composer.js did not load');
+      return null;
+    }
+    return composer;
+  }
+
+  function getProviderInputSelectors(provider) {
+    if (provider === 'chatgpt') {
+      return getChatgptComposer()?.EDITOR_SELECTORS || null;
+    }
+    return PROVIDER_SELECTORS[provider] || null;
+  }
+
+  function* findProviderInputs(provider) {
+    if (provider === 'chatgpt') {
+      yield getChatgptComposer()?.findEditor() || null;
+      return;
+    }
+    for (const selector of PROVIDER_SELECTORS[provider] || []) {
       yield findTextInputElement(selector);
     }
   }
 
-  function findProviderInput(selectors) {
-    for (const element of findProviderInputs(selectors)) {
+  function findProviderInput(provider) {
+    for (const element of findProviderInputs(provider)) {
       if (element) return element;
     }
     return null;
@@ -1231,10 +1242,16 @@
 
     console.log('[Text Injection] Attempting to click send button for provider:', provider);
 
+    // ChatGPT's send button lives in the composer's form; searching only there
+    // keeps another form's Send (e.g. an inline edit) from being clicked.
+    const searchRoot = provider === 'chatgpt'
+      ? getChatgptComposer()?.findForm() || document
+      : document;
+
     // Try each selector
     for (const selector of selectors) {
       try {
-        const elements = document.querySelectorAll(selector);
+        const elements = searchRoot.querySelectorAll(selector);
         console.log(`[Text Injection] Found ${elements.length} elements with selector:`, selector);
 
         for (const element of elements) {
@@ -1694,13 +1711,12 @@
       return handleGoogleTextInjection(text, autoSubmit, providerMode);
     }
 
-    const selectors = PROVIDER_SELECTORS[provider];
-    if (!selectors) {
+    if (!getProviderInputSelectors(provider)) {
       console.warn('[Text Injection] No selectors for provider:', provider);
       return false;
     }
 
-    for (const element of findProviderInputs(selectors)) {
+    for (const element of findProviderInputs(provider)) {
       if (!element) continue;
       if (skipIfAlreadyPresent && inputEndsWithText(element, text)) {
         return true;
@@ -3035,8 +3051,7 @@
   // Generic drag-drop fallback for providers without a dedicated adapter.
   async function tryDragDropUpload(provider, imageData) {
     try {
-      const selectors = PROVIDER_SELECTORS[provider];
-      const targetElement = findProviderInput(selectors);
+      const targetElement = findProviderInput(provider);
 
       if (!targetElement) {
         console.warn('[Image Injection] No target element found for drag-drop');
@@ -3217,8 +3232,7 @@
           return;
         }
 
-        const selectors = PROVIDER_SELECTORS[provider];
-        const element = findProviderInput(selectors);
+        const element = findProviderInput(provider);
         if (element) {
           const isTextarea = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
           if (isTextarea) {
@@ -3369,14 +3383,13 @@
       return;
     }
 
-    const selectors = PROVIDER_SELECTORS[provider];
-    if (!selectors) {
+    if (!getProviderInputSelectors(provider)) {
       console.warn('No selectors configured for provider:', provider);
       return;
     }
 
     // Try each selector until we find an element
-    const element = findProviderInput(selectors);
+    const element = findProviderInput(provider);
 
     if (element) {
       const success = injectTextIntoElement(element, text, provider);
@@ -3406,7 +3419,7 @@
 
       retryDelays.forEach((delay, index) => {
         setTimeout(() => {
-          const retryElement = findProviderInput(selectors);
+          const retryElement = findProviderInput(provider);
           if (retryElement) {
             const success = injectTextIntoElement(retryElement, text, provider);
             if (success) {
