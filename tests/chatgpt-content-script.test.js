@@ -221,4 +221,44 @@ describe('chatgpt content script provider status', () => {
       phase: 'user-interaction',
     });
   });
+
+  it('fills and sends the current ChatGPT composer without a prompt-textarea id', async () => {
+    document.body.innerHTML = `
+      <div contenteditable="true" class="ProseMirror">Unrelated editor</div>
+      <form data-chatgpt-composer data-composer-placement="thread">
+        <div data-composer-markdown contenteditable="true" class="ProseMirror"><p>Existing draft. </p></div>
+        <button type="submit" aria-label="Send">Send</button>
+      </form>
+    `;
+    const editor = document.querySelector('[data-composer-markdown]');
+    const sentTexts = [];
+    document.querySelector('button').addEventListener('click', event => {
+      event.preventDefault();
+      sentTexts.push(editor.textContent);
+    });
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT', text: 'Test prompt', autoSubmit: true, context: 'multi-panel',
+    });
+    await wait(600);
+
+    expect(editor.textContent).toBe('Existing draft. Test prompt');
+    expect(document.querySelector('.ProseMirror').textContent).toBe('Unrelated editor');
+    expect(sentTexts).toEqual(['Existing draft. Test prompt']);
+
+    dispatchMultiPanelMessage({ type: 'CLEAR_INPUT', context: 'multi-panel' });
+    expect(editor.textContent).toBe('');
+    expect(document.querySelector('.ProseMirror').textContent).toBe('Unrelated editor');
+  });
+
+  it('still fills and sends the legacy prompt-textarea composer', async () => {
+    const { prompt, getSendButton } = createChatgptComposerDom();
+    const click = vi.spyOn(getSendButton(), 'click');
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT', text: 'Legacy prompt', autoSubmit: true, context: 'multi-panel',
+    });
+    await wait(600);
+    expect(prompt.textContent).toBe('Legacy prompt');
+    expect(click).toHaveBeenCalledOnce();
+  });
 });

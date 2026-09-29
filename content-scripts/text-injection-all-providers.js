@@ -46,7 +46,10 @@
 
   // Provider-specific selectors
   const PROVIDER_SELECTORS = {
-    chatgpt: ['#prompt-textarea'],
+    chatgpt: [
+      'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"]',
+      '#prompt-textarea'
+    ],
     claude: [
       '.ProseMirror[role="textbox"]',
       '.ProseMirror[contenteditable="true"]',
