@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 - 2026-09-29
+- Fixed Send All, Enter to send and focus toggle for the current ChatGPT composer.
+- Fixed the next Enter after an image fill sending from only one panel instead of all of them.
+- Fixed a click into a panel sometimes being pulled back to the unified input after Send All.
+
 ## 1.3.0 - 2026-09-24
 - Added Tencent Yuanbao as an optional provider with text fill, Enter to send, new chat, image upload and temporary chat.
 - Fixed Send All and New Chat for DeepSeek with its current site controls.
