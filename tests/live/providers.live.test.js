@@ -9,13 +9,17 @@ import {
   configureLiveProviders,
   getSelectedProviders,
   prepareLiveExtension,
+  readChatgptEditorSelectors,
   readContentScriptSelectorTable,
 } from './live-harness.js';
 
 const SEND_BUTTON_SELECTORS = readContentScriptSelectorTable('SEND_BUTTON_SELECTORS');
 const NEW_CHAT_BUTTON_SELECTORS = readContentScriptSelectorTable('NEW_CHAT_BUTTON_SELECTORS');
 const NEW_CHAT_URLS = readContentScriptSelectorTable('NEW_CHAT_URLS');
-const PROVIDER_SELECTORS = readContentScriptSelectorTable('PROVIDER_SELECTORS');
+const PROVIDER_SELECTORS = {
+  ...readContentScriptSelectorTable('PROVIDER_SELECTORS'),
+  chatgpt: readChatgptEditorSelectors(),
+};
 
 /**
  * Providers whose page renders no new chat control inside the panel iframe, so
@@ -240,18 +244,22 @@ test.describe('Live provider smoke', () => {
       const token = `${LIVE_TOKEN_PREFIX}${provider.id}-${Date.now()}`;
       currentToken = token;
 
+      // Cloudflare's interstitial often clears by itself after a few seconds;
+      // otherwise it waits for a click in the window.
+      if (await hasCloudflareChallenge()) {
+        test.setTimeout(test.info().timeout + 120000);
+      }
+      await expect.poll(hasCloudflareChallenge, {
+        timeout: 120000,
+        message: `${provider.id}: Cloudflare challenge in the panel did not clear; click it in the window`,
+      }).toBe(false);
+
       // A user presses Fill once the composer is on screen; the iframe load
       // event fires before single-page sites like Doubao render it.
-      await expect.poll(async () => (
-        await hasCloudflareChallenge() ? 'cloudflare' : await firstMatchingSelector(PROVIDER_SELECTORS[provider.id])
-      ), {
+      await expect.poll(() => firstMatchingSelector(PROVIDER_SELECTORS[provider.id]), {
         timeout: 30000,
         message: `${provider.id}: no PROVIDER_SELECTORS composer appeared (logged out or input selectors changed?)`,
       }).not.toBeNull();
-      expect(
-        await hasCloudflareChallenge(),
-        `${provider.id}: Cloudflare challenge in the panel; click it in the window and rerun`
-      ).toBe(false);
 
       // Fill adds to what is already in the composer, and the cleanup below
       // empties it, so never run on top of a draft the user wrote. Wait for a

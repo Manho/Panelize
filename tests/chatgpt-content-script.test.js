@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const composerScriptSource = readFileSync(
+  resolve(process.cwd(), 'content-scripts/chatgpt-composer.js'),
+  'utf8'
+);
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
   'utf8'
@@ -52,6 +56,8 @@ function getProviderStatusCalls(postMessageSpy, type) {
 
 describe('chatgpt content script provider status', () => {
   beforeAll(() => {
+    // Same order as the ChatGPT entry in manifest.json.
+    window.eval(composerScriptSource);
     window.eval(contentScriptSource);
   });
 
@@ -220,5 +226,83 @@ describe('chatgpt content script provider status', () => {
       provider: 'gemini',
       phase: 'user-interaction',
     });
+  });
+
+  it('fills and sends the current ChatGPT composer without a prompt-textarea id', async () => {
+    document.body.innerHTML = `
+      <div contenteditable="true" class="ProseMirror">Unrelated editor</div>
+      <form data-chatgpt-composer data-composer-placement="thread">
+        <div data-composer-markdown contenteditable="true" class="ProseMirror"><p>Existing draft. </p></div>
+        <button type="submit" aria-label="Send">Send</button>
+      </form>
+    `;
+    const editor = document.querySelector('[data-composer-markdown]');
+    const sentTexts = [];
+    document.querySelector('button').addEventListener('click', event => {
+      event.preventDefault();
+      sentTexts.push(editor.textContent);
+    });
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT', text: 'Test prompt', autoSubmit: true, context: 'multi-panel',
+    });
+    await wait(600);
+
+    expect(editor.textContent).toBe('Existing draft. Test prompt');
+    expect(document.querySelector('.ProseMirror').textContent).toBe('Unrelated editor');
+    expect(sentTexts).toEqual(['Existing draft. Test prompt']);
+
+    dispatchMultiPanelMessage({ type: 'CLEAR_INPUT', context: 'multi-panel' });
+    expect(editor.textContent).toBe('');
+    expect(document.querySelector('.ProseMirror').textContent).toBe('Unrelated editor');
+  });
+
+  it('fills the rendered composer and clicks only the send button in its form', async () => {
+    document.body.innerHTML = `
+      <form data-testid="edit-message">
+        <textarea>Earlier message</textarea>
+        <button type="submit" aria-label="Send">Send</button>
+      </form>
+      <form data-chatgpt-composer data-composer-placement="home">
+        <div data-composer-markdown contenteditable="true" class="ProseMirror"></div>
+        <button type="submit" aria-label="Send">Send</button>
+      </form>
+      <form data-chatgpt-composer data-composer-placement="thread">
+        <div data-composer-markdown contenteditable="true" class="ProseMirror"></div>
+        <button type="submit" aria-label="Send">Send</button>
+      </form>
+    `;
+    const [homeEditor, threadEditor] = document.querySelectorAll('[data-composer-markdown]');
+    // happy-dom has no layout (offsetParent is undefined); report the home
+    // composer the way a browser does for an element that is not rendered.
+    Object.defineProperty(homeEditor, 'offsetParent', { configurable: true, get: () => null });
+    const threadSendButton = threadEditor.closest('form').querySelector('button');
+    const clicked = [];
+    document.querySelectorAll('button').forEach(button => {
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        clicked.push(button);
+      });
+    });
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT', text: 'Thread prompt', autoSubmit: true, context: 'multi-panel',
+    });
+    await wait(600);
+
+    expect(threadEditor.textContent).toBe('Thread prompt');
+    expect(homeEditor.textContent).toBe('');
+    expect(clicked).toEqual([threadSendButton]);
+  });
+
+  it('still fills and sends the legacy prompt-textarea composer', async () => {
+    const { prompt, getSendButton } = createChatgptComposerDom();
+    const click = vi.spyOn(getSendButton(), 'click');
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT', text: 'Legacy prompt', autoSubmit: true, context: 'multi-panel',
+    });
+    await wait(600);
+    expect(prompt.textContent).toBe('Legacy prompt');
+    expect(click).toHaveBeenCalledOnce();
   });
 });

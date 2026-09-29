@@ -139,3 +139,15 @@ export function readContentScriptSelectorTable(name) {
   }
   throw new Error(`Selector table ${name} is not terminated`);
 }
+
+/**
+ * ChatGPT's composer selectors, which live in the shared chatgpt-composer.js
+ * instead of the PROVIDER_SELECTORS table.
+ * @returns {string[]}
+ */
+export function readChatgptEditorSelectors() {
+  const source = readFileSync(path.join(REPO_EXTENSION_PATH, 'content-scripts/chatgpt-composer.js'), 'utf8');
+  const scope = {};
+  new Function('window', source)(scope);
+  return [...scope.PanelizeChatgptComposer.EDITOR_SELECTORS];
+}

@@ -78,6 +78,7 @@
         "https://chat.openai.com/*"
       ],
       "js": [
+        "content-scripts/chatgpt-composer.js",
         "content-scripts/enter-behavior-utils.js",
         "content-scripts/enter-behavior-chatgpt.js",
         "content-scripts/text-injection-all-providers.js",

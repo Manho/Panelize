@@ -65,12 +65,14 @@ let fillActionRequestCounter = 0;
 let fillPayloadRevision = 0;
 let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
+let focusRestoreGeneration = 0; // Bumped on every cancel so queued refocus frames are dropped
 let isRestoringFocusAfterNewChat = false;
 let sendFocusRestoreTimerIds = [];
 let isRestoringFocusAfterSend = false;
 let activeSendFocusRequestId = null;
 let sendFocusRequestCounter = 0;
 let sendFocusActivePanelIds = new Set();
+let sendFocusFillingPanelIds = new Set(); // Panels still running the fill that started the restore
 let sendFocusBusyDetectionTimeoutIds = new Map();
 let sendFocusHardTimeoutIds = new Map();
 let tempChatRetryTimerIds = new Map();
@@ -216,7 +218,12 @@ function focusUnifiedInput({ force = false } = {}) {
     return;
   }
 
+  // A click into a panel can cancel the protection before this frame runs.
+  const generation = focusRestoreGeneration;
   requestAnimationFrame(() => {
+    if (generation !== focusRestoreGeneration || (!force && !shouldPreserveUnifiedInputFocus())) {
+      return;
+    }
     try {
       inputTextarea.focus({ preventScroll: true });
     } catch {
@@ -508,12 +515,14 @@ function registerStorageChangeListener() {
 }
 
 function cancelUnifiedInputFocusRestore() {
+  focusRestoreGeneration += 1;
   newChatFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
   newChatFocusRestoreTimerIds = [];
   isRestoringFocusAfterNewChat = false;
 }
 
 function cancelUnifiedInputFocusRestoreAfterSend() {
+  focusRestoreGeneration += 1;
   sendFocusRestoreTimerIds.forEach(timerId => clearTimeout(timerId));
   sendFocusRestoreTimerIds = [];
   sendFocusBusyDetectionTimeoutIds.forEach(timerId => clearTimeout(timerId));
@@ -521,6 +530,7 @@ function cancelUnifiedInputFocusRestoreAfterSend() {
   sendFocusHardTimeoutIds.forEach(timerId => clearTimeout(timerId));
   sendFocusHardTimeoutIds.clear();
   sendFocusActivePanelIds.clear();
+  sendFocusFillingPanelIds.clear();
   activeSendFocusRequestId = null;
   isRestoringFocusAfterSend = false;
 }
@@ -664,11 +674,11 @@ function restoreUnifiedInputFocusAfterNewChat() {
         return;
       }
 
-      focusUnifiedInput({ force: true });
-
       if (index === restoreDelays.length - 1) {
         cancelUnifiedInputFocusRestore();
       }
+
+      focusUnifiedInput({ force: true });
     }, delay);
 
     newChatFocusRestoreTimerIds.push(timerId);
@@ -693,7 +703,7 @@ function maybeStopSendFocusRestore() {
     return;
   }
 
-  if (sendFocusActivePanelIds.size > 0) {
+  if (sendFocusActivePanelIds.size > 0 || sendFocusFillingPanelIds.size > 0) {
     return;
   }
 
@@ -762,26 +772,26 @@ function handleSendFocusProviderIdle(panel, requestId) {
   maybeStopSendFocusRestore();
 }
 
-function restoreUnifiedInputFocusAfterSend(trackedPanels = []) {
+function restoreUnifiedInputFocusAfterSend(trackedPanels = [], requestId = createSendFocusRequestId()) {
   cancelUnifiedInputFocusRestoreAfterSend();
   isRestoringFocusAfterSend = true;
-  activeSendFocusRequestId = createSendFocusRequestId();
+  activeSendFocusRequestId = requestId;
 
   trackedPanels.forEach(panel => scheduleChatgptBusyDetectionTimeout(panel, activeSendFocusRequestId));
 
-  const requestId = activeSendFocusRequestId;
   SEND_FOCUS_RESTORE_DELAYS.forEach((delay, index) => {
     const timerId = setTimeout(() => {
       if (!isRestoringFocusAfterSend || activeSendFocusRequestId !== requestId) {
         return;
       }
 
-      focusUnifiedInput({ force: true });
-
       if (index === SEND_FOCUS_RESTORE_DELAYS.length - 1) {
         sendFocusRestoreTimerIds = [];
         maybeStopSendFocusRestore();
       }
+
+      // After the stop above, so a finished restore still gets this frame.
+      focusUnifiedInput({ force: true });
     }, delay);
 
     sendFocusRestoreTimerIds.push(timerId);
@@ -1464,11 +1474,13 @@ export async function broadcastMessage(text, autoSubmit = true) {
       return;
     }
 
-    const sendFocusRequestId = shouldAutoSubmit
-      ? restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames())
-      : null;
+    // Filling focuses each provider's composer too. Keep the unified input
+    // focused, or the next Enter lands in one panel and sends only there.
     const fillActionRequestId = isFillAction ? createFillActionRequestId() : null;
-    const requestId = fillActionRequestId || sendFocusRequestId;
+    const requestId = restoreUnifiedInputFocusAfterSend(
+      shouldAutoSubmit ? getChatgptPanelsWithFrames() : [],
+      fillActionRequestId || createSendFocusRequestId()
+    );
     const payloadRevisionAtStart = fillPayloadRevision;
 
     // Disable buttons during send
@@ -1484,6 +1496,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
       : panels;
     const previousFailedPanelIds = new Set(failedFillPanelIds);
     const attemptedImagesByPanel = new Map();
+    if (waitForActionResult) {
+      targetPanels.forEach(panel => sendFocusFillingPanelIds.add(panel.id));
+    }
 
     // Send to all panels, or only the panels that failed the previous image fill.
     const panelResults = await Promise.allSettled(
@@ -1517,7 +1532,13 @@ export async function broadcastMessage(text, autoSubmit = true) {
             isFillAction,
             waitForActionResult
           }
-        );
+        ).finally(() => {
+          // Uploads can outlast the restore timers; hold focus until each
+          // panel has finished filling.
+          if (activeSendFocusRequestId === requestId && sendFocusFillingPanelIds.delete(panel.id)) {
+            maybeStopSendFocusRestore();
+          }
+        });
       })
     );
     const normalizedResults = normalizePanelResults(panelResults, targetPanels);
