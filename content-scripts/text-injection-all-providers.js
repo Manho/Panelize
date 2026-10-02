@@ -278,8 +278,8 @@
       'button[aria-label="Start new chat"]',
       'button[aria-label*="new chat"]',
       'a[href="/new"]',
-      'div[role="button"][aria-label*="New"]',
-      'a[href*="/new"]'
+      'a[href="https://claude.ai/new"]',
+      'div[role="button"][aria-label*="New"]'
     ],
     gemini: [
       'button[aria-label="New chat"]',
@@ -458,12 +458,12 @@
     );
   }
 
-  function findFirstVisibleElement(selectors) {
+  function findFirstVisibleElement(selectors, accept = null) {
     for (const selector of selectors) {
       try {
         const elements = document.querySelectorAll(selector);
         for (const element of elements) {
-          if (isVisibleElement(element)) {
+          if (isVisibleElement(element) && (!accept || accept(element))) {
             return element;
           }
         }
@@ -486,12 +486,12 @@
       .toLowerCase();
   }
 
-  function findDeepFirstVisibleElement(selectors) {
+  function findDeepFirstVisibleElement(selectors, accept = null) {
     for (const selector of selectors) {
       try {
         const elements = querySelectorAllDeep(selector);
         for (const element of elements) {
-          if (isVisibleElement(element)) {
+          if (isVisibleElement(element) && (!accept || accept(element))) {
             return element;
           }
         }
@@ -1510,6 +1510,21 @@
     return false;
   }
 
+  // Links in chat content (e.g. Claude citations to news.sina.com.cn) can match
+  // loose href selectors; a new-chat control never leaves the provider's origin.
+  function isSameOriginNewChatCandidate(element) {
+    const anchor = element.closest('a[href]');
+    if (!anchor) {
+      return true;
+    }
+
+    try {
+      return new URL(anchor.getAttribute('href'), window.location.href).origin === window.location.origin;
+    } catch (error) {
+      return false;
+    }
+  }
+
   // Find and click new chat button
   function clickNewChatButton(provider, providerMode = null) {
     // Special handling for Google
@@ -1524,7 +1539,8 @@
     }
 
     // Try to find and click button
-    const button = findDeepFirstVisibleElement(selectors) || findFirstVisibleElement(selectors);
+    const button = findDeepFirstVisibleElement(selectors, isSameOriginNewChatCandidate) ||
+      findFirstVisibleElement(selectors, isSameOriginNewChatCandidate);
     if (button) {
       console.log('[Text Injection] Clicking new chat button via visible selector match');
       button.click();
@@ -1535,6 +1551,10 @@
     try {
       const allButtons = document.querySelectorAll('button, a, div[role="button"]');
       for (const elem of allButtons) {
+        if (!isSameOriginNewChatCandidate(elem)) {
+          continue;
+        }
+
         const text = (elem.textContent || '').toLowerCase();
         const ariaLabel = (elem.getAttribute('aria-label') || '').toLowerCase();
         const href = elem.getAttribute('href') || '';
