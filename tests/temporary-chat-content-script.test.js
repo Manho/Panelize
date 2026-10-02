@@ -270,6 +270,47 @@ describe('temporary chat content script', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores Claude citation links whose URL contains /new when the sidebar is collapsed', async () => {
+    window.happyDOM.setURL('https://claude.ai/chat/abc');
+    document.body.innerHTML = `
+      <main>
+        <a id="citation" href="https://news.sina.com.cn/c/2026-07-27/doc-1.shtml" target="_blank">sina</a>
+      </main>
+      <nav><a id="claude-new" href="/new">New chat</a></nav>
+    `;
+    const citation = document.getElementById('citation');
+    const newChatLink = document.getElementById('claude-new');
+    // Narrow panels collapse Claude's sidebar, so only the citation is visible.
+    markVisible(citation);
+    Object.defineProperty(newChatLink, 'offsetParent', { configurable: true, get: () => null });
+
+    const citationSpy = vi.fn((event) => event.preventDefault());
+    const newChatSpy = vi.fn((event) => event.preventDefault());
+    citation.addEventListener('click', citationSpy);
+    newChatLink.addEventListener('click', newChatSpy);
+
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+    await wait(50);
+
+    expect(citationSpy).not.toHaveBeenCalled();
+    expect(newChatSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never clicks an off-origin link from the new chat text fallback', async () => {
+    window.happyDOM.setURL('https://claude.ai/chat/abc');
+    document.body.innerHTML = '<a id="citation" href="https://example.com/start-new-chat">Start new chat guide</a>';
+    const citation = document.getElementById('citation');
+    markVisible(citation);
+
+    const citationSpy = vi.fn((event) => event.preventDefault());
+    citation.addEventListener('click', citationSpy);
+
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+    await wait(50);
+
+    expect(citationSpy).not.toHaveBeenCalled();
+  });
+
   it('silently skips unsupported providers', async () => {
     window.happyDOM.setURL('https://www.google.com/');
 
