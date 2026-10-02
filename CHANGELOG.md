@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.2 - 2026-10-02
+- Fixed New Chat for All opening a citation link in Claude answers instead of starting a new chat.
+
 ## 1.3.1 - 2026-09-29
 - Fixed Send All, Enter to send and focus toggle for the current ChatGPT composer.
 - Fixed the next Enter after an image fill sending from only one panel instead of all of them.
