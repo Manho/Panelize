@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/panelize-marquee.png" alt="Panelize - All Your AI Assistants. One Window." width="700">
+  <img src="assets/screenshots/promo-zh.gif" alt="Panelize 演示：一次提问，并排对比 ChatGPT、Claude、Gemini、DeepSeek 的回答" width="800">
 </p>
 
 <p align="center">

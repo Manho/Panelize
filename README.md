@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/panelize-marquee.png" alt="Panelize - All Your AI Assistants. One Window." width="700">
+  <img src="assets/screenshots/promo-en.gif" alt="Panelize demo: ask ChatGPT, Claude, Gemini and DeepSeek at once and compare answers side by side" width="800">
 </p>
 
 <p align="center">
