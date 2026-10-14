@@ -15,11 +15,21 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/chrome-web-store/v/iokalaafkmjffolodkkgbbccmofbglii?label=Chrome%20Web%20Store&color=4285F4" alt="Chrome Web Store version"></a>
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/chrome-web-store/users/iokalaafkmjffolodkkgbbccmofbglii?color=brightgreen" alt="Chrome Web Store users"></a>
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/chrome-web-store/rating/iokalaafkmjffolodkkgbbccmofbglii" alt="Chrome Web Store rating"></a>
+  <a href="https://github.com/Manho/Panelize/stargazers"><img src="https://img.shields.io/github/stars/Manho/Panelize?style=flat" alt="GitHub stars"></a>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/languages-10-brightgreen.svg" alt="Languages">
-  <img src="https://img.shields.io/badge/Chrome-114+-4285F4.svg" alt="Chrome">
-  <img src="https://img.shields.io/badge/Edge-114+-0078D7.svg" alt="Edge">
+  <img src="https://img.shields.io/badge/Edge-supported-0078D7.svg" alt="Edge">
+</p>
+
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/badge/Chrome%20%E3%81%AB%E7%84%A1%E6%96%99%E3%81%A7%E8%BF%BD%E5%8A%A0-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Chrome に無料で追加"></a>
+</p>
+
+<p align="center">
+  <sub>無料 · API キー不要 · ログイン済みの AI アカウントをそのまま利用</sub><br>
+  <sub>Panelize が役に立ったら、GitHub で ⭐ を付けていただけると他の人にも届きやすくなります。</sub>
 </p>
 
 ---

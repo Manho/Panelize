@@ -15,11 +15,21 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/chrome-web-store/v/iokalaafkmjffolodkkgbbccmofbglii?label=Chrome%20Web%20Store&color=4285F4" alt="Chrome Web Store version"></a>
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/chrome-web-store/users/iokalaafkmjffolodkkgbbccmofbglii?color=brightgreen" alt="Chrome Web Store users"></a>
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/chrome-web-store/rating/iokalaafkmjffolodkkgbbccmofbglii" alt="Chrome Web Store rating"></a>
+  <a href="https://github.com/Manho/Panelize/stargazers"><img src="https://img.shields.io/github/stars/Manho/Panelize?style=flat" alt="GitHub stars"></a>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/languages-10-brightgreen.svg" alt="Languages">
-  <img src="https://img.shields.io/badge/Chrome-114+-4285F4.svg" alt="Chrome">
-  <img src="https://img.shields.io/badge/Edge-114+-0078D7.svg" alt="Edge">
+  <img src="https://img.shields.io/badge/Edge-supported-0078D7.svg" alt="Edge">
+</p>
+
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/panelize/iokalaafkmjffolodkkgbbccmofbglii"><img src="https://img.shields.io/badge/%E5%85%8D%E8%B4%B9%E6%B7%BB%E5%8A%A0%E5%88%B0%20Chrome-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="免费添加到 Chrome"></a>
+</p>
+
+<p align="center">
+  <sub>免费 · 无需 API Key · 直接使用你已登录的 AI 账号</sub><br>
+  <sub>如果 Panelize 帮你省了时间，点个 ⭐ 能让更多人看到它。</sub>
 </p>
 
 ---
