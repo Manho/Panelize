@@ -8,6 +8,8 @@
 
 <p align="center">
   <img src="assets/screenshots/promo-en.gif" alt="Panelize デモ：複数の AI に一度に質問して回答を並べて比較" width="800">
+  <br>
+  <a href="assets/screenshots/promo-en.mp4">▶ 高画質の動画を見る</a>
 </p>
 
 <p align="center">
