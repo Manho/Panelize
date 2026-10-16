@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.3 - 2026-10-16
+- Fixed Grok conversations failing to start in panels by forwarding your existing grok.com session to Grok inside the Multi-Panel page.
+- Fixed Grok cookie consent choices not being saved inside panels.
+- Fixed Qwen Global staying signed out in panels. Existing Qwen Global users need to approve the additional qwen.ai access once in Settings.
+
 ## 1.3.2 - 2026-10-02
 - Fixed New Chat for All opening a citation link in Claude answers instead of starting a new chat.
 
