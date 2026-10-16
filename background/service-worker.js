@@ -5,6 +5,11 @@ import { removeDeprecatedClaudeModelMode } from '../modules/settings.js';
 import {
   reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
+import {
+  isGrokCookieDomain,
+  reconcileGrokWebSocketCookies,
+  unregisterMultiPanelTabId
+} from '../modules/grok-websocket-cookies.js';
 
 // Install event - setup context menus
 const DEFAULT_SHORTCUT_SETTING = { keyboardShortcutEnabled: true };
@@ -70,24 +75,28 @@ async function openMultiPanel() {
         if (tab.url === multiPanelUrl) {
           // 已有窗口，聚焦它
           await chrome.windows.update(win.id, { focused: true });
+          await scheduleGrokWebSocketCookieReconcile({ tabId: tab.id });
           return;
         }
       }
     }
 
     // 创建新弹出窗口
-    await chrome.windows.create({
+    const createdWindow = await chrome.windows.create({
       url: multiPanelUrl,
       type: 'popup',
       width: 1400,
       height: 900
     });
+    const popupTabId = createdWindow?.tabs?.[0]?.id;
+    await scheduleGrokWebSocketCookieReconcile({ tabId: popupTabId });
   } else {
     // 标签页模式：始终创建新标签页
-    await chrome.tabs.create({
+    const createdTab = await chrome.tabs.create({
       url: multiPanelUrl,
       active: true
     });
+    await scheduleGrokWebSocketCookieReconcile({ tabId: createdTab?.id });
   }
 }
 
@@ -115,6 +124,7 @@ async function migrateProviderSettingsForUpdate(details) {
 }
 
 let optionalProviderReconcileQueue = Promise.resolve();
+let grokWebSocketCookieReconcileQueue = Promise.resolve();
 
 function scheduleOptionalProviderReconcile() {
   optionalProviderReconcileQueue = optionalProviderReconcileQueue
@@ -126,12 +136,23 @@ function scheduleOptionalProviderReconcile() {
   return optionalProviderReconcileQueue;
 }
 
+function scheduleGrokWebSocketCookieReconcile(options = {}) {
+  grokWebSocketCookieReconcileQueue = grokWebSocketCookieReconcileQueue
+    .then(() => reconcileGrokWebSocketCookies(options))
+    .catch((error) => {
+      console.error('[Background] Grok WebSocket cookie reconciliation queue failed:', error);
+    });
+
+  return grokWebSocketCookieReconcileQueue;
+}
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   await migrateProviderSettingsForUpdate(details);
   if (details?.reason === 'update') {
     await removeDeprecatedClaudeModelMode();
   }
   await scheduleOptionalProviderReconcile();
+  await scheduleGrokWebSocketCookieReconcile();
   await createContextMenus();
   await loadShortcutSetting();
   await loadOpenModeSetting();
@@ -139,6 +160,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.runtime.onStartup.addListener(async () => {
   await scheduleOptionalProviderReconcile();
+  await scheduleGrokWebSocketCookieReconcile();
   await loadShortcutSetting();
   await loadOpenModeSetting();
 });
@@ -172,8 +194,24 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 
   if (namespace === 'sync' && changes.enabledProviders) {
     scheduleOptionalProviderReconcile();
+    scheduleGrokWebSocketCookieReconcile();
   }
 });
+
+if (chrome.cookies?.onChanged) {
+  chrome.cookies.onChanged.addListener((changeInfo) => {
+    if (isGrokCookieDomain(changeInfo?.cookie?.domain)) {
+      scheduleGrokWebSocketCookieReconcile();
+    }
+  });
+}
+
+if (chrome.tabs?.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    unregisterMultiPanelTabId(tabId);
+    scheduleGrokWebSocketCookieReconcile();
+  });
+}
 
 if (chrome.permissions?.onAdded) {
   chrome.permissions.onAdded.addListener(() => {
@@ -295,7 +333,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleFetchLatestCommit().then(sendResponse);
     return true; // Keep channel open for async response
   }
-  return true;
+
+  if (message.action === 'syncGrokWebSocketCookies') {
+    scheduleGrokWebSocketCookieReconcile({ tabId: sender?.tab?.id })
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  return false;
 });
 
 // Handle version check by fetching latest commit from GitHub API

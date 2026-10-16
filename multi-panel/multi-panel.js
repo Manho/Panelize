@@ -7,6 +7,7 @@
 
 import { PROVIDERS, getProviderById, getEnabledProviders, getProviderIcon } from '../modules/providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
+import { reconcileGrokWebSocketCookies } from '../modules/grok-websocket-cookies.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
   GOOGLE_PROVIDER_MODE_AI,
@@ -242,6 +243,10 @@ function isGoogleProvider(providerId) {
 
 function isChatgptProvider(providerId) {
   return providerId === 'chatgpt';
+}
+
+async function ensureGrokWebSocketCookiesSynced() {
+  await reconcileGrokWebSocketCookies();
 }
 
 function isTemporaryChatSupportedProvider(providerId) {
@@ -1194,6 +1199,10 @@ async function addPanel(providerId) {
     return;
   }
 
+  if (providerId === 'grok') {
+    await ensureGrokWebSocketCookiesSynced();
+  }
+
   const panelId = `panel-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   const panelGrid = document.getElementById('panel-grid');
@@ -1320,6 +1329,10 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();
+  }
+
+  if (newProviderId === 'grok') {
+    await ensureGrokWebSocketCookiesSynced();
   }
 
   // Update panel header
