@@ -11,6 +11,7 @@ describe('manifest Qwen permission coverage', () => {
     expect(manifest.optional_host_permissions).toEqual(expect.arrayContaining([
       'https://www.qianwen.com/*',
       'https://chat.qwen.ai/*',
+      'https://auth.qwen.ai/*',
     ]));
   });
 

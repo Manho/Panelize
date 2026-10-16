@@ -45,7 +45,9 @@ export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze({
     frameRule: Object.freeze(createFrameRule(1001, 'https://www.qianwen.com/*'))
   }),
   'qwen-global': Object.freeze({
-    origins: Object.freeze(['https://chat.qwen.ai/*']),
+    // Qwen refreshes its session on a separate origin. Host access lets its
+    // embedded requests carry the same-site authentication cookies there.
+    origins: Object.freeze(['https://chat.qwen.ai/*', 'https://auth.qwen.ai/*']),
     contentScript: Object.freeze(createContentScript(
       'qwen-global-scripts',
       ['https://chat.qwen.ai/*'],

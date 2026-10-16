@@ -37,7 +37,7 @@ describe('optional provider access', () => {
       frameRule: { id: 1001 },
     });
     expect(OPTIONAL_PROVIDER_CONFIGS['qwen-global']).toMatchObject({
-      origins: ['https://chat.qwen.ai/*'],
+      origins: ['https://chat.qwen.ai/*', 'https://auth.qwen.ai/*'],
       contentScript: {
         id: 'qwen-global-scripts',
         matches: ['https://chat.qwen.ai/*'],
@@ -122,8 +122,42 @@ describe('optional provider access', () => {
     await expect(requestOptionalProviderPermission('qwen-global')).resolves.toBe(false);
 
     expect(chrome.permissions.request).toHaveBeenCalledWith({
-      origins: ['https://chat.qwen.ai/*'],
+      origins: ['https://chat.qwen.ai/*', 'https://auth.qwen.ai/*'],
     });
+  });
+
+  it('requires the authentication origin when upgrading existing Qwen access', async () => {
+    chrome.permissions.contains.mockImplementation(({ origins }) =>
+      Promise.resolve(origins.every(origin => origin === 'https://chat.qwen.ai/*'))
+    );
+    chrome.storage.sync.get.mockResolvedValue({ enabledProviders: ['qwen-global'] });
+    chrome.scripting.getRegisteredContentScripts.mockResolvedValue([{ id: 'qwen-global-scripts' }]);
+    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([{ id: 1002 }]);
+
+    await expect(filterProvidersWithGrantedAccess(['qwen-global'])).resolves.toEqual([]);
+    await reconcileOptionalProviderAccess();
+
+    expect(chrome.storage.sync.set).not.toHaveBeenCalled();
+    expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({ ids: ['qwen-global-scripts'] });
+    expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith({
+      removeRuleIds: [1002], addRules: [],
+    });
+
+    chrome.permissions.contains.mockResolvedValue(true);
+    chrome.scripting.getRegisteredContentScripts.mockResolvedValue([]);
+    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([]);
+    await reconcileOptionalProviderAccess();
+
+    expect(chrome.scripting.registerContentScripts).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'qwen-global-scripts', matches: ['https://chat.qwen.ai/*'] }),
+    ]);
+    expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenLastCalledWith({
+      removeRuleIds: [],
+      addRules: [expect.objectContaining({ id: 1002, condition: {
+        urlFilter: 'https://chat.qwen.ai/*', resourceTypes: ['sub_frame'],
+      } })],
+    });
+    expect(chrome.storage.sync.set).not.toHaveBeenCalled();
   });
 
   it('keeps non-optional providers and removes optional providers without access', async () => {
