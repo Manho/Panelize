@@ -6,6 +6,15 @@
     return;
   }
 
+  // Only rewrite inside extension pages such as the Multi-Panel page. Grok
+  // frames embedded by ordinary websites (or by a website framing the
+  // web-accessible Multi-Panel page) keep the browser's default behavior.
+  const ancestorOrigins = location.ancestorOrigins;
+  const topOrigin = ancestorOrigins?.length ? ancestorOrigins[ancestorOrigins.length - 1] : '';
+  if (!topOrigin.startsWith('chrome-extension://')) {
+    return;
+  }
+
   const OPTANON_COOKIE_PATTERN = /^\s*Optanon(?:AlertBoxClosed|Consent)=/;
 
   function rewriteGrokConsentCookieString(cookieString) {
@@ -27,13 +36,18 @@
     return rewritten;
   }
 
-  const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
-    Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+  // Patch the prototype that actually owns the accessor (Document.prototype in
+  // Chromium) so no own property further down the chain shadows the override.
+  let owner = Object.getPrototypeOf(document);
+  while (owner && !Object.prototype.hasOwnProperty.call(owner, 'cookie')) {
+    owner = Object.getPrototypeOf(owner);
+  }
+  const descriptor = owner && Object.getOwnPropertyDescriptor(owner, 'cookie');
   if (!descriptor || typeof descriptor.get !== 'function' || typeof descriptor.set !== 'function') {
     return;
   }
 
-  Object.defineProperty(Document.prototype, 'cookie', {
+  Object.defineProperty(owner, 'cookie', {
     configurable: true,
     enumerable: descriptor.enumerable ?? true,
     get() {

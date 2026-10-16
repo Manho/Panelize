@@ -6,9 +6,15 @@ import {
   reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
 import {
-  isGrokCookieDomain,
-  reconcileGrokWebSocketCookies,
-  unregisterMultiPanelTabId
+  GROK_WEBSOCKET_COOKIE_SYNC_ACTION,
+  createGrokWebSocketCookieReconcileScheduler,
+  handleGrokTabNavigationComplete,
+  handleGrokTabNavigationStart,
+  handleGrokTabRemoved,
+  handleMultiPanelSyncRequest,
+  isGrokWebSocketCookieChange,
+  isMultiPanelTopFrameSender,
+  reconcileGrokWebSocketCookies
 } from '../modules/grok-websocket-cookies.js';
 
 // Install event - setup context menus
@@ -75,28 +81,24 @@ async function openMultiPanel() {
         if (tab.url === multiPanelUrl) {
           // 已有窗口，聚焦它
           await chrome.windows.update(win.id, { focused: true });
-          await scheduleGrokWebSocketCookieReconcile({ tabId: tab.id });
           return;
         }
       }
     }
 
     // 创建新弹出窗口
-    const createdWindow = await chrome.windows.create({
+    await chrome.windows.create({
       url: multiPanelUrl,
       type: 'popup',
       width: 1400,
       height: 900
     });
-    const popupTabId = createdWindow?.tabs?.[0]?.id;
-    await scheduleGrokWebSocketCookieReconcile({ tabId: popupTabId });
   } else {
     // 标签页模式：始终创建新标签页
-    const createdTab = await chrome.tabs.create({
+    await chrome.tabs.create({
       url: multiPanelUrl,
       active: true
     });
-    await scheduleGrokWebSocketCookieReconcile({ tabId: createdTab?.id });
   }
 }
 
@@ -124,7 +126,6 @@ async function migrateProviderSettingsForUpdate(details) {
 }
 
 let optionalProviderReconcileQueue = Promise.resolve();
-let grokWebSocketCookieReconcileQueue = Promise.resolve();
 
 function scheduleOptionalProviderReconcile() {
   optionalProviderReconcileQueue = optionalProviderReconcileQueue
@@ -136,15 +137,12 @@ function scheduleOptionalProviderReconcile() {
   return optionalProviderReconcileQueue;
 }
 
-function scheduleGrokWebSocketCookieReconcile(options = {}) {
-  grokWebSocketCookieReconcileQueue = grokWebSocketCookieReconcileQueue
-    .then(() => reconcileGrokWebSocketCookies(options))
-    .catch((error) => {
-      console.error('[Background] Grok WebSocket cookie reconciliation queue failed:', error);
-    });
-
-  return grokWebSocketCookieReconcileQueue;
-}
+const scheduleGrokWebSocketCookieReconcile = createGrokWebSocketCookieReconcileScheduler(
+  reconcileGrokWebSocketCookies,
+  (error) => {
+    console.error('[Background] Failed to synchronize Grok WebSocket cookies:', error);
+  }
+);
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await migrateProviderSettingsForUpdate(details);
@@ -200,7 +198,20 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 
 if (chrome.cookies?.onChanged) {
   chrome.cookies.onChanged.addListener((changeInfo) => {
-    if (isGrokCookieDomain(changeInfo?.cookie?.domain)) {
+    if (isGrokWebSocketCookieChange(changeInfo)) {
+      scheduleGrokWebSocketCookieReconcile();
+    }
+  });
+}
+
+if (chrome.tabs?.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo?.status === 'loading') {
+      handleGrokTabNavigationStart(tabId).catch((error) => {
+        console.error('[Background] Failed to drop navigating tab from Grok cookie rule:', error);
+        scheduleGrokWebSocketCookieReconcile();
+      });
+    } else if (changeInfo?.status === 'complete' && handleGrokTabNavigationComplete(tabId)) {
       scheduleGrokWebSocketCookieReconcile();
     }
   });
@@ -208,8 +219,15 @@ if (chrome.cookies?.onChanged) {
 
 if (chrome.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
-    unregisterMultiPanelTabId(tabId);
-    scheduleGrokWebSocketCookieReconcile();
+    handleGrokTabRemoved(tabId)
+      .then((inRule) => {
+        if (inRule) {
+          scheduleGrokWebSocketCookieReconcile();
+        }
+      })
+      .catch((error) => {
+        console.error('[Background] Failed to handle closed Grok tab:', error);
+      });
   });
 }
 
@@ -334,10 +352,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep channel open for async response
   }
 
-  if (message.action === 'syncGrokWebSocketCookies') {
-    scheduleGrokWebSocketCookieReconcile({ tabId: sender?.tab?.id })
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+  if (message.action === GROK_WEBSOCKET_COOKIE_SYNC_ACTION) {
+    if (!isMultiPanelTopFrameSender(sender)) {
+      sendResponse({ success: false, error: 'Grok cookie sync is only available to the Multi-Panel page' });
+      return false;
+    }
+
+    handleMultiPanelSyncRequest(sender.tab.id);
+    scheduleGrokWebSocketCookieReconcile({ upgradeConsentCookies: true }).then(sendResponse);
     return true;
   }
 

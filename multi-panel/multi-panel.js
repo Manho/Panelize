@@ -7,7 +7,7 @@
 
 import { PROVIDERS, getProviderById, getEnabledProviders, getProviderIcon } from '../modules/providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
-import { reconcileGrokWebSocketCookies } from '../modules/grok-websocket-cookies.js';
+import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
   GOOGLE_PROVIDER_MODE_AI,
@@ -245,8 +245,17 @@ function isChatgptProvider(providerId) {
   return providerId === 'chatgpt';
 }
 
-async function ensureGrokWebSocketCookiesSynced() {
-  await reconcileGrokWebSocketCookies();
+// The service worker owns the forwarding rule and serializes updates to it;
+// a failed sync must not block the panel from loading.
+async function requestGrokWebSocketCookieSync() {
+  try {
+    const response = await chrome.runtime.sendMessage({ action: GROK_WEBSOCKET_COOKIE_SYNC_ACTION });
+    if (!response?.success) {
+      console.warn('[Multi-Panel] Grok WebSocket cookie sync failed:', response?.error);
+    }
+  } catch (error) {
+    console.warn('[Multi-Panel] Grok WebSocket cookie sync failed:', error);
+  }
 }
 
 function isTemporaryChatSupportedProvider(providerId) {
@@ -1169,11 +1178,25 @@ async function initializePanels() {
 // ===== Panel Management =====
 
 async function addPanel(providerId) {
+  // Sync before the capacity check so no await separates the check from the
+  // panel being added.
+  if (providerId === 'grok') {
+    await requestGrokWebSocketCookieSync();
+  }
+
   if (panels.length >= MAX_PANELS) {
     showToast(`Maximum number of panels reached (${MAX_PANELS})`);
     return;
   }
 
+  const provider = getProviderById(providerId);
+  if (!provider) {
+    console.error('Provider not found:', providerId);
+    return;
+  }
+
+  // Everything from the capacity check to panels.push() below runs without
+  // awaiting, so concurrent calls cannot both pass the check.
   // Auto layout adjustment: upgrade from 1xN to 1x(N+1) when adding panel exceeds capacity
   const newPanelCount = panels.length + 1;
   const adjustedLayout = getAutoAdjustedLayout(currentLayout, newPanelCount);
@@ -1188,19 +1211,7 @@ async function addPanel(providerId) {
     document.querySelectorAll('.layout-option').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.layout === adjustedLayout);
     });
-
-    // Save configuration
-    await saveProviderConfiguration();
-  }
-
-  const provider = getProviderById(providerId);
-  if (!provider) {
-    console.error('Provider not found:', providerId);
-    return;
-  }
-
-  if (providerId === 'grok') {
-    await ensureGrokWebSocketCookiesSynced();
+    // The adjusted layout is saved together with the new panel below.
   }
 
   const panelId = `panel-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1332,7 +1343,7 @@ async function switchPanelProvider(panelId, newProviderId) {
   }
 
   if (newProviderId === 'grok') {
-    await ensureGrokWebSocketCookiesSynced();
+    await requestGrokWebSocketCookieSync();
   }
 
   // Update panel header

@@ -79,9 +79,9 @@ When you interact with these AI providers through Panelize, you are subject to t
 
 ### Cookie Access
 
-Provider websites use your existing browser session cookies when they load inside panels. Because Chromium omits `SameSite=Lax` and `SameSite=Strict` cookies on WebSocket handshakes initiated from embedded extension panels, Panelize uses the `cookies` API locally in your browser to forward existing `grok.com` session cookies to Grok's own `wss://grok.com/*` WebSocket requests inside Panelize tabs. The forwarding rule lasts only for the browser session; cookie values are not saved in Panelize's settings or sent to Panelize-operated servers or unrelated third parties.
+Provider websites use your existing browser session cookies when they load inside panels. Because Chromium omits `SameSite=Lax` and `SameSite=Strict` cookies on WebSocket handshakes initiated from embedded extension panels, Panelize uses the `cookies` API locally in your browser to forward existing `grok.com` session cookies to Grok's own `wss://grok.com/*` WebSocket requests made from Panelize's Multi-Panel tabs. The forwarding applies only while the Multi-Panel page is the top-level page of a tab; it does not apply when another website embeds a Panelize page. The forwarding rule lasts only for the browser session; cookie values are not saved in Panelize's settings or sent to Panelize-operated servers or unrelated third parties.
 
-Panelize also preserves your existing Grok cookie consent choices by setting the `OptanonAlertBoxClosed` and `OptanonConsent` cookies to `SameSite=None; Secure`, allowing Grok to read and save those choices inside its embedded panel. This preserves the choice you make in Grok's cookie controls and does not automatically accept cookies on your behalf.
+Panelize also preserves your existing Grok cookie consent choices by setting the `OptanonAlertBoxClosed` and `OptanonConsent` cookies to `SameSite=None; Secure`, allowing Grok to read and save those choices inside its embedded panel. This happens only when you open Grok in the Multi-Panel page. This preserves the choice you make in Grok's cookie controls and does not automatically accept cookies on your behalf.
 
 ### Update Checks
 

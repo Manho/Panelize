@@ -169,11 +169,3 @@ function handleEnterSwap(event) {
 
 // Apply the setting on initial load
 applyEnterSwapSetting();
-
-if (window.top !== window.self && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-  try {
-    Promise.resolve(chrome.runtime.sendMessage({ action: 'syncGrokWebSocketCookies' })).catch(() => {});
-  } catch {
-    // Ignore extension context errors
-  }
-}
