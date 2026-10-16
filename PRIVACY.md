@@ -79,7 +79,9 @@ When you interact with these AI providers through Panelize, you are subject to t
 
 ### Cookie Access
 
-Panelize does not access cookie data directly and does not use the cookies API. Provider websites may use your existing browser session cookies when they load inside panels, just like in a normal tab.
+Provider websites use your existing browser session cookies when they load inside panels. Because Chromium omits `SameSite=Lax` and `SameSite=Strict` cookies on WebSocket handshakes initiated from embedded extension panels, Panelize uses the `cookies` API locally in your browser to forward existing `grok.com` session cookies to Grok's own `wss://grok.com/*` WebSocket requests made from Panelize's Multi-Panel tabs. The forwarding applies only while the Multi-Panel page is the top-level page of a tab; it does not apply when another website embeds a Panelize page. The forwarding rule lasts only for the browser session; cookie values are not saved in Panelize's settings or sent to Panelize-operated servers or unrelated third parties.
+
+Panelize also preserves your existing Grok cookie consent choices by setting the `OptanonAlertBoxClosed` and `OptanonConsent` cookies to `SameSite=None; Secure`, allowing Grok to read and save those choices inside its embedded panel. This happens only when you open Grok in the Multi-Panel page. This preserves the choice you make in Grok's cookie controls and does not automatically accept cookies on your behalf.
 
 ### Update Checks
 
@@ -155,6 +157,7 @@ Panelize requests the following Chrome extension permissions:
 | Permission | Purpose |
 |------------|---------|
 | `storage` | Store your prompts and settings locally |
+| `cookies` | Attach existing `grok.com` session cookies to Grok's embedded WebSocket connections and preserve your Grok cookie consent choices inside Panelize |
 | `contextMenus` | Add "Send to Panelize" option when right-clicking |
 | `declarativeNetRequest` | Allow AI provider websites to load in embedded panels (bypass X-Frame-Options) |
 | `declarativeNetRequestWithHostAccess` | Apply header modifications for specific AI provider domains |

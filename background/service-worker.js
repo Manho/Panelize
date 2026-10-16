@@ -5,6 +5,17 @@ import { removeDeprecatedClaudeModelMode } from '../modules/settings.js';
 import {
   reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
+import {
+  GROK_WEBSOCKET_COOKIE_SYNC_ACTION,
+  createGrokWebSocketCookieReconcileScheduler,
+  handleGrokTabNavigationComplete,
+  handleGrokTabNavigationStart,
+  handleGrokTabRemoved,
+  handleMultiPanelSyncRequest,
+  isGrokWebSocketCookieChange,
+  isMultiPanelTopFrameSender,
+  reconcileGrokWebSocketCookies
+} from '../modules/grok-websocket-cookies.js';
 
 // Install event - setup context menus
 const DEFAULT_SHORTCUT_SETTING = { keyboardShortcutEnabled: true };
@@ -126,12 +137,20 @@ function scheduleOptionalProviderReconcile() {
   return optionalProviderReconcileQueue;
 }
 
+const scheduleGrokWebSocketCookieReconcile = createGrokWebSocketCookieReconcileScheduler(
+  reconcileGrokWebSocketCookies,
+  (error) => {
+    console.error('[Background] Failed to synchronize Grok WebSocket cookies:', error);
+  }
+);
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   await migrateProviderSettingsForUpdate(details);
   if (details?.reason === 'update') {
     await removeDeprecatedClaudeModelMode();
   }
   await scheduleOptionalProviderReconcile();
+  await scheduleGrokWebSocketCookieReconcile();
   await createContextMenus();
   await loadShortcutSetting();
   await loadOpenModeSetting();
@@ -139,6 +158,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.runtime.onStartup.addListener(async () => {
   await scheduleOptionalProviderReconcile();
+  await scheduleGrokWebSocketCookieReconcile();
   await loadShortcutSetting();
   await loadOpenModeSetting();
 });
@@ -172,8 +192,44 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 
   if (namespace === 'sync' && changes.enabledProviders) {
     scheduleOptionalProviderReconcile();
+    scheduleGrokWebSocketCookieReconcile();
   }
 });
+
+if (chrome.cookies?.onChanged) {
+  chrome.cookies.onChanged.addListener((changeInfo) => {
+    if (isGrokWebSocketCookieChange(changeInfo)) {
+      scheduleGrokWebSocketCookieReconcile();
+    }
+  });
+}
+
+if (chrome.tabs?.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo?.status === 'loading') {
+      handleGrokTabNavigationStart(tabId).catch((error) => {
+        console.error('[Background] Failed to drop navigating tab from Grok cookie rule:', error);
+        scheduleGrokWebSocketCookieReconcile();
+      });
+    } else if (changeInfo?.status === 'complete' && handleGrokTabNavigationComplete(tabId)) {
+      scheduleGrokWebSocketCookieReconcile();
+    }
+  });
+}
+
+if (chrome.tabs?.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    handleGrokTabRemoved(tabId)
+      .then((inRule) => {
+        if (inRule) {
+          scheduleGrokWebSocketCookieReconcile();
+        }
+      })
+      .catch((error) => {
+        console.error('[Background] Failed to handle closed Grok tab:', error);
+      });
+  });
+}
 
 if (chrome.permissions?.onAdded) {
   chrome.permissions.onAdded.addListener(() => {
@@ -295,7 +351,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleFetchLatestCommit().then(sendResponse);
     return true; // Keep channel open for async response
   }
-  return true;
+
+  if (message.action === GROK_WEBSOCKET_COOKIE_SYNC_ACTION) {
+    if (!isMultiPanelTopFrameSender(sender)) {
+      sendResponse({ success: false, error: 'Grok cookie sync is only available to the Multi-Panel page' });
+      return false;
+    }
+
+    handleMultiPanelSyncRequest(sender.tab.id);
+    scheduleGrokWebSocketCookieReconcile({ upgradeConsentCookies: true }).then(sendResponse);
+    return true;
+  }
+
+  return false;
 });
 
 // Handle version check by fetching latest commit from GitHub API
