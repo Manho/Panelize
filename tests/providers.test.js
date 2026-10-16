@@ -42,7 +42,7 @@ describe('providers module', () => {
       expect(getProviderById('qwen-global')).toMatchObject({
         name: 'Qwen (Global)',
         url: 'https://chat.qwen.ai/',
-        optionalOrigins: ['https://chat.qwen.ai/*'],
+        optionalOrigins: ['https://chat.qwen.ai/*', 'https://auth.qwen.ai/*'],
       });
       expect(getProviderById('chatglm')).toMatchObject({
         name: 'Zhipu (China)',

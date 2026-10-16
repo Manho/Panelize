@@ -166,6 +166,9 @@ Customize shortcuts at `chrome://extensions/shortcuts`
 **Shortcuts not working?**
 → Check for conflicts at `chrome://extensions/shortcuts`
 
+**Qwen (Global) looks logged out after signing in?**
+→ In Settings, enable Qwen (Global) and approve access to both `chat.qwen.ai` and `auth.qwen.ai`, then reload the panel. Existing users may need to approve the added authentication origin after updating Panelize. If Qwen has already invalidated the session, sign in again on its website first.
+
 **Need more help?**
 → [Open an issue](https://github.com/Manho/Panelize/issues)
 

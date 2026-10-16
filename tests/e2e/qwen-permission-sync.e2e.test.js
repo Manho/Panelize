@@ -1,14 +1,19 @@
 import { test, expect } from '@playwright/test';
-import { launchExtension } from './extension-harness.js';
+import { createPatchedExtensionCopy, launchExtension } from './extension-harness.js';
 
 test.describe('Qwen optional permission sync E2E', () => {
   test.setTimeout(60000);
 
   let extension;
+  let extensionCopy;
   let page;
 
   test.beforeAll(async () => {
-    extension = await launchExtension();
+    extensionCopy = await createPatchedExtensionCopy(manifest => {
+      // Simulate a device that granted Qwen access before its auth origin was added.
+      manifest.host_permissions.push('https://chat.qwen.ai/*');
+    });
+    extension = await launchExtension({ extensionPath: extensionCopy.extensionPath });
     page = await extension.context.newPage();
     await page.goto(extension.extensionUrl('options/options.html'));
     await page.waitForSelector('[data-provider-id="qwen-cn"]');
@@ -16,6 +21,7 @@ test.describe('Qwen optional permission sync E2E', () => {
 
   test.afterAll(async () => {
     await extension?.close();
+    await extensionCopy?.cleanup();
   });
 
   test('preserves the synced preference when this device has no Qwen permission', async ({}, testInfo) => {
@@ -61,6 +67,31 @@ test.describe('Qwen optional permission sync E2E', () => {
       toggleActive: false,
       qwenScriptRegistered: false,
       qwenRuleRegistered: false,
+    });
+  });
+
+  test('keeps the enabled preference when Qwen Global needs authentication access', async () => {
+    await page.evaluate(() => chrome.storage.sync.set({
+      enabledProviders: ['qwen-global'],
+      providerOrder: ['qwen-global'],
+    }));
+    await page.reload();
+
+    const provider = page.locator('[data-provider-id="qwen-global"].provider-item');
+    await expect(provider).toHaveAttribute('data-enabled-preference', 'true');
+    await expect(provider).toHaveAttribute('data-has-access', 'false');
+    await expect(provider.locator('.toggle-switch')).not.toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(async () => ({
+      chatGranted: await chrome.permissions.contains({ origins: ['https://chat.qwen.ai/*'] }),
+      authGranted: await chrome.permissions.contains({ origins: ['https://auth.qwen.ai/*'] }),
+      enabledProviders: (await chrome.storage.sync.get('enabledProviders')).enabledProviders,
+      registered: (await chrome.scripting.getRegisteredContentScripts())
+        .some(({ id }) => id === 'qwen-global-scripts'),
+    }))).toEqual({
+      chatGranted: true,
+      authGranted: false,
+      enabledProviders: ['qwen-global'],
+      registered: false,
     });
   });
 });

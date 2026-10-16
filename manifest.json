@@ -31,6 +31,7 @@
   "optional_host_permissions": [
     "https://www.qianwen.com/*",
     "https://chat.qwen.ai/*",
+    "https://auth.qwen.ai/*",
     "https://chatglm.cn/*",
     "https://chat.z.ai/*",
     "https://yuanbao.tencent.com/*"
