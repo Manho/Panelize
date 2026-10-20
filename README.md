@@ -9,7 +9,7 @@
 <p align="center">
   <img src="assets/screenshots/promo-en.gif" alt="Panelize demo: ask ChatGPT, Claude, Gemini and DeepSeek at once and compare answers side by side" width="800">
   <br>
-  <a href="https://youtu.be/kCRXBVeXbrA">▶ Watch the HD video</a>
+  <a href="https://youtu.be/kCRXBVeXbrA">▶ Watch the HD video</a> · <a href="https://panelize.dev">🌐 panelize.dev</a>
 </p>
 
 <p align="center">
