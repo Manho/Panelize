@@ -9,7 +9,7 @@
 <p align="center">
   <img src="assets/screenshots/promo-zh.gif" alt="Panelize 演示：一次提问，并排对比 ChatGPT、Claude、Gemini、DeepSeek 的回答" width="800">
   <br>
-  <a href="https://youtu.be/rL9m86Z4f9Y">▶ 观看高清视频</a>
+  <a href="https://youtu.be/rL9m86Z4f9Y">▶ 观看高清视频</a> · <a href="https://panelize.dev/zh/">🌐 官网 panelize.dev</a>
 </p>
 
 <p align="center">
