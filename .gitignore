@@ -41,6 +41,7 @@ test-screenshot-*.png
 debug-screenshot.png
 screenshot*.png
 test-results/
+artifacts/
 
 # Local planning artifacts
 task_plan.md

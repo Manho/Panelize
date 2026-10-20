@@ -8,7 +8,7 @@ import { getBrowserLaunchOptions } from './browser-launch-options.js';
 
 export const REPO_EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-const COPY_EXCLUDED_SEGMENTS = ['.git', 'node_modules', 'test-results', 'playwright-report', 'dist'];
+const COPY_EXCLUDED_SEGMENTS = ['.git', 'node_modules', 'test-results', 'playwright-report', 'dist', 'artifacts'];
 
 /**
  * Copies the extension and lets the caller patch its manifest, e.g. to map
