@@ -835,5 +835,56 @@
   },
   "ratingPromptNever": {
     "message": "不再询问"
+  },
+  "shareButtonText": {
+    "message": "分享"
+  },
+  "shareButtonTitle": {
+    "message": "分享当前对比的截图。Chrome 会请你确认共享此标签页；图片只保存在你的设备上。"
+  },
+  "shareDialogTitle": {
+    "message": "分享对比截图"
+  },
+  "shareDialogClose": {
+    "message": "关闭"
+  },
+  "sharePrivacyWarning": {
+    "message": "分享前请检查图片：其中可能包含侧边栏的聊天记录、账号名称或头像。"
+  },
+  "shareCopyButton": {
+    "message": "复制到剪贴板"
+  },
+  "shareDownloadButton": {
+    "message": "下载 PNG"
+  },
+  "shareCopied": {
+    "message": "图片已复制到剪贴板"
+  },
+  "shareCopyFailed": {
+    "message": "无法复制图片，请改用“下载 PNG”。"
+  },
+  "shareCaptureCancelled": {
+    "message": "已取消截图"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "要截图，请选择共享当前 Panelize 标签页"
+  },
+  "shareCaptureFailed": {
+    "message": "无法截取对比画面"
+  },
+  "shareFooterText": {
+    "message": "使用 Panelize 对比"
+  },
+  "labelShareWatermark": {
+    "message": "在分享图片上显示水印"
+  },
+  "descShareWatermark": {
+    "message": "在“分享”按钮生成的截图底部添加“使用 Panelize 对比 · panelize.dev”标识"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "已开启分享图片水印"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "已关闭分享图片水印"
   }
 }

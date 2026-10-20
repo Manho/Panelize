@@ -158,9 +158,23 @@ body {
   white-space: nowrap;
 }
 
-#toggle-open-mode-btn .btn-text {
+#toggle-open-mode-btn .btn-text,
+#share-snapshot-btn .btn-text {
   font-size: 12px;
   font-weight: 500;
+}
+
+/* Share Snapshot Button */
+#share-snapshot-btn {
+  gap: 6px;
+  width: auto;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+#share-snapshot-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 /* Toolbar Collapsed State */
@@ -1743,6 +1757,84 @@ body {
 
 .btn-secondary:hover {
   background: #f5f5f5;
+}
+
+/* ===== Share Snapshot Modal ===== */
+.share-modal-content {
+  max-height: 90vh;
+}
+
+.share-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.share-privacy-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #ffe0b2;
+  border-radius: 8px;
+  background: #fff8e1;
+  color: #5d4037;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.share-privacy-warning .material-symbols-outlined {
+  font-size: 18px;
+  color: #ef6c00;
+}
+
+.share-preview {
+  display: block;
+  max-width: 100%;
+  /* Keep the whole image visible next to the header, warning and buttons. */
+  max-height: calc(90vh - 280px);
+  min-height: 120px;
+  margin: 0 auto;
+  object-fit: contain;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+
+.share-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-action-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+[data-theme="dark"] .share-privacy-warning {
+  border-color: #5d4037;
+  background: #3e2f1c;
+  color: #ffe0b2;
+}
+
+[data-theme="dark"] .share-privacy-warning .material-symbols-outlined {
+  color: #ffb74d;
+}
+
+[data-theme="dark"] .share-preview {
+  border-color: #444;
+}
+
+@media (max-width: 640px) {
+  #share-snapshot-btn {
+    width: 36px;
+    padding: 0;
+  }
+
+  #share-snapshot-btn .btn-text {
+    display: none;
+  }
 }
 
 /* Dark theme for new elements */

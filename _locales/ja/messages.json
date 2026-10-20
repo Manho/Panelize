@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "今後表示しない"
+  },
+  "shareButtonText": {
+    "message": "共有"
+  },
+  "shareButtonTitle": {
+    "message": "この比較のスナップショットを共有します。Chrome がこのタブの共有を確認します。画像はお使いのデバイスにのみ保存されます。"
+  },
+  "shareDialogTitle": {
+    "message": "比較を共有"
+  },
+  "shareDialogClose": {
+    "message": "閉じる"
+  },
+  "sharePrivacyWarning": {
+    "message": "共有する前に画像を確認してください。サイドバーのチャット履歴、アカウント名、アバターが写っている場合があります。"
+  },
+  "shareCopyButton": {
+    "message": "クリップボードにコピー"
+  },
+  "shareDownloadButton": {
+    "message": "PNG をダウンロード"
+  },
+  "shareCopied": {
+    "message": "画像をクリップボードにコピーしました"
+  },
+  "shareCopyFailed": {
+    "message": "画像をコピーできませんでした。代わりに「PNG をダウンロード」を使用してください。"
+  },
+  "shareCaptureCancelled": {
+    "message": "スナップショットをキャンセルしました"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "スナップショットを撮るには、この Panelize タブを共有してください"
+  },
+  "shareCaptureFailed": {
+    "message": "比較画面をキャプチャできませんでした"
+  },
+  "shareFooterText": {
+    "message": "Panelize で比較"
+  },
+  "labelShareWatermark": {
+    "message": "共有画像に透かしを表示"
+  },
+  "descShareWatermark": {
+    "message": "「共有」ボタンで作成したスナップショットの下部に「Panelize で比較 · panelize.dev」を追加します"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "共有画像の透かしを有効にしました"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "共有画像の透かしを無効にしました"
   }
 }

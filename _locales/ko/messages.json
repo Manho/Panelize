@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "다시 묻지 않기"
+  },
+  "shareButtonText": {
+    "message": "공유"
+  },
+  "shareButtonTitle": {
+    "message": "이 비교 화면의 스냅샷을 공유합니다. Chrome에서 이 탭 공유를 확인하며, 이미지는 기기에만 저장됩니다."
+  },
+  "shareDialogTitle": {
+    "message": "비교 공유"
+  },
+  "shareDialogClose": {
+    "message": "닫기"
+  },
+  "sharePrivacyWarning": {
+    "message": "공유하기 전에 이미지를 확인하세요. 사이드바의 채팅 기록, 계정 이름 또는 아바타가 포함될 수 있습니다."
+  },
+  "shareCopyButton": {
+    "message": "클립보드에 복사"
+  },
+  "shareDownloadButton": {
+    "message": "PNG 다운로드"
+  },
+  "shareCopied": {
+    "message": "이미지를 클립보드에 복사했습니다"
+  },
+  "shareCopyFailed": {
+    "message": "이미지를 복사할 수 없습니다. 대신 PNG 다운로드를 사용하세요."
+  },
+  "shareCaptureCancelled": {
+    "message": "스냅샷이 취소되었습니다"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "스냅샷을 찍으려면 이 Panelize 탭을 공유하세요"
+  },
+  "shareCaptureFailed": {
+    "message": "비교 화면을 캡처할 수 없습니다"
+  },
+  "shareFooterText": {
+    "message": "Panelize로 비교"
+  },
+  "labelShareWatermark": {
+    "message": "공유 이미지에 워터마크 표시"
+  },
+  "descShareWatermark": {
+    "message": "공유 버튼으로 만든 스냅샷 하단에 \"Panelize로 비교 · panelize.dev\" 표시를 추가합니다"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "공유 이미지 워터마크가 켜졌습니다"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "공유 이미지 워터마크가 꺼졌습니다"
   }
 }

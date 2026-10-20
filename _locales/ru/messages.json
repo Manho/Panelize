@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "Больше не спрашивать"
+  },
+  "shareButtonText": {
+    "message": "Поделиться"
+  },
+  "shareButtonTitle": {
+    "message": "Поделиться снимком этого сравнения. Chrome попросит подтвердить показ этой вкладки; изображение остаётся на вашем устройстве."
+  },
+  "shareDialogTitle": {
+    "message": "Поделиться сравнением"
+  },
+  "shareDialogClose": {
+    "message": "Закрыть"
+  },
+  "sharePrivacyWarning": {
+    "message": "Проверьте изображение перед отправкой: на нём может быть история чатов в боковых панелях, имена аккаунтов или аватары."
+  },
+  "shareCopyButton": {
+    "message": "Копировать в буфер обмена"
+  },
+  "shareDownloadButton": {
+    "message": "Скачать PNG"
+  },
+  "shareCopied": {
+    "message": "Изображение скопировано в буфер обмена"
+  },
+  "shareCopyFailed": {
+    "message": "Не удалось скопировать изображение. Используйте «Скачать PNG»."
+  },
+  "shareCaptureCancelled": {
+    "message": "Снимок отменён"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Чтобы сделать снимок, выберите эту вкладку Panelize"
+  },
+  "shareCaptureFailed": {
+    "message": "Не удалось сделать снимок сравнения"
+  },
+  "shareFooterText": {
+    "message": "Сравнено в Panelize"
+  },
+  "labelShareWatermark": {
+    "message": "Показывать водяной знак на изображениях"
+  },
+  "descShareWatermark": {
+    "message": "Добавляет полосу «Сравнено в Panelize · panelize.dev» к снимкам, созданным кнопкой «Поделиться»"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Водяной знак на изображениях включён"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Водяной знак на изображениях выключен"
   }
 }

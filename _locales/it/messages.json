@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "Non chiedere più"
+  },
+  "shareButtonText": {
+    "message": "Condividi"
+  },
+  "shareButtonTitle": {
+    "message": "Condividi un'istantanea di questo confronto. Chrome ti chiede di confermare la condivisione di questa scheda; l'immagine resta sul tuo dispositivo."
+  },
+  "shareDialogTitle": {
+    "message": "Condividi confronto"
+  },
+  "shareDialogClose": {
+    "message": "Chiudi"
+  },
+  "sharePrivacyWarning": {
+    "message": "Controlla l'immagine prima di condividerla: potrebbe mostrare la cronologia delle chat nelle barre laterali, nomi account o avatar."
+  },
+  "shareCopyButton": {
+    "message": "Copia negli appunti"
+  },
+  "shareDownloadButton": {
+    "message": "Scarica PNG"
+  },
+  "shareCopied": {
+    "message": "Immagine copiata negli appunti"
+  },
+  "shareCopyFailed": {
+    "message": "Impossibile copiare l'immagine. Usa Scarica PNG."
+  },
+  "shareCaptureCancelled": {
+    "message": "Istantanea annullata"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Per creare l'istantanea, condividi questa scheda di Panelize"
+  },
+  "shareCaptureFailed": {
+    "message": "Impossibile acquisire il confronto"
+  },
+  "shareFooterText": {
+    "message": "Confrontato con Panelize"
+  },
+  "labelShareWatermark": {
+    "message": "Mostra filigrana sulle immagini condivise"
+  },
+  "descShareWatermark": {
+    "message": "Aggiunge una fascia \"Confrontato con Panelize · panelize.dev\" alle istantanee create con il pulsante Condividi"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Filigrana sulle immagini condivise attivata"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Filigrana sulle immagini condivise disattivata"
   }
 }

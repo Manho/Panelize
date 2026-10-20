@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "Nicht mehr fragen"
+  },
+  "shareButtonText": {
+    "message": "Teilen"
+  },
+  "shareButtonTitle": {
+    "message": "Teile einen Schnappschuss dieses Vergleichs. Chrome fragt nach, ob du diesen Tab teilen möchtest; das Bild bleibt auf deinem Gerät."
+  },
+  "shareDialogTitle": {
+    "message": "Vergleich teilen"
+  },
+  "shareDialogClose": {
+    "message": "Schließen"
+  },
+  "sharePrivacyWarning": {
+    "message": "Prüfe das Bild vor dem Teilen: Es kann Chatverläufe in Seitenleisten, Kontonamen oder Avatare zeigen."
+  },
+  "shareCopyButton": {
+    "message": "In die Zwischenablage kopieren"
+  },
+  "shareDownloadButton": {
+    "message": "PNG herunterladen"
+  },
+  "shareCopied": {
+    "message": "Bild in die Zwischenablage kopiert"
+  },
+  "shareCopyFailed": {
+    "message": "Das Bild konnte nicht kopiert werden. Nutze stattdessen PNG herunterladen."
+  },
+  "shareCaptureCancelled": {
+    "message": "Schnappschuss abgebrochen"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Teile diesen Panelize-Tab, um einen Schnappschuss zu erstellen"
+  },
+  "shareCaptureFailed": {
+    "message": "Der Vergleich konnte nicht aufgenommen werden"
+  },
+  "shareFooterText": {
+    "message": "Verglichen mit Panelize"
+  },
+  "labelShareWatermark": {
+    "message": "Wasserzeichen auf geteilten Bildern anzeigen"
+  },
+  "descShareWatermark": {
+    "message": "Fügt Schnappschüssen über die Teilen-Schaltfläche einen Streifen „Verglichen mit Panelize · panelize.dev“ hinzu"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Wasserzeichen auf geteilten Bildern aktiviert"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Wasserzeichen auf geteilten Bildern deaktiviert"
   }
 }

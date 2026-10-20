@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "Ne plus demander"
+  },
+  "shareButtonText": {
+    "message": "Partager"
+  },
+  "shareButtonTitle": {
+    "message": "Partagez une capture de cette comparaison. Chrome vous demande de confirmer le partage de cet onglet ; l'image reste sur votre appareil."
+  },
+  "shareDialogTitle": {
+    "message": "Partager la comparaison"
+  },
+  "shareDialogClose": {
+    "message": "Fermer"
+  },
+  "sharePrivacyWarning": {
+    "message": "Vérifiez l'image avant de la partager : elle peut montrer l'historique des discussions dans les barres latérales, des noms de compte ou des avatars."
+  },
+  "shareCopyButton": {
+    "message": "Copier dans le presse-papiers"
+  },
+  "shareDownloadButton": {
+    "message": "Télécharger le PNG"
+  },
+  "shareCopied": {
+    "message": "Image copiée dans le presse-papiers"
+  },
+  "shareCopyFailed": {
+    "message": "Impossible de copier l'image. Utilisez plutôt Télécharger le PNG."
+  },
+  "shareCaptureCancelled": {
+    "message": "Capture annulée"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Pour faire la capture, partagez cet onglet Panelize"
+  },
+  "shareCaptureFailed": {
+    "message": "Impossible de capturer la comparaison"
+  },
+  "shareFooterText": {
+    "message": "Comparé avec Panelize"
+  },
+  "labelShareWatermark": {
+    "message": "Afficher un filigrane sur les images partagées"
+  },
+  "descShareWatermark": {
+    "message": "Ajoute une bande « Comparé avec Panelize · panelize.dev » aux captures créées avec le bouton Partager"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Filigrane des images partagées activé"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Filigrane des images partagées désactivé"
   }
 }

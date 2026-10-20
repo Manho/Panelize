@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
   language: null,
   keyboardShortcutEnabled: true,
   openMode: 'tab',  // 'tab' or 'popup'
+  shareWatermarkEnabled: true,  // Adds the "Compared with Panelize" strip to shared snapshots
   enterKeyBehavior: {
     enabled: true,
     preset: 'default',  // 'default', 'swapped', 'slack', 'discord', 'custom'

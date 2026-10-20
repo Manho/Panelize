@@ -839,5 +839,56 @@
   },
   "ratingPromptNever": {
     "message": "No volver a preguntar"
+  },
+  "shareButtonText": {
+    "message": "Compartir"
+  },
+  "shareButtonTitle": {
+    "message": "Comparte una captura de esta comparación. Chrome te pedirá confirmar que compartes esta pestaña; la imagen se queda en tu dispositivo."
+  },
+  "shareDialogTitle": {
+    "message": "Compartir comparación"
+  },
+  "shareDialogClose": {
+    "message": "Cerrar"
+  },
+  "sharePrivacyWarning": {
+    "message": "Revisa la imagen antes de compartirla: puede mostrar historial de chats en barras laterales, nombres de cuenta o avatares."
+  },
+  "shareCopyButton": {
+    "message": "Copiar al portapapeles"
+  },
+  "shareDownloadButton": {
+    "message": "Descargar PNG"
+  },
+  "shareCopied": {
+    "message": "Imagen copiada al portapapeles"
+  },
+  "shareCopyFailed": {
+    "message": "No se pudo copiar la imagen. Usa Descargar PNG."
+  },
+  "shareCaptureCancelled": {
+    "message": "Captura cancelada"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Para hacer la captura, comparte esta pestaña de Panelize"
+  },
+  "shareCaptureFailed": {
+    "message": "No se pudo capturar la comparación"
+  },
+  "shareFooterText": {
+    "message": "Comparado con Panelize"
+  },
+  "labelShareWatermark": {
+    "message": "Mostrar marca de agua en las imágenes compartidas"
+  },
+  "descShareWatermark": {
+    "message": "Añade una franja \"Comparado con Panelize · panelize.dev\" a las capturas hechas con el botón Compartir"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Marca de agua en imágenes compartidas activada"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Marca de agua en imágenes compartidas desactivada"
   }
 }

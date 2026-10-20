@@ -835,5 +835,56 @@
   },
   "ratingPromptNever": {
     "message": "不要再詢問"
+  },
+  "shareButtonText": {
+    "message": "分享"
+  },
+  "shareButtonTitle": {
+    "message": "分享目前比較畫面的截圖。Chrome 會請你確認分享此分頁；圖片只會保存在你的裝置上。"
+  },
+  "shareDialogTitle": {
+    "message": "分享比較截圖"
+  },
+  "shareDialogClose": {
+    "message": "關閉"
+  },
+  "sharePrivacyWarning": {
+    "message": "分享前請檢查圖片：其中可能包含側邊欄的聊天記錄、帳號名稱或頭像。"
+  },
+  "shareCopyButton": {
+    "message": "複製到剪貼簿"
+  },
+  "shareDownloadButton": {
+    "message": "下載 PNG"
+  },
+  "shareCopied": {
+    "message": "圖片已複製到剪貼簿"
+  },
+  "shareCopyFailed": {
+    "message": "無法複製圖片，請改用「下載 PNG」。"
+  },
+  "shareCaptureCancelled": {
+    "message": "已取消截圖"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "要截圖，請選擇分享目前的 Panelize 分頁"
+  },
+  "shareCaptureFailed": {
+    "message": "無法擷取比較畫面"
+  },
+  "shareFooterText": {
+    "message": "使用 Panelize 比較"
+  },
+  "labelShareWatermark": {
+    "message": "在分享圖片上顯示浮水印"
+  },
+  "descShareWatermark": {
+    "message": "在「分享」按鈕產生的截圖底部加上「使用 Panelize 比較 · panelize.dev」標示"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "已開啟分享圖片浮水印"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "已關閉分享圖片浮水印"
   }
 }

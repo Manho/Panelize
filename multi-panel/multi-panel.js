@@ -20,7 +20,7 @@ import {
   isProviderAllowedUrl,
   isProviderCurrentUrl
 } from '../modules/provider-open-url.js';
-import { saveSetting } from '../modules/settings.js';
+import { getSetting, saveSetting } from '../modules/settings.js';
 import {
   LAYOUT_PANEL_COUNTS,
   getAutoAdjustedLayout,
@@ -36,6 +36,16 @@ import {
   saveRatingPromptAction,
   shouldShowRatingPrompt
 } from '../modules/rating-prompt.js';
+import {
+  SNAPSHOT_MAX_CAPTURE_WIDTH,
+  composeSnapshot,
+  getSnapshotFileName
+} from '../modules/share-snapshot.js';
+import {
+  TAB_CAPTURE_ERRORS,
+  TabCaptureError,
+  captureElementInCurrentTab
+} from '../modules/tab-capture.js';
 import {
   calculatePendingImageIds,
   cleanStalePanelRetryState,
@@ -210,6 +220,7 @@ async function init() {
   // Setup event listeners
   setupEventListeners();
   setupRatingPrompt();
+  setupShareSnapshot();
   updateTemporaryChatButtonState();
   focusUnifiedInput({ force: true });
 
@@ -1636,6 +1647,10 @@ export async function broadcastMessage(text, autoSubmit = true) {
         console.warn('[Multi-Panel] Image fill failed for panels:', failedPanels);
       }
 
+      if (successfulCount > 0) {
+        rememberSnapshotPrompt(text);
+      }
+
       if (shouldClearFillPayload(summary)) {
         document.getElementById('unified-input').value = '';
         resizeTextarea();
@@ -1679,6 +1694,10 @@ export async function broadcastMessage(text, autoSubmit = true) {
 
     if (shouldAutoSubmit && totalSuccessful > 0) {
       recordSendForRatingPrompt();
+    }
+
+    if (totalSuccessful > 0) {
+      rememberSnapshotPrompt(text);
     }
 
     // Clear input and save history
@@ -1858,6 +1877,164 @@ function setupRatingPrompt() {
     document.getElementById(id)?.addEventListener('click', () => answerRatingPrompt(action));
   });
   refreshRatingBanner();
+}
+
+// ===== Share Snapshot =====
+
+// Prompt shown above the shared panels: the last one Panelize sent or filled.
+let lastSnapshotPrompt = '';
+let currentSnapshot = null;
+let isCapturingSnapshot = false;
+
+function rememberSnapshotPrompt(text) {
+  if (typeof text === 'string' && text.trim()) {
+    lastSnapshotPrompt = text;
+  }
+}
+
+function getSnapshotPrompt() {
+  return lastSnapshotPrompt || document.getElementById('unified-input')?.value || '';
+}
+
+async function loadSnapshotIcon() {
+  const icon = new Image();
+  icon.src = chrome.runtime.getURL('icons/icon-128.png');
+  try {
+    await icon.decode();
+    return icon;
+  } catch (error) {
+    console.warn('[Multi-Panel] Failed to load the snapshot icon:', error);
+    return null;
+  }
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) {
+        resolve(blob);
+      } else {
+        reject(new Error('Could not encode the snapshot as PNG'));
+      }
+    }, 'image/png');
+  });
+}
+
+async function createComparisonSnapshot() {
+  // Capture first: getDisplayMedia needs the click's user activation.
+  const { bitmap, scale } = await captureElementInCurrentTab(
+    document.getElementById('main-content'),
+    { maxWidth: SNAPSHOT_MAX_CAPTURE_WIDTH }
+  );
+  try {
+    const [icon, shareWatermarkEnabled] = await Promise.all([
+      loadSnapshotIcon(),
+      getSetting('shareWatermarkEnabled')
+    ]);
+    const canvas = document.createElement('canvas');
+    composeSnapshot(canvas, {
+      capture: bitmap,
+      scale,
+      icon,
+      prompt: getSnapshotPrompt(),
+      theme: document.documentElement.getAttribute('data-theme'),
+      showWatermark: shareWatermarkEnabled !== false,
+      footerText: t('shareFooterText')
+    });
+    return await canvasToPngBlob(canvas);
+  } finally {
+    bitmap.close();
+  }
+}
+
+function releaseCurrentSnapshot() {
+  if (currentSnapshot) {
+    URL.revokeObjectURL(currentSnapshot.url);
+    currentSnapshot = null;
+  }
+}
+
+function openShareModal(blob) {
+  releaseCurrentSnapshot();
+  currentSnapshot = {
+    blob,
+    url: URL.createObjectURL(blob),
+    fileName: getSnapshotFileName(new Date())
+  };
+  document.getElementById('share-preview').src = currentSnapshot.url;
+  document.getElementById('share-modal').style.display = 'flex';
+  document.getElementById('share-copy-btn')?.focus();
+}
+
+function closeShareModal() {
+  const modal = document.getElementById('share-modal');
+  if (!modal || modal.style.display === 'none') return;
+  modal.style.display = 'none';
+  document.getElementById('share-preview').removeAttribute('src');
+  releaseCurrentSnapshot();
+}
+
+function getCaptureErrorMessage(error) {
+  if (error instanceof TabCaptureError) {
+    if (error.code === TAB_CAPTURE_ERRORS.CANCELLED) return t('shareCaptureCancelled');
+    if (error.code === TAB_CAPTURE_ERRORS.WRONG_SURFACE) return t('shareCaptureWrongSurface');
+  }
+  return t('shareCaptureFailed');
+}
+
+async function shareComparisonSnapshot() {
+  if (isCapturingSnapshot) return;
+  const shareBtn = document.getElementById('share-snapshot-btn');
+  isCapturingSnapshot = true;
+  shareBtn.disabled = true;
+  try {
+    openShareModal(await createComparisonSnapshot());
+  } catch (error) {
+    if (error?.code === TAB_CAPTURE_ERRORS.CANCELLED) {
+      console.info('[Multi-Panel] Snapshot cancelled');
+    } else {
+      console.warn('[Multi-Panel] Failed to create snapshot:', error);
+    }
+    showToast(getCaptureErrorMessage(error));
+  } finally {
+    isCapturingSnapshot = false;
+    shareBtn.disabled = false;
+  }
+}
+
+function downloadCurrentSnapshot() {
+  if (!currentSnapshot) return;
+  const link = document.createElement('a');
+  link.href = currentSnapshot.url;
+  link.download = currentSnapshot.fileName;
+  link.click();
+}
+
+async function copyCurrentSnapshot() {
+  if (!currentSnapshot) return;
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({ [currentSnapshot.blob.type]: currentSnapshot.blob })
+    ]);
+    showToast(t('shareCopied'));
+  } catch (error) {
+    console.warn('[Multi-Panel] Failed to copy snapshot:', error);
+    showToast(t('shareCopyFailed'));
+  }
+}
+
+function setupShareSnapshot() {
+  const modal = document.getElementById('share-modal');
+  document.getElementById('share-snapshot-btn')?.addEventListener('click', shareComparisonSnapshot);
+  document.getElementById('close-share-modal')?.addEventListener('click', closeShareModal);
+  document.getElementById('share-download-btn')?.addEventListener('click', downloadCurrentSnapshot);
+  document.getElementById('share-copy-btn')?.addEventListener('click', copyCurrentSnapshot);
+  modal?.addEventListener('click', (event) => {
+    if (event.target === modal) closeShareModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeShareModal();
+  });
 }
 
 // ===== Image Management =====

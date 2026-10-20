@@ -856,5 +856,56 @@
   },
   "ratingPromptNever": {
     "message": "Don't ask again"
+  },
+  "shareButtonText": {
+    "message": "Share"
+  },
+  "shareButtonTitle": {
+    "message": "Share a snapshot of this comparison. Chrome asks you to confirm sharing this tab; the image stays on your device."
+  },
+  "shareDialogTitle": {
+    "message": "Share comparison"
+  },
+  "shareDialogClose": {
+    "message": "Close"
+  },
+  "sharePrivacyWarning": {
+    "message": "Check the image before you share it: it may show chat history in sidebars, account names or avatars."
+  },
+  "shareCopyButton": {
+    "message": "Copy to clipboard"
+  },
+  "shareDownloadButton": {
+    "message": "Download PNG"
+  },
+  "shareCopied": {
+    "message": "Image copied to clipboard"
+  },
+  "shareCopyFailed": {
+    "message": "Couldn't copy the image. Use Download PNG instead."
+  },
+  "shareCaptureCancelled": {
+    "message": "Snapshot cancelled"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "To take a snapshot, share this Panelize tab"
+  },
+  "shareCaptureFailed": {
+    "message": "Couldn't capture the comparison"
+  },
+  "shareFooterText": {
+    "message": "Compared with Panelize"
+  },
+  "labelShareWatermark": {
+    "message": "Show watermark on shared images"
+  },
+  "descShareWatermark": {
+    "message": "Add a \"Compared with Panelize · panelize.dev\" strip to snapshots taken with the Share button"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Watermark on shared images enabled"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Watermark on shared images disabled"
   }
 }
