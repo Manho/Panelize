@@ -827,5 +827,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Vous aimez Panelize ? Notez-le sur le Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Noter"
+  },
+  "ratingPromptLater": {
+    "message": "Plus tard"
+  },
+  "ratingPromptNever": {
+    "message": "Ne plus demander"
   }
 }

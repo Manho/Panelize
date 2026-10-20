@@ -844,5 +844,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Enjoying Panelize? Rate it on the Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Rate"
+  },
+  "ratingPromptLater": {
+    "message": "Later"
+  },
+  "ratingPromptNever": {
+    "message": "Don't ask again"
   }
 }

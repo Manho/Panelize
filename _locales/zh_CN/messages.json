@@ -823,5 +823,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "喜欢 Panelize 吗？欢迎在 Chrome 应用商店给它评个分"
+  },
+  "ratingPromptRate": {
+    "message": "去评分"
+  },
+  "ratingPromptLater": {
+    "message": "以后再说"
+  },
+  "ratingPromptNever": {
+    "message": "不再询问"
   }
 }

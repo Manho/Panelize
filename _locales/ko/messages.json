@@ -827,5 +827,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Panelize가 마음에 드시나요? Chrome 웹 스토어에서 평가해 주세요"
+  },
+  "ratingPromptRate": {
+    "message": "평가하기"
+  },
+  "ratingPromptLater": {
+    "message": "나중에"
+  },
+  "ratingPromptNever": {
+    "message": "다시 묻지 않기"
   }
 }

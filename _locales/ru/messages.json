@@ -827,5 +827,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Нравится Panelize? Оцените его в Интернет-магазине Chrome"
+  },
+  "ratingPromptRate": {
+    "message": "Оценить"
+  },
+  "ratingPromptLater": {
+    "message": "Позже"
+  },
+  "ratingPromptNever": {
+    "message": "Больше не спрашивать"
   }
 }

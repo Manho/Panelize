@@ -27,7 +27,15 @@ import {
   getAutoShrunkLayout
 } from '../modules/layout-auto-adjust.js';
 import { applyTheme } from '../modules/theme-manager.js';
-import { t, initializeLanguage } from '../modules/i18n.js';
+import { t, initializeLanguage, translatePage } from '../modules/i18n.js';
+import {
+  RATING_PROMPT_ACTIONS,
+  RATING_PROMPT_REVIEW_URL,
+  countSuccessfulSend,
+  loadRatingPromptState,
+  saveRatingPromptAction,
+  shouldShowRatingPrompt
+} from '../modules/rating-prompt.js';
 import {
   calculatePendingImageIds,
   cleanStalePanelRetryState,
@@ -183,6 +191,7 @@ async function init() {
   document.addEventListener('panelize:themechange', refreshThemeAwareProviderIcons);
   await applyTheme();
   await initializeLanguage();
+  translatePage();
   registerRuntimeMessageListener();
   registerStorageChangeListener();
 
@@ -200,6 +209,7 @@ async function init() {
 
   // Setup event listeners
   setupEventListeners();
+  setupRatingPrompt();
   updateTemporaryChatButtonState();
   focusUnifiedInput({ force: true });
 
@@ -1667,6 +1677,10 @@ export async function broadcastMessage(text, autoSubmit = true) {
       statusEl.className = 'send-status';
     }, 3000);
 
+    if (shouldAutoSubmit && totalSuccessful > 0) {
+      recordSendForRatingPrompt();
+    }
+
     // Clear input and save history
     if (totalSuccessful > 0) {
       document.getElementById('unified-input').value = '';
@@ -1796,6 +1810,54 @@ async function clearAllInputs() {
     }
   });
   showToast('All inputs cleared');
+}
+
+// ===== Store Rating Prompt =====
+
+function setRatingBannerVisible(visible) {
+  const banner = document.getElementById('rating-banner');
+  if (banner) {
+    banner.hidden = !visible;
+  }
+}
+
+async function refreshRatingBanner(state) {
+  try {
+    setRatingBannerVisible(shouldShowRatingPrompt(state || await loadRatingPromptState()));
+  } catch (error) {
+    console.warn('[Multi-Panel] Failed to load rating prompt state:', error);
+  }
+}
+
+// Counting is best effort: a storage failure must never affect sending.
+function recordSendForRatingPrompt() {
+  countSuccessfulSend()
+    .then(refreshRatingBanner)
+    .catch(error => console.warn('[Multi-Panel] Failed to count send for rating prompt:', error));
+}
+
+async function answerRatingPrompt(action) {
+  setRatingBannerVisible(false);
+  try {
+    if (action === RATING_PROMPT_ACTIONS.RATE) {
+      await chrome.tabs.create({ url: RATING_PROMPT_REVIEW_URL });
+    }
+    await saveRatingPromptAction(action);
+  } catch (error) {
+    console.warn('[Multi-Panel] Failed to save rating prompt answer:', error);
+  }
+}
+
+function setupRatingPrompt() {
+  const buttons = {
+    'rating-rate-btn': RATING_PROMPT_ACTIONS.RATE,
+    'rating-later-btn': RATING_PROMPT_ACTIONS.LATER,
+    'rating-never-btn': RATING_PROMPT_ACTIONS.NEVER
+  };
+  Object.entries(buttons).forEach(([id, action]) => {
+    document.getElementById(id)?.addEventListener('click', () => answerRatingPrompt(action));
+  });
+  refreshRatingBanner();
 }
 
 // ===== Image Management =====

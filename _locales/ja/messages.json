@@ -827,5 +827,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Panelize を気に入っていただけましたか？Chrome ウェブストアで評価をお願いします"
+  },
+  "ratingPromptRate": {
+    "message": "評価する"
+  },
+  "ratingPromptLater": {
+    "message": "後で"
+  },
+  "ratingPromptNever": {
+    "message": "今後表示しない"
   }
 }

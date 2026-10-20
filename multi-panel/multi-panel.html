@@ -85,6 +85,17 @@
       </div>
     </div>
 
+    <!-- Store rating prompt (shown after enough successful sends) -->
+    <div id="rating-banner" class="rating-banner" role="status" hidden>
+      <span class="material-symbols-outlined rating-banner-icon" aria-hidden="true">star</span>
+      <span class="rating-banner-text" data-i18n="ratingPromptMessage">Enjoying Panelize? Rate it on the Chrome Web Store</span>
+      <div class="rating-banner-actions">
+        <button id="rating-rate-btn" class="rating-banner-btn primary" data-i18n="ratingPromptRate">Rate</button>
+        <button id="rating-later-btn" class="rating-banner-btn" data-i18n="ratingPromptLater">Later</button>
+        <button id="rating-never-btn" class="rating-banner-btn" data-i18n="ratingPromptNever">Don't ask again</button>
+      </div>
+    </div>
+
     <!-- Bottom Input Bar -->
     <footer id="input-bar">
       <div class="input-container">

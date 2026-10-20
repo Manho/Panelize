@@ -823,5 +823,17 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "喜歡 Panelize 嗎？歡迎到 Chrome 線上應用程式商店為它評分"
+  },
+  "ratingPromptRate": {
+    "message": "去評分"
+  },
+  "ratingPromptLater": {
+    "message": "稍後再說"
+  },
+  "ratingPromptNever": {
+    "message": "不要再詢問"
   }
 }
