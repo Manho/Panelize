@@ -11,7 +11,14 @@ import {
   prepareLiveExtension,
 } from './live-harness.js';
 
-const SHARE_PROVIDERS = ['chatgpt', 'claude', 'gemini', 'deepseek'];
+/**
+ * PANELIZE_SHARE_PROVIDERS=chatgpt,gemini,deepseek leaves a provider out,
+ * e.g. when its account is close to a usage limit.
+ */
+const SHARE_PROVIDERS = process.env.PANELIZE_SHARE_PROVIDERS
+  ? process.env.PANELIZE_SHARE_PROVIDERS.split(',').map((id) => id.trim()).filter(Boolean)
+  : ['chatgpt', 'claude', 'gemini', 'deepseek'];
+const SHARE_LAYOUT = SHARE_PROVIDERS.length === 4 ? '2x2' : `1x${SHARE_PROVIDERS.length}`;
 
 /** Short question so each provider answers within the wait below. */
 const LIVE_PROMPT = 'In one sentence: why compare answers from several AI assistants?';
@@ -46,7 +53,7 @@ test('Share snapshot of a live 2x2 comparison', async () => {
   });
   const consoleMessages = [];
   try {
-    await configureLiveProviders(extension.serviceWorker, SHARE_PROVIDERS, { layout: '2x2' });
+    await configureLiveProviders(extension.serviceWorker, SHARE_PROVIDERS, { layout: SHARE_LAYOUT });
     const page = await extension.context.newPage();
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) {
@@ -120,6 +127,348 @@ test('Share snapshot of a live 2x2 comparison', async () => {
     }, null, 2)}\n`);
     expect(consoleMessages.filter((message) => message.type === 'pageerror')).toEqual([]);
   } finally {
+    await extension.close();
+  }
+});
+
+/** Long answer, so "Full answers" has to scroll and stitch every panel. */
+const LONG_PROMPT = 'Explain how HTTPS works in detail, at least 800 words';
+
+/** v2 evidence: both layouts, both modes, the dialog on desktop and phone. */
+const V2_EVIDENCE_DIR = path.resolve(process.env.PANELIZE_SHARE_V2_EVIDENCE_DIR || 'artifacts/share-snapshot/v2');
+
+/** Answers count as finished once no panel's text grew for this long. */
+const ANSWER_STABLE_MS = 20000;
+const ANSWER_POLL_MS = 5000;
+const ANSWER_MAX_WAIT_MS = 240000;
+
+const PROVIDER_HOSTS = {
+  chatgpt: 'chatgpt.com',
+  claude: 'claude.ai',
+  gemini: 'gemini.google.com',
+  deepseek: 'chat.deepseek.com',
+};
+
+function findProviderFrame(page, providerId) {
+  return page.frames().find((frame) => {
+    try {
+      return new URL(frame.url()).hostname === PROVIDER_HOSTS[providerId];
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Text length of each provider page; cross-origin frames are read through Playwright. */
+async function readAnswerLengths(page) {
+  const lengths = {};
+  for (const id of SHARE_PROVIDERS) {
+    const frame = findProviderFrame(page, id);
+    lengths[id] = frame
+      ? await frame.evaluate(() => document.body?.innerText.length || 0).catch(() => -1)
+      : -1;
+  }
+  return lengths;
+}
+
+/**
+ * Providers whose page shows the prompt, polled for a while after Send All.
+ * @returns {Promise<string[]>} Providers still without it.
+ */
+async function waitForPromptDelivery(page, prompt, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  let missing = SHARE_PROVIDERS;
+  while (Date.now() < deadline) {
+    const results = await Promise.all(SHARE_PROVIDERS.map(async (id) => {
+      const frame = findProviderFrame(page, id);
+      const shown = frame
+        ? await frame.evaluate((text) => document.body?.innerText.includes(text), prompt).catch(() => false)
+        : false;
+      return shown ? null : id;
+    }));
+    missing = results.filter(Boolean);
+    if (missing.length === 0) break;
+    await page.waitForTimeout(2000);
+  }
+  return missing;
+}
+
+/**
+ * Types the prompt straight into a provider page. Only used when Send All did
+ * not reach it, so the snapshot still has an answer there; the summary says so.
+ */
+async function sendDirectly(page, providerId, prompt) {
+  const frame = findProviderFrame(page, providerId);
+  const editor = frame.locator(EDITOR_SELECTORS[providerId]).first();
+  await editor.click();
+  await editor.pressSequentially(prompt);
+  await editor.press('Enter');
+}
+
+const EDITOR_SELECTORS = {
+  gemini: '.ql-editor',
+  chatgpt: '#prompt-textarea',
+  claude: '[contenteditable="true"]',
+  deepseek: 'textarea',
+};
+
+async function waitForAnswersToSettle(page) {
+  const started = Date.now();
+  let last = null;
+  let stableSince = Date.now();
+  const history = [];
+  while (Date.now() - started < ANSWER_MAX_WAIT_MS) {
+    await page.waitForTimeout(ANSWER_POLL_MS);
+    const lengths = await readAnswerLengths(page);
+    history.push({ seconds: Math.round((Date.now() - started) / 1000), ...lengths });
+    if (last && JSON.stringify(lengths) === JSON.stringify(last)) {
+      if (Date.now() - stableSince >= ANSWER_STABLE_MS) {
+        return { settled: true, history };
+      }
+    } else {
+      stableSince = Date.now();
+    }
+    last = lengths;
+  }
+  return { settled: false, history };
+}
+
+/** Applies a theme the way the options page does: save it, then apply it. */
+function setTheme(page, theme) {
+  return page.evaluate(async (value) => {
+    const { saveSetting } = await import(chrome.runtime.getURL('modules/settings.js'));
+    const { applyTheme } = await import(chrome.runtime.getURL('modules/theme-manager.js'));
+    await saveSetting('theme', value);
+    return applyTheme();
+  }, theme);
+}
+
+/**
+ * Asks every panel what the snapshot would see (prompt found, conversation
+ * clip, scroll range), then puts it back. Same messages the capture uses.
+ */
+function probePanels(page, prompt) {
+  return page.evaluate(async (text) => {
+    const { createSnapshotBridge, SNAPSHOT_MESSAGES } = await import(chrome.runtime.getURL('modules/snapshot-capture.js'));
+    const bridge = createSnapshotBridge();
+    try {
+      const frames = Array.from(document.querySelectorAll('#panel-grid iframe'));
+      const states = await Promise.all(frames.map((iframe) => bridge.request(
+        iframe, SNAPSHOT_MESSAGES.PREPARE, { align: true, prompt: text }, 2500
+      )));
+      await Promise.all(frames.map((iframe) => bridge.request(iframe, SNAPSHOT_MESSAGES.RESTORE, {}, 1500)));
+      return states.map((state, index) => ({
+        src: new URL(frames[index].src).hostname,
+        answered: Boolean(state),
+        provider: state?.provider ?? null,
+        matched: state?.matched ?? null,
+        clip: state?.clip ?? null,
+        scrollTop: state?.scrollTop ?? null,
+        maxScrollTop: state?.maxScrollTop ?? null,
+        error: state?.error ?? null,
+      }));
+    } finally {
+      bridge.dispose();
+    }
+  }, prompt);
+}
+
+async function clickToolbarIcon(extension, page) {
+  const session = await extension.context.browser().newBrowserCDPSession();
+  try {
+    const { targetInfos } = await session.send('Target.getTargets', { filter: [{ type: 'tab' }] });
+    const tab = targetInfos.find((info) => info.url === page.url());
+    expect(tab, 'tab target of the multi-panel page').toBeTruthy();
+    await session.send('Extensions.triggerAction', { id: extension.extensionId, targetId: tab.targetId });
+  } finally {
+    await session.detach();
+  }
+}
+
+async function waitForCaptureToFinish(page, mode) {
+  await expect(page.locator('body')).not.toHaveClass(/snapshot-capturing/, { timeout: 180000 });
+  await expect(page.locator(`.share-mode-btn[data-mode="${mode}"]`)).toHaveAttribute('aria-checked', 'true');
+}
+
+async function readModalState(page) {
+  return page.evaluate(async () => {
+    const image = document.getElementById('share-preview');
+    await image.decode();
+    const notes = document.getElementById('share-capture-notes');
+    const hint = document.getElementById('share-capture-hint');
+    return {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      src: image.src,
+      notes: notes.hidden ? '' : notes.textContent,
+      hint: hint.hidden ? '' : hint.textContent.trim(),
+      title: document.getElementById('share-title-input').value,
+      theme: document.documentElement.getAttribute('data-theme'),
+      displayMediaCalls: window.__displayMediaCalls,
+      visibleTabFlag: sessionStorage.getItem('panelize.snapshotVisibleTabCaptured'),
+    };
+  });
+}
+
+async function savePreview(page, fileName) {
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#share-download-btn').click();
+  const download = await downloadPromise;
+  const target = path.join(V2_EVIDENCE_DIR, fileName);
+  await download.saveAs(target);
+  const png = await readFile(target);
+  expect(Array.from(png.subarray(0, 8))).toEqual(PNG_SIGNATURE);
+  return { file: fileName, width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
+async function captureFull(page) {
+  const previousSrc = await page.locator('#share-preview').getAttribute('src');
+  await page.locator('.share-mode-btn[data-mode="full"]').click();
+  // The progress strip shows while the panels scroll.
+  await expect(page.locator('#snapshot-progress')).toBeVisible({ timeout: 10000 }).catch(() => {});
+  const progress = await page.locator('#snapshot-progress-text').textContent().catch(() => '');
+  await waitForCaptureToFinish(page, 'full');
+  await expect.poll(() => page.locator('#share-preview').getAttribute('src')).not.toBe(previousSrc);
+  return progress;
+}
+
+/**
+ * v2 on the logged-in live profile: a long answer from all four providers,
+ * snapshotted silently from the toolbar icon in both modes and both layouts
+ * (A light, B dark). Records what each panel reported, so a provider whose
+ * page cannot be stitched shows up in the summary. Needs PANELIZE_LIVE_SEND=1.
+ */
+test('Share snapshot v2: layouts and full answers on a live 2x2', async () => {
+  test.skip(!LIVE_SEND_ENABLED, 'Set PANELIZE_LIVE_SEND=1: the snapshot needs real answers.');
+  test.setTimeout(900000);
+  await mkdir(V2_EVIDENCE_DIR, { recursive: true });
+
+  const extensionPath = await prepareLiveExtension();
+  const extension = await launchExtension({
+    extensionPath,
+    userDataDir: LIVE_USER_DATA_DIR,
+    headless: LIVE_HEADLESS,
+    ignoreDefaultArgs: LIVE_IGNORED_DEFAULT_ARGS,
+    // No viewport emulation: the toolbar capture takes the real window, so
+    // the page must be laid out at the real window size.
+    viewport: null,
+    args: [
+      '--window-size=1440,1000',
+      '--disable-blink-features=AutomationControlled',
+      '--auto-accept-this-tab-capture',
+      '--enable-unsafe-extension-debugging',
+    ],
+  });
+  const consoleMessages = [];
+  const summary = { providers: SHARE_PROVIDERS, prompt: LONG_PROMPT, steps: {} };
+  let page = null;
+  let originalTheme = null;
+  try {
+    originalTheme = await extension.serviceWorker.evaluate(async () => (
+      (await chrome.storage.sync.get({ theme: 'auto' })).theme
+    ));
+    await configureLiveProviders(extension.serviceWorker, SHARE_PROVIDERS, { layout: SHARE_LAYOUT });
+    page = await extension.context.newPage();
+    page.on('console', (message) => {
+      if (message.type() === 'error') {
+        consoleMessages.push({ type: 'error', text: message.text(), url: message.location().url });
+      }
+    });
+    page.on('pageerror', (error) => consoleMessages.push({ type: 'pageerror', text: error.message }));
+    await page.addInitScript(() => {
+      // Provider frames get this script too; only the Panelize page captures.
+      if (location.protocol !== 'chrome-extension:') return;
+      const original = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+      window.__displayMediaCalls = 0;
+      navigator.mediaDevices.getDisplayMedia = (...args) => {
+        window.__displayMediaCalls += 1;
+        return original(...args);
+      };
+    });
+
+    await page.goto(extension.extensionUrl('multi-panel/multi-panel.html'));
+    await expect(page.locator('#panel-grid iframe')).toHaveCount(SHARE_PROVIDERS.length);
+    for (const frame of await page.locator('#panel-grid iframe').elementHandles()) {
+      await (await frame.contentFrame()).waitForLoadState('load', { timeout: 45000 });
+    }
+    await setTheme(page, 'light');
+
+    const temporaryChat = page.locator('#temporary-chat-btn');
+    await temporaryChat.click();
+    await expect(temporaryChat).toHaveAttribute('aria-pressed', 'true', { timeout: 15000 });
+    // Providers reload into temporary mode; give the slowest time to settle.
+    await page.waitForTimeout(15000);
+
+    await page.locator('#unified-input').fill(LONG_PROMPT);
+    await page.locator('#send-all-btn').click();
+    await expect(page.locator('#send-status')).toHaveText(/Sent to/, { timeout: 60000 });
+    summary.window = await page.evaluate(() => ({
+      innerWidth, innerHeight, outerWidth, outerHeight, devicePixelRatio,
+    }));
+    summary.sendStatus = await page.locator('#send-status').textContent();
+    summary.notReachedBySendAll = await waitForPromptDelivery(page, LONG_PROMPT);
+    for (const id of summary.notReachedBySendAll) {
+      await sendDirectly(page, id, LONG_PROMPT);
+    }
+    summary.notReachedAfterRetry = summary.notReachedBySendAll.length
+      ? await waitForPromptDelivery(page, LONG_PROMPT)
+      : [];
+    summary.answers = await waitForAnswersToSettle(page);
+    await page.screenshot({ path: path.join(V2_EVIDENCE_DIR, 'comparison.png') });
+    summary.probe = await probePanels(page, LONG_PROMPT);
+
+    // Layout A: toolbar icon, so the capture is silent.
+    const modal = page.locator('#share-modal');
+    await clickToolbarIcon(extension, page);
+    await expect(modal).toBeVisible({ timeout: 30000 });
+    await waitForCaptureToFinish(page, 'current');
+    summary.steps.aCurrent = { ...(await readModalState(page)), ...(await savePreview(page, 'A-current.png')) };
+    await page.screenshot({ path: path.join(V2_EVIDENCE_DIR, 'modal-desktop-A-current.png') });
+
+    summary.steps.aFull = { progress: await captureFull(page) };
+    Object.assign(summary.steps.aFull, await readModalState(page), await savePreview(page, 'A-full.png'));
+    await page.screenshot({ path: path.join(V2_EVIDENCE_DIR, 'modal-desktop-A-full.png') });
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+
+    // Layout B: the page follows the theme; the Share button reuses the grant.
+    summary.theme = await setTheme(page, 'dark');
+    await page.locator('#share-snapshot-btn').click();
+    await expect(modal).toBeVisible({ timeout: 30000 });
+    await waitForCaptureToFinish(page, 'current');
+    summary.steps.bCurrent = { ...(await readModalState(page)), ...(await savePreview(page, 'B-current.png')) };
+    summary.steps.bFull = { progress: await captureFull(page) };
+    Object.assign(summary.steps.bFull, await readModalState(page), await savePreview(page, 'B-full.png'));
+    await page.screenshot({ path: path.join(V2_EVIDENCE_DIR, 'modal-desktop-B-full.png') });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: path.join(V2_EVIDENCE_DIR, 'modal-390-B-full.png') });
+    await setTheme(page, 'light');
+    await page.locator('.share-mode-btn[data-mode="current"]').click();
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: path.join(V2_EVIDENCE_DIR, 'modal-390-light.png') });
+    summary.mobileLayout = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      modal: document.querySelector('.share-modal-content').getBoundingClientRect().toJSON(),
+      footer: document.querySelector('#share-modal .modal-footer').getBoundingClientRect().toJSON(),
+    }));
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+
+    summary.steps.allSilent = summary.steps.bFull.displayMediaCalls === 0;
+    summary.consoleMessages = consoleMessages;
+    summary.extensionErrors = consoleMessages.filter((message) => (
+      message.type === 'pageerror' || (message.url || '').startsWith('chrome-extension://')
+    ));
+    expect(summary.steps.aCurrent.hint).toBe('');
+    expect(summary.steps.bFull.displayMediaCalls).toBe(0);
+    expect(summary.extensionErrors).toEqual([]);
+  } finally {
+    await writeFile(path.join(V2_EVIDENCE_DIR, 'summary.json'), `${JSON.stringify({ ...summary, consoleMessages }, null, 2)}\n`);
+    if (page && originalTheme) {
+      await setTheme(page, originalTheme).catch(() => {});
+    }
     await extension.close();
   }
 });
