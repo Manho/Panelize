@@ -246,12 +246,21 @@ function focusUnifiedInput({ force = false } = {}) {
     if (generation !== focusRestoreGeneration || (!force && !shouldPreserveUnifiedInputFocus())) {
       return;
     }
+    // The user moved on to a dialog, e.g. to edit a snapshot title.
+    if (isFocusInOpenModal()) {
+      return;
+    }
     try {
       inputTextarea.focus({ preventScroll: true });
     } catch {
       inputTextarea.focus();
     }
   });
+}
+
+function isFocusInOpenModal() {
+  const modal = document.activeElement?.closest?.('.modal');
+  return Boolean(modal) && modal.style.display !== 'none';
 }
 
 function shouldPreserveUnifiedInputFocus() {
