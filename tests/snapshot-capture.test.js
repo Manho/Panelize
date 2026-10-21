@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   SNAPSHOT_MESSAGES,
+  SnapshotLayoutChangedError,
   captureCurrentView,
+  captureFullAnswers,
   createSnapshotBridge,
   getPanelCellGeometry,
   getStitchBudget,
@@ -187,5 +189,135 @@ describe('captureCurrentView', () => {
       { name: 'DeepSeek', alignedBy: null, originalScrollTop: 300, startScrollTop: 300, endScrollTop: 300, maxScrollTop: 1000 }
     ]);
     expect(frame.close).toHaveBeenCalled();
+  });
+});
+
+describe('a window resized during a capture', () => {
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+  const originalInnerWidth = window.innerWidth;
+
+  afterEach(() => {
+    globalThis.createImageBitmap = originalCreateImageBitmap;
+    window.innerWidth = originalInnerWidth;
+    document.body.innerHTML = '';
+  });
+
+  /** A panel whose page scrolls to wherever it is asked, in a 2000px conversation. */
+  function createScrollingPanel(name, left) {
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => rect(left, 0, 400, 600);
+    document.body.appendChild(element);
+    const messages = [];
+    const contentWindow = {
+      postMessage: vi.fn((message) => {
+        messages.push(message);
+        queueMicrotask(() => window.dispatchEvent(messageEvent({
+          type: SNAPSHOT_MESSAGES.STATE,
+          context: 'multi-panel-snapshot',
+          requestId: message.requestId,
+          clip: { left: 0, top: 50, right: 400, bottom: 500 },
+          viewport: { width: 400, height: 560 },
+          alignedBy: 'prompt',
+          scrollTop: message.scrollTop ?? 0,
+          originalScrollTop: 0,
+          maxScrollTop: 2000
+        }, contentWindow)));
+      })
+    };
+    const iframe = { contentWindow, getBoundingClientRect: () => rect(left, 40, 400, 560) };
+    return { panel: { id: name, name, iframe, element }, messages };
+  }
+
+  function createGrid() {
+    const grid = document.createElement('div');
+    grid.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    return grid;
+  }
+
+  /** Frames of the whole tab; `onGrab(count)` runs before each is returned. */
+  function createSource(onGrab) {
+    const frames = [];
+    let count = 0;
+    return {
+      frames,
+      grab: vi.fn(async () => {
+        count += 1;
+        onGrab(count);
+        const frame = { width: window.innerWidth, height: window.innerHeight, close: vi.fn() };
+        frames.push(frame);
+        return frame;
+      })
+    };
+  }
+
+  it('stops full answers rather than crop panels that moved, and puts the pages back', async () => {
+    globalThis.createImageBitmap = vi.fn(async () => ({ width: 10, height: 10, close: vi.fn() }));
+    const chat = createScrollingPanel('ChatGPT', 0);
+    const deep = createScrollingPanel('DeepSeek', 400);
+    // A tiling window manager widens the window after the first screen.
+    const source = createSource((count) => {
+      if (count === 3) window.innerWidth = originalInnerWidth * 2;
+    });
+
+    await expect(captureFullAnswers({
+      source,
+      grid: createGrid(),
+      panels: [chat.panel, deep.panel],
+      prompt: 'Explain HTTPS',
+      getChromeHeight: () => 100
+    })).rejects.toBeInstanceOf(SnapshotLayoutChangedError);
+
+    expect(source.grab).toHaveBeenCalledTimes(3);
+    expect(chat.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
+    expect(deep.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
+    expect(source.frames.every((frame) => frame.close.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('stops the current view when the window changed before the frame', async () => {
+    globalThis.createImageBitmap = vi.fn(async () => ({ width: 800, height: 600, close: vi.fn() }));
+    const chat = createScrollingPanel('ChatGPT', 0);
+    const source = createSource(() => {
+      window.innerWidth = originalInnerWidth / 2;
+    });
+
+    await expect(captureCurrentView({
+      source,
+      grid: createGrid(),
+      panels: [chat.panel],
+      prompt: 'Explain HTTPS'
+    })).rejects.toBeInstanceOf(SnapshotLayoutChangedError);
+
+    expect(globalThis.createImageBitmap).not.toHaveBeenCalled();
+    expect(chat.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
+    expect(source.frames[0].close).toHaveBeenCalled();
+  });
+
+  it('captures full answers when the window keeps its size', async () => {
+    globalThis.createImageBitmap = vi.fn(async () => ({ width: 10, height: 10, close: vi.fn() }));
+    // jsdom has no canvas: a 2D context that draws nothing.
+    const context = new Proxy({}, {
+      get: (target, key) => (key in target ? target[key] : key === 'getImageData'
+        ? () => ({ data: new Uint8ClampedArray(4) })
+        : () => {}),
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    const chat = createScrollingPanel('ChatGPT', 0);
+    const source = createSource(() => {});
+
+    try {
+      const result = await captureFullAnswers({
+        source,
+        grid: createGrid(),
+        panels: [chat.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.currentViewOnly).toEqual([]);
+      expect(result.screens).toBe(source.grab.mock.calls.length);
+      expect(result.screens).toBeGreaterThan(1);
+    } finally {
+      getContext.mockRestore();
+    }
   });
 });

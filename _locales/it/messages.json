@@ -876,6 +876,9 @@
   "shareCaptureFailed": {
     "message": "Impossibile acquisire il confronto"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "Le dimensioni della finestra continuavano a cambiare, quindi non è stato possibile acquisire il confronto. Riprova."
+  },
   "shareModeLabel": {
     "message": "Area dell'istantanea"
   },

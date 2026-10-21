@@ -876,6 +876,9 @@
   "shareCaptureFailed": {
     "message": "Der Vergleich konnte nicht aufgenommen werden"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "Die Fenstergröße hat sich ständig geändert, daher konnte der Vergleich nicht aufgenommen werden. Bitte erneut versuchen."
+  },
   "shareModeLabel": {
     "message": "Bildausschnitt"
   },

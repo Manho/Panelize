@@ -55,6 +55,7 @@ import {
 import {
   SNAPSHOT_MODES,
   SnapshotCancelledError,
+  SnapshotLayoutChangedError,
   captureCurrentView,
   captureFullAnswers
 } from '../modules/snapshot-capture.js';
@@ -1920,6 +1921,8 @@ let preferredSnapshotMode = SNAPSHOT_MODES.FULL;
 let preferredSnapshotModePromise = null;
 let isPreferredSnapshotModeChosen = false;
 const SNAPSHOT_MODE_STORAGE_KEY = 'shareSnapshotMode';
+// Captures started before giving up on a window that keeps changing size.
+const SNAPSHOT_LAYOUT_ATTEMPTS = 3;
 // Tab sharing from an earlier snapshot, kept so Chrome asks only once.
 let keptSnapshotSource = null;
 let snapshotAbortController = null;
@@ -2286,6 +2289,7 @@ function closeShareModal() {
 
 function getCaptureErrorMessage(error) {
   if (error instanceof SnapshotCancelledError) return t('shareCaptureCancelled');
+  if (error instanceof SnapshotLayoutChangedError) return t('shareCaptureLayoutChanged');
   if (error instanceof TabCaptureError) {
     if (error.code === TAB_CAPTURE_ERRORS.CANCELLED) return t('shareCaptureCancelled');
     if (error.code === TAB_CAPTURE_ERRORS.WRONG_SURFACE) return t('shareCaptureWrongSurface');
@@ -2332,8 +2336,8 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
       signal: controller.signal,
       onProgress: updateSnapshotProgress
     };
-    const result = mode === SNAPSHOT_MODES.FULL
-      ? await captureFullAnswers({
+    const capture = () => (mode === SNAPSHOT_MODES.FULL
+      ? captureFullAnswers({
         ...options,
         // Room for the frame, with the longest headline the title can take.
         getChromeHeight: (scale) => getSnapshotFrameChromeHeight({
@@ -2346,7 +2350,19 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
           hasNote: true
         })
       })
-      : await captureCurrentView(options);
+      : captureCurrentView(options));
+    let result = null;
+    for (let attempt = 1; !result; attempt += 1) {
+      try {
+        result = await capture();
+      } catch (error) {
+        if (!(error instanceof SnapshotLayoutChangedError) || attempt >= SNAPSHOT_LAYOUT_ATTEMPTS) {
+          throw error;
+        }
+        // The panels moved under the capture: measure them again.
+        console.info('[Multi-Panel] Window changed size during the snapshot, starting over');
+      }
+    }
     console.info('[Multi-Panel] Snapshot alignment:', JSON.stringify(result.alignment));
 
     setSnapshotCapture(mode, { ...result, theme, showWatermark, date: new Date() }, { replaceAll: refresh || !wasOpen });

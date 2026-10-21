@@ -60,10 +60,42 @@ export class SnapshotCancelledError extends Error {
   }
 }
 
+/**
+ * The window or grid changed size during a capture, so the panels are no
+ * longer where they were measured and the frames cannot be cropped.
+ */
+export class SnapshotLayoutChangedError extends Error {
+  constructor() {
+    super('The window changed size during the snapshot');
+    this.name = 'SnapshotLayoutChangedError';
+  }
+}
+
 function throwIfAborted(signal) {
   if (signal?.aborted) {
     throw new SnapshotCancelledError();
   }
+}
+
+/**
+ * Returns a check that throws SnapshotLayoutChangedError once the window
+ * size, device scale or grid box differs from now, e.g. after a tiling
+ * window manager re-tiles the window mid-capture.
+ * @param {HTMLElement} grid
+ */
+function watchLayout(grid) {
+  const read = () => {
+    const box = grid.getBoundingClientRect();
+    return [window.innerWidth, window.innerHeight, window.devicePixelRatio, box.left, box.top, box.width, box.height]
+      .map((value) => Math.round(value * 100))
+      .join(',');
+  };
+  const measured = read();
+  return () => {
+    if (read() !== measured) {
+      throw new SnapshotLayoutChangedError();
+    }
+  };
 }
 
 /**
@@ -360,6 +392,7 @@ function orderByGrid(panels) {
  */
 export async function captureCurrentView({ source, grid, panels, prompt, hideCursor = false, signal }) {
   const bridge = createSnapshotBridge();
+  const checkLayout = watchLayout(grid);
   const visibleGrid = getVisibleGrid(grid);
   const visiblePanels = orderByGrid(readPanels(panels, visibleGrid));
   try {
@@ -367,6 +400,7 @@ export async function captureCurrentView({ source, grid, panels, prompt, hideCur
     const frame = await source.grab();
     try {
       throwIfAborted(signal);
+      checkLayout();
       const { bitmap, scale } = await cropCapturedFrame(frame, getVisibleGrid(grid), {
         maxWidth: SNAPSHOT_MAX_CAPTURE_WIDTH
       });
@@ -407,6 +441,7 @@ export async function captureFullAnswers({
   source, grid, panels, prompt, getChromeHeight, hideCursor = false, signal, onProgress = () => {}
 }) {
   const bridge = createSnapshotBridge();
+  const checkLayout = watchLayout(grid);
   const visibleGrid = getVisibleGrid(grid);
   const visiblePanels = readPanels(panels, visibleGrid);
   const bitmaps = [];
@@ -416,6 +451,7 @@ export async function captureFullAnswers({
     let screens = 1;
     try {
       throwIfAborted(signal);
+      checkLayout();
       const frameScale = frame.width / window.innerWidth;
       const { scale, contentHeight: budget } = getStitchBudget({
         frameScale,
@@ -545,6 +581,7 @@ export async function captureFullAnswers({
         frame.close?.();
         frame = await source.grab();
         throwIfAborted(signal);
+        checkLayout();
         await takeSegments(frame, screens, statesByCell);
         screens += 1;
         onProgress({ step: screens, total: estimateTotal() });

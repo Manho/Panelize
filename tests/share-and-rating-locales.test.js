@@ -22,6 +22,7 @@ const FEATURE_KEYS = [
   'shareCaptureCancelled',
   'shareCaptureWrongSurface',
   'shareCaptureFailed',
+  'shareCaptureLayoutChanged',
   'shareModeLabel',
   'shareModeCurrent',
   'shareModeFull',

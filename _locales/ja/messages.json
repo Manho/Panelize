@@ -876,6 +876,9 @@
   "shareCaptureFailed": {
     "message": "比較画面をキャプチャできませんでした"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "ウィンドウのサイズが変わり続けたため、比較画面をキャプチャできませんでした。もう一度お試しください"
+  },
   "shareModeLabel": {
     "message": "撮影範囲"
   },

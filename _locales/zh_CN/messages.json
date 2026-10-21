@@ -872,6 +872,9 @@
   "shareCaptureFailed": {
     "message": "无法截取对比画面"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "窗口大小一直在变，无法截取对比画面，请再试一次"
+  },
   "shareModeLabel": {
     "message": "截图范围"
   },

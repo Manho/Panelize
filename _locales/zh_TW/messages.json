@@ -872,6 +872,9 @@
   "shareCaptureFailed": {
     "message": "無法擷取比較畫面"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "視窗大小一直在變，無法擷取比較畫面，請再試一次"
+  },
   "shareModeLabel": {
     "message": "截圖範圍"
   },

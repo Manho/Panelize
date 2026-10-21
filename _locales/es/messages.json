@@ -876,6 +876,9 @@
   "shareCaptureFailed": {
     "message": "No se pudo capturar la comparación"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "El tamaño de la ventana no dejaba de cambiar, así que no se pudo capturar la comparación. Inténtalo de nuevo."
+  },
   "shareModeLabel": {
     "message": "Área de la captura"
   },

@@ -876,6 +876,9 @@
   "shareCaptureFailed": {
     "message": "Не удалось сделать снимок сравнения"
   },
+  "shareCaptureLayoutChanged": {
+    "message": "Размер окна всё время менялся, поэтому снимок сравнения не удался. Попробуйте ещё раз."
+  },
   "shareModeLabel": {
     "message": "Область снимка"
   },

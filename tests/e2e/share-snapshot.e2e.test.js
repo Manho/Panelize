@@ -663,6 +663,51 @@ async function showFullAnswers(page) {
   return inspectPreview(page);
 }
 
+test('Full answers starts over when the window changes size mid-capture', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const columns = [BLOCK_COLORS.slice(0, 6), BLOCK_COLORS.slice(6, 8)];
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: columns[0] },
+      { provider: 'deepseek', blocks: columns[1] },
+    ], '1x2');
+    const restarts = [];
+    page.on('console', message => {
+      if (message.text().includes('Window changed size during the snapshot')) restarts.push(message.text());
+    });
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#snapshot-progress-text')).toHaveText(/Capturing screen [2-9]\d* of \d+/);
+    // A tiling window manager re-tiles the window: every panel moves.
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    expect(restarts.length).toBeGreaterThan(0);
+
+    // The image is the new layout, with nothing cropped from the old one.
+    const full = await inspectPreview(page);
+    const scale = getPreviewScale(full);
+    for (const [index, blocks] of columns.entries()) {
+      const runs = await readConversationRuns(page, full, index, { hasNote: false });
+      const names = runs.map(run => run.name);
+      expect(names.filter(name => name === 'header'), `panel ${index}`).toHaveLength(1);
+      const blockRuns = runs.filter(run => run.name.startsWith('block'));
+      expect(blockRuns.map(run => run.name), `panel ${index}`)
+        .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
+      blockRuns.forEach(run => {
+        expect(Math.abs(run.length - CONVERSATION_COLORS.blockHeight * scale), `${run.name} of panel ${index}`)
+          .toBeLessThanOrEqual(3 * scale);
+      });
+    }
+  } finally {
+    await extension.close();
+  }
+});
+
 test('Full answers un-sticks headings and table headers and leaves fades out of every screen', async ({}, testInfo) => {
   test.setTimeout(120_000);
   const extension = await launchExtension({
