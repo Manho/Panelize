@@ -183,7 +183,13 @@ async function waitForPromptDelivery(page, prompt, timeoutMs = 30000, providers 
     const results = await Promise.all(providers.map(async (id) => {
       const frame = findProviderFrame(page, id);
       const shown = frame
-        ? await frame.evaluate((text) => document.body?.innerText.includes(text), prompt).catch(() => false)
+        ? await frame.evaluate((text) => {
+          // Sent, not just typed: text still in a composer does not count.
+          const count = (element) => element.innerText.split(text).length - 1;
+          const typed = [...document.querySelectorAll('[contenteditable="true"]')]
+            .reduce((total, element) => total + count(element), 0);
+          return Boolean(document.body) && count(document.body) > typed;
+        }, prompt).catch(() => false)
         : false;
       return shown ? null : id;
     }));
@@ -194,14 +200,30 @@ async function waitForPromptDelivery(page, prompt, timeoutMs = 30000, providers 
   return missing;
 }
 
+const DIRECT_SEND_TIMEOUT_MS = 45000;
+
+/** Where a panel that landed on a page without a composer can chat. */
+const PROVIDER_APP_URLS = {
+  gemini: 'https://gemini.google.com/app',
+};
+
 /**
  * Types the prompt straight into a provider page. Only used when Send All did
  * not reach it, so the snapshot still has an answer there; the summary says so.
  */
 async function sendDirectly(page, providerId, prompt) {
-  const frame = findProviderFrame(page, providerId);
-  const editor = frame.locator(EDITOR_SELECTORS[providerId]).first();
-  await editor.click();
+  let frame = findProviderFrame(page, providerId);
+  let editor = frame.locator(EDITOR_SELECTORS[providerId]).first();
+  if (PROVIDER_APP_URLS[providerId] && await editor.count() === 0) {
+    // e.g. Gemini sometimes opens its marketing page instead of the app.
+    await frame.goto(PROVIDER_APP_URLS[providerId], { timeout: DIRECT_SEND_TIMEOUT_MS });
+    frame = findProviderFrame(page, providerId);
+    editor = frame.locator(EDITOR_SELECTORS[providerId]).first();
+  }
+  // Fail with a reason rather than wait out the whole test.
+  await editor.click({ timeout: DIRECT_SEND_TIMEOUT_MS });
+  // Send All may have typed it without sending.
+  await editor.fill('');
   await editor.pressSequentially(prompt);
   await editor.press('Enter');
 }
