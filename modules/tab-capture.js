@@ -14,7 +14,8 @@ export const TAB_CAPTURE_ERRORS = Object.freeze({
   ENDED: 'capture-ended',
   UNSUPPORTED: 'capture-unsupported',
   WRONG_SURFACE: 'capture-wrong-surface',
-  PERMISSION: 'capture-permission'
+  PERMISSION: 'capture-permission',
+  NO_FRAME: 'capture-no-frame'
 });
 
 export const TAB_CAPTURE_KINDS = Object.freeze({
@@ -43,6 +44,9 @@ const SETTLE_FRAMES = 2;
 
 /** Upper bound for one frame callback; capture streams can idle on static pages. */
 const FRAME_WAIT_TIMEOUT_MS = 500;
+
+/** Tries to get a frame taken after a grab() was asked for. */
+const FRESH_FRAME_ATTEMPTS = 4;
 
 /** Frame rate of a kept stream between snapshots, to keep it nearly free. */
 export const IDLE_CAPTURE_FRAME_RATE = 1;
@@ -166,6 +170,63 @@ function waitForVideoFrame(video, signal) {
   });
 }
 
+/**
+ * Resolves with the capture time of the first frame taken at or after
+ * `since`, or null when none comes in time. Frames already on their way can
+ * be older than the page now is, so they are skipped. Without capture times
+ * the next frame is taken as it is.
+ */
+function waitForVideoFrameSince(video, since) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      }
+    };
+    const timer = setTimeout(() => finish(null), FRAME_WAIT_TIMEOUT_MS);
+    const onFrame = (now, metadata) => {
+      const capturedAt = metadata?.captureTime ?? now;
+      if (typeof metadata?.captureTime !== 'number' || capturedAt >= since) {
+        finish(capturedAt);
+      } else if (!settled) {
+        video.requestVideoFrameCallback(onFrame);
+      }
+    };
+    video.requestVideoFrameCallback(onFrame);
+  });
+}
+
+/**
+ * A pixel in the corner of the page, nearly transparent, whose shade flips
+ * on every grab. Tab capture sends a frame only when the page changes, so a
+ * page that already painted its latest scroll would send nothing new and an
+ * older frame could be taken instead; the flip makes Chrome send one.
+ */
+function createFrameTrigger() {
+  const element = document.createElement('div');
+  element.setAttribute('aria-hidden', 'true');
+  element.style.cssText = [
+    'position: fixed', 'left: 0', 'bottom: 0', 'width: 1px', 'height: 1px',
+    'pointer-events: none', 'z-index: 2147483647'
+  ].join(';');
+  let shade = false;
+  return {
+    pull() {
+      if (!element.isConnected) {
+        document.documentElement.appendChild(element);
+      }
+      shade = !shade;
+      element.style.backgroundColor = shade ? 'rgba(0, 0, 0, 0.02)' : 'rgba(0, 0, 0, 0.01)';
+    },
+    remove() {
+      element.remove();
+    }
+  };
+}
+
 function createCaptureHandle() {
   return `panelize-snapshot-${crypto.randomUUID()}`;
 }
@@ -263,6 +324,7 @@ export async function createDisplayMediaSource({ onEnded = () => {} } = {}) {
 
   const [track] = stream.getVideoTracks();
   const video = document.createElement('video');
+  const frameTrigger = createFrameTrigger();
   const activeFrameRate = track.getSettings?.().frameRate;
   let ended = false;
   const end = () => {
@@ -273,6 +335,7 @@ export async function createDisplayMediaSource({ onEnded = () => {} } = {}) {
     stream.getTracks().forEach((streamTrack) => streamTrack.stop());
     video.pause();
     video.srcObject = null;
+    frameTrigger.remove();
     onEnded();
   };
   // Chrome's "Stop sharing" ends the track without calling close().
@@ -314,12 +377,18 @@ export async function createDisplayMediaSource({ onEnded = () => {} } = {}) {
     },
     async grab() {
       assertActive();
-      // A frame rendered after the latest scroll; a static page may not
-      // produce one, and then the current frame is still up to date. The
-      // bitmap takes the video's current size, so a resized tab is measured
-      // again on every capture.
-      await waitForFreshFrames();
-      return createImageBitmap(video);
+      // Only a frame taken after this call shows what the page has painted
+      // by now; the trigger makes Chrome take one. The bitmap takes the
+      // video's current size, so a resized tab is measured again each time.
+      for (let attempt = 0; attempt < FRESH_FRAME_ATTEMPTS; attempt += 1) {
+        const since = performance.now();
+        frameTrigger.pull();
+        if (await waitForVideoFrameSince(video, since) !== null) {
+          assertActive();
+          return createImageBitmap(video);
+        }
+      }
+      throw new TabCaptureError(TAB_CAPTURE_ERRORS.NO_FRAME, 'Tab sharing sent no new frame');
     },
     async stop() {
       if (!isActive()) {

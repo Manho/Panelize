@@ -270,6 +270,71 @@ describe('tab sharing kept between snapshots', () => {
     source.close();
   });
 
+  /**
+   * Frames as Chrome sends them for a tab: only when the page changes, each
+   * with the time it was taken. `frames` lists capture times relative to the
+   * moment the page changed; the video shows the last one delivered.
+   */
+  function sendFramesOnChange(frames) {
+    const pending = [];
+    let changedAt = null;
+    const deliver = () => {
+      while (pending.length && frames.length) {
+        const offset = frames.shift();
+        const callback = pending.shift();
+        const captureTime = changedAt + offset;
+        callback.video.shownCaptureTime = captureTime;
+        callback.run(captureTime, { captureTime });
+      }
+    };
+    HTMLVideoElement.prototype.requestVideoFrameCallback = function requestVideoFrameCallback(run) {
+      pending.push({ video: this, run });
+      if (changedAt !== null) queueMicrotask(deliver);
+      return pending.length;
+    };
+    globalThis.createImageBitmap = vi.fn(async (video) => ({ capturedAt: video.shownCaptureTime }));
+    const observer = new MutationObserver(() => {
+      changedAt = performance.now();
+      queueMicrotask(deliver);
+    });
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+    return () => observer.disconnect();
+  }
+
+  it('takes a frame taken after the grab, not an older one still on its way', async () => {
+    const source = await createDisplayMediaSource();
+    // Two frames from before the latest scroll arrive first.
+    const stopSending = sendFramesOnChange([-120, -60, 5]);
+    const asked = performance.now();
+    const bitmap = await source.grab();
+    stopSending();
+
+    expect(bitmap.capturedAt).toBeGreaterThanOrEqual(asked);
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
+    source.close();
+    // The pixel that makes Chrome send a frame goes away with the stream.
+    expect(document.querySelector('[aria-hidden="true"]')).toBeNull();
+  });
+
+  it('fails rather than use an old frame when the tab sends no new one', async () => {
+    const source = await createDisplayMediaSource();
+    vi.useFakeTimers();
+    try {
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function requestVideoFrameCallback(run) {
+        // Only frames from before the grab, one per display refresh.
+        setTimeout(() => run(0, { captureTime: -1 }), 16);
+        return 1;
+      };
+      const grabbed = source.grab().catch((error) => error);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await grabbed).toMatchObject({ code: TAB_CAPTURE_ERRORS.NO_FRAME });
+      expect(createImageBitmap).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      source.close();
+    }
+  });
+
   it('asks again once sharing was stopped from Chrome', async () => {
     const onEnded = vi.fn();
     const { source } = await openTabCaptureSource({ preferVisibleTab: false, onEnded });
