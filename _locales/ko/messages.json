@@ -844,7 +844,7 @@
     "message": "공유"
   },
   "shareButtonTitle": {
-    "message": "이 비교 화면의 스냅샷을 공유합니다. Chrome에서 이 탭 공유를 확인하며, 이미지는 기기에만 저장됩니다."
+    "message": "이 비교의 스냅샷을 공유합니다. 이미지는 기기에만 저장됩니다."
   },
   "shareDialogTitle": {
     "message": "비교 공유"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "비교 화면을 캡처할 수 없습니다"
   },
-  "shareFooterText": {
-    "message": "Panelize로 비교"
+  "shareModeLabel": {
+    "message": "캡처 범위"
+  },
+  "shareModeCurrent": {
+    "message": "현재 화면"
+  },
+  "shareModeFull": {
+    "message": "전체 답변"
+  },
+  "shareTitleLabel": {
+    "message": "제목"
+  },
+  "shareTitlePlaceholder": {
+    "message": "헤드라인 추가(선택 사항)"
+  },
+  "shareSnapshotTagline": {
+    "message": "AI를 나란히 비교"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "프롬프트"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "AI 1개"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "AI $1개"
+  },
+  "shareSnapshotSubline": {
+    "message": "같은 프롬프트 · $1 · 나란히 비교"
+  },
+  "shareTruncatedNote": {
+    "message": "긴 답변은 잘렸습니다 — 처음 $1개 화면만 표시"
+  },
+  "shareCurrentViewOnly": {
+    "message": "현재 화면만: $1"
+  },
+  "shareShortcutHint": {
+    "message": "팁: 이 페이지에서 $1 키를 누르면 Chrome 확인을 건너뛸 수 있습니다"
+  },
+  "shareToolbarHint": {
+    "message": "팁: 이 페이지에서 도구 모음의 Panelize 아이콘을 클릭하면 Chrome 확인을 건너뛸 수 있습니다"
+  },
+  "shareProgressPreparing": {
+    "message": "스냅샷 준비 중…"
+  },
+  "shareProgressStep": {
+    "message": "$2개 화면 중 $1번째 캡처 중…"
+  },
+  "shareProgressCancel": {
+    "message": "취소"
   },
   "labelShareWatermark": {
     "message": "공유 이미지에 워터마크 표시"
   },
   "descShareWatermark": {
-    "message": "공유 버튼으로 만든 스냅샷 하단에 \"Panelize로 비교 · panelize.dev\" 표시를 추가합니다"
+    "message": "공유 버튼으로 만든 스냅샷에 Panelize 이름, panelize.dev, 날짜를 표시합니다. 헤드라인과 프레임은 항상 유지됩니다."
   },
   "msgShareWatermarkEnabled": {
     "message": "공유 이미지 워터마크가 켜졌습니다"

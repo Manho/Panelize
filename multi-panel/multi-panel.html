@@ -132,6 +132,12 @@
           </button>
         </div>
       </div>
+      <div id="snapshot-progress" class="snapshot-progress" role="status" hidden>
+        <span class="material-symbols-outlined snapshot-progress-icon" aria-hidden="true">photo_camera</span>
+        <span id="snapshot-progress-text" class="snapshot-progress-text"></span>
+        <progress id="snapshot-progress-bar" class="snapshot-progress-bar"></progress>
+        <button id="snapshot-cancel-btn" type="button" class="btn-secondary snapshot-cancel-btn" data-i18n="shareProgressCancel">Cancel</button>
+      </div>
     </footer>
 
     <!-- Layout Selector Modal -->
@@ -387,6 +393,21 @@
           </button>
         </div>
         <div class="modal-body share-modal-body">
+          <div class="share-controls">
+            <div class="share-mode-switch" role="radiogroup" data-i18n-aria="shareModeLabel" aria-label="Snapshot area">
+              <button type="button" class="share-mode-btn" role="radio" aria-checked="true" data-mode="current" data-i18n="shareModeCurrent">Current view</button>
+              <button type="button" class="share-mode-btn" role="radio" aria-checked="false" data-mode="full" data-i18n="shareModeFull">Full answers</button>
+            </div>
+            <label class="share-title-field">
+              <span data-i18n="shareTitleLabel">Title</span>
+              <input id="share-title-input" type="text" maxlength="400" autocomplete="off" spellcheck="false" data-i18n-placeholder="shareTitlePlaceholder" placeholder="Add a title (optional)" />
+            </label>
+          </div>
+          <p id="share-capture-hint" class="share-hint" hidden>
+            <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+            <span id="share-capture-hint-text"></span>
+          </p>
+          <p id="share-capture-notes" class="share-notes" role="status" hidden></p>
           <p class="share-privacy-warning">
             <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
             <span data-i18n="sharePrivacyWarning">Check the image before you share it: it may show chat history in sidebars, account names or avatars.</span>

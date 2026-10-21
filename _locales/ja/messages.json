@@ -844,7 +844,7 @@
     "message": "共有"
   },
   "shareButtonTitle": {
-    "message": "この比較のスナップショットを共有します。Chrome がこのタブの共有を確認します。画像はお使いのデバイスにのみ保存されます。"
+    "message": "この比較のスナップショットを共有します。画像はお使いのデバイスにのみ保存されます。"
   },
   "shareDialogTitle": {
     "message": "比較を共有"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "比較画面をキャプチャできませんでした"
   },
-  "shareFooterText": {
-    "message": "Panelize で比較"
+  "shareModeLabel": {
+    "message": "撮影範囲"
+  },
+  "shareModeCurrent": {
+    "message": "現在の表示"
+  },
+  "shareModeFull": {
+    "message": "回答全体"
+  },
+  "shareTitleLabel": {
+    "message": "タイトル"
+  },
+  "shareTitlePlaceholder": {
+    "message": "見出しを追加（任意）"
+  },
+  "shareSnapshotTagline": {
+    "message": "AI を並べて比較"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "プロンプト"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 つの AI"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 つの AI"
+  },
+  "shareSnapshotSubline": {
+    "message": "同じプロンプト · $1 · 並べて比較"
+  },
+  "shareTruncatedNote": {
+    "message": "長い回答は省略されています — 最初の $1 画面を表示"
+  },
+  "shareCurrentViewOnly": {
+    "message": "現在の表示のみ：$1"
+  },
+  "shareShortcutHint": {
+    "message": "ヒント：このページで $1 を押すと Chrome の確認を省略できます"
+  },
+  "shareToolbarHint": {
+    "message": "ヒント：このページでツールバーの Panelize アイコンをクリックすると Chrome の確認を省略できます"
+  },
+  "shareProgressPreparing": {
+    "message": "スナップショットを準備しています…"
+  },
+  "shareProgressStep": {
+    "message": "$2 画面中 $1 画面目を撮影しています…"
+  },
+  "shareProgressCancel": {
+    "message": "キャンセル"
   },
   "labelShareWatermark": {
     "message": "共有画像に透かしを表示"
   },
   "descShareWatermark": {
-    "message": "「共有」ボタンで作成したスナップショットの下部に「Panelize で比較 · panelize.dev」を追加します"
+    "message": "「共有」ボタンで作成したスナップショットに Panelize の名前、panelize.dev、日付を表示します。見出しと枠は常に表示されます。"
   },
   "msgShareWatermarkEnabled": {
     "message": "共有画像の透かしを有効にしました"

@@ -27,7 +27,7 @@ import {
   getAutoShrunkLayout
 } from '../modules/layout-auto-adjust.js';
 import { applyTheme } from '../modules/theme-manager.js';
-import { t, initializeLanguage, translatePage } from '../modules/i18n.js';
+import { t, initializeLanguage, translatePage, getTranslationLocale } from '../modules/i18n.js';
 import {
   RATING_PROMPT_ACTIONS,
   RATING_PROMPT_REVIEW_URL,
@@ -37,15 +37,28 @@ import {
   shouldShowRatingPrompt
 } from '../modules/rating-prompt.js';
 import {
-  SNAPSHOT_MAX_CAPTURE_WIDTH,
+  SNAPSHOT_MAX_PROMPT_LINES,
   composeSnapshot,
-  getSnapshotFileName
+  formatProviderList,
+  formatSnapshotMeta,
+  getSnapshotFileName,
+  getSnapshotFrameChromeHeight,
+  normalizePromptText,
+  toLanguageTag
 } from '../modules/share-snapshot.js';
 import {
   TAB_CAPTURE_ERRORS,
+  TAB_CAPTURE_KINDS,
   TabCaptureError,
-  captureElementInCurrentTab
+  openTabCaptureSource
 } from '../modules/tab-capture.js';
+import {
+  SNAPSHOT_MODES,
+  SnapshotCancelledError,
+  captureCurrentView,
+  captureFullAnswers
+} from '../modules/snapshot-capture.js';
+import { SHARE_SNAPSHOT_ACTION, getExecuteActionShortcut } from '../modules/share-trigger.js';
 import {
   calculatePendingImageIds,
   cleanStalePanelRetryState,
@@ -988,6 +1001,11 @@ function registerRuntimeMessageListener() {
       return;
     }
 
+    if (message.action === SHARE_SNAPSHOT_ACTION) {
+      handleShareSnapshotRequest(message.payload || {});
+      return;
+    }
+
     handleMultiPanelAction(message.action, message.payload || {}).then((handled) => {
       if (handled) {
         clearPendingMultiPanelAction();
@@ -1894,6 +1912,19 @@ function setupRatingPrompt() {
 let lastSnapshotPrompt = '';
 let currentSnapshot = null;
 let isCapturingSnapshot = false;
+// Captures behind the open dialog, by mode; title edits re-compose these.
+const snapshotCaptures = new Map();
+let snapshotMode = SNAPSHOT_MODES.CURRENT;
+let snapshotAbortController = null;
+let snapshotRenderTimer = null;
+let snapshotRenderSequence = 0;
+let snapshotIconPromise = null;
+let snapshotHint = '';
+let currentTabIdPromise = null;
+const SNAPSHOT_TITLE_RENDER_DELAY_MS = 250;
+// Set once captureVisibleTab worked in this tab. The activeTab grant then
+// lasts for the life of the page, so the shortcut tip is no longer needed.
+const SNAPSHOT_VISIBLE_TAB_FLAG = 'panelize.snapshotVisibleTabCaptured';
 
 function rememberSnapshotPrompt(text) {
   if (typeof text === 'string' && text.trim()) {
@@ -1903,6 +1934,15 @@ function rememberSnapshotPrompt(text) {
 
 function getSnapshotPrompt() {
   return lastSnapshotPrompt || document.getElementById('unified-input')?.value || '';
+}
+
+function getCurrentTabId() {
+  if (!currentTabIdPromise) {
+    currentTabIdPromise = typeof chrome.tabs?.getCurrent === 'function'
+      ? Promise.resolve(chrome.tabs.getCurrent()).then(tab => tab?.id ?? null).catch(() => null)
+      : Promise.resolve(null);
+  }
+  return currentTabIdPromise;
 }
 
 async function loadSnapshotIcon() {
@@ -1917,6 +1957,13 @@ async function loadSnapshotIcon() {
   }
 }
 
+function getSnapshotIcon() {
+  if (!snapshotIconPromise) {
+    snapshotIconPromise = loadSnapshotIcon();
+  }
+  return snapshotIconPromise;
+}
+
 function canvasToPngBlob(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => {
@@ -1929,31 +1976,181 @@ function canvasToPngBlob(canvas) {
   });
 }
 
-async function createComparisonSnapshot() {
-  // Capture first: getDisplayMedia needs the click's user activation.
-  const { bitmap, scale } = await captureElementInCurrentTab(
-    document.getElementById('main-content'),
-    { maxWidth: SNAPSHOT_MAX_CAPTURE_WIDTH }
-  );
-  try {
-    const [icon, shareWatermarkEnabled] = await Promise.all([
-      loadSnapshotIcon(),
-      getSetting('shareWatermarkEnabled')
-    ]);
-    const canvas = document.createElement('canvas');
-    composeSnapshot(canvas, {
-      capture: bitmap,
-      scale,
-      icon,
-      prompt: getSnapshotPrompt(),
-      theme: document.documentElement.getAttribute('data-theme'),
-      showWatermark: shareWatermarkEnabled !== false,
-      footerText: t('shareFooterText')
-    });
-    return await canvasToPngBlob(canvas);
-  } finally {
-    bitmap.close();
+function getSnapshotTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+function getSnapshotPanels() {
+  return panels.map(panel => ({
+    id: panel.id,
+    name: getProviderById(panel.providerId)?.name || panel.providerId,
+    iframe: panel.iframe,
+    element: document.getElementById(panel.id)
+  })).filter(panel => panel.element && panel.iframe);
+}
+
+function isShareModalOpen() {
+  const modal = document.getElementById('share-modal');
+  return Boolean(modal) && modal.style.display !== 'none';
+}
+
+function releaseSnapshotCapture(capture) {
+  if (!capture?.content) return;
+  if (typeof capture.content.close === 'function') {
+    capture.content.close();
+  } else {
+    // Free the stitched canvas right away; it can be large.
+    capture.content.width = 0;
+    capture.content.height = 0;
   }
+}
+
+function clearSnapshotCaptures() {
+  snapshotCaptures.forEach(releaseSnapshotCapture);
+  snapshotCaptures.clear();
+}
+
+function setSnapshotCapture(mode, capture, { replaceAll = false } = {}) {
+  if (replaceAll) {
+    clearSnapshotCaptures();
+  } else {
+    releaseSnapshotCapture(snapshotCaptures.get(mode));
+  }
+  snapshotCaptures.set(mode, capture);
+}
+
+function updateSnapshotProgress(progress) {
+  const text = document.getElementById('snapshot-progress-text');
+  const bar = document.getElementById('snapshot-progress-bar');
+  if (!text || !bar) return;
+  if (!progress) {
+    text.textContent = t('shareProgressPreparing');
+    bar.removeAttribute('value');
+    return;
+  }
+  const total = Math.max(progress.step, progress.total);
+  text.textContent = t('shareProgressStep', [String(progress.step), String(total)]);
+  bar.max = total;
+  bar.value = progress.step;
+}
+
+function setSnapshotBusy(busy) {
+  document.body.classList.toggle('snapshot-capturing', busy);
+  const shareBtn = document.getElementById('share-snapshot-btn');
+  if (shareBtn) shareBtn.disabled = busy;
+  document.querySelectorAll('.share-mode-btn, #share-download-btn, #share-copy-btn, #share-title-input')
+    .forEach(element => {
+      element.disabled = busy;
+    });
+  const progress = document.getElementById('snapshot-progress');
+  if (progress) progress.hidden = !busy;
+  if (busy) updateSnapshotProgress(null);
+}
+
+function updateShareModeButtons() {
+  document.querySelectorAll('.share-mode-btn').forEach(button => {
+    button.setAttribute('aria-checked', String(button.dataset.mode === snapshotMode));
+  });
+}
+
+async function updateSnapshotHint({ source, fallbackReason }) {
+  if (source.kind === TAB_CAPTURE_KINDS.VISIBLE_TAB) {
+    sessionStorage.setItem(SNAPSHOT_VISIBLE_TAB_FLAG, '1');
+    snapshotHint = '';
+    return;
+  }
+  snapshotHint = '';
+  if (fallbackReason !== TAB_CAPTURE_ERRORS.PERMISSION || sessionStorage.getItem(SNAPSHOT_VISIBLE_TAB_FLAG)) {
+    return;
+  }
+  // The toolbar icon and its shortcut do nothing while the setting is off.
+  if ((await getSetting('keyboardShortcutEnabled')) === false) {
+    return;
+  }
+  let shortcut = '';
+  try {
+    shortcut = getExecuteActionShortcut(await chrome.commands.getAll());
+  } catch (error) {
+    // Without the commands API, point at the toolbar icon instead
+  }
+  snapshotHint = shortcut ? t('shareShortcutHint', [shortcut]) : t('shareToolbarHint');
+}
+
+function updateShareNotes() {
+  const hint = document.getElementById('share-capture-hint');
+  const hintText = document.getElementById('share-capture-hint-text');
+  if (hint && hintText) {
+    hintText.textContent = snapshotHint;
+    hint.hidden = !snapshotHint;
+  }
+
+  const notes = document.getElementById('share-capture-notes');
+  const capture = snapshotCaptures.get(snapshotMode);
+  if (!notes) return;
+  const lines = [];
+  if (capture?.currentViewOnly.length) {
+    lines.push(t('shareCurrentViewOnly', [formatProviderList(capture.currentViewOnly, getSnapshotLocale())]));
+  }
+  if (capture?.truncated) {
+    lines.push(t('shareTruncatedNote', [String(capture.screens)]));
+  }
+  notes.textContent = lines.join(' ');
+  notes.hidden = lines.length === 0;
+}
+
+function getSnapshotLocale() {
+  return toLanguageTag(getTranslationLocale());
+}
+
+function getSnapshotCountText(count) {
+  return count === 1 ? t('shareSnapshotAiCountOne') : t('shareSnapshotAiCountMany', [String(count)]);
+}
+
+function setCurrentSnapshot(blob) {
+  const fileName = currentSnapshot?.fileName || getSnapshotFileName(new Date());
+  releaseCurrentSnapshot();
+  currentSnapshot = { blob, url: URL.createObjectURL(blob), fileName };
+  document.getElementById('share-preview').src = currentSnapshot.url;
+}
+
+async function renderSnapshot() {
+  const capture = snapshotCaptures.get(snapshotMode);
+  if (!capture) return;
+  const sequence = ++snapshotRenderSequence;
+  const icon = await getSnapshotIcon();
+  const locale = getSnapshotLocale();
+  const names = capture.names;
+  const canvas = document.createElement('canvas');
+  composeSnapshot(canvas, {
+    content: capture.content,
+    scale: capture.scale,
+    title: document.getElementById('share-title-input')?.value || '',
+    theme: capture.theme,
+    showWatermark: capture.showWatermark,
+    icon,
+    labelText: t('shareSnapshotPromptLabel'),
+    taglineText: t('shareSnapshotTagline'),
+    metaText: formatSnapshotMeta({ countText: getSnapshotCountText(names.length), date: capture.date, locale }),
+    sublineText: names.length ? t('shareSnapshotSubline', [formatProviderList(names, locale)]) : '',
+    noteText: capture.truncated ? t('shareTruncatedNote', [String(capture.screens)]) : ''
+  });
+  const blob = await canvasToPngBlob(canvas);
+  canvas.width = 0;
+  canvas.height = 0;
+  // A newer render (e.g. the next keystroke) wins.
+  if (sequence !== snapshotRenderSequence) return;
+  setCurrentSnapshot(blob);
+  updateShareNotes();
+}
+
+function scheduleSnapshotRender() {
+  clearTimeout(snapshotRenderTimer);
+  snapshotRenderTimer = setTimeout(() => {
+    renderSnapshot().catch(error => {
+      console.warn('[Multi-Panel] Failed to update the snapshot:', error);
+      showToast(t('shareCaptureFailed'));
+    });
+  }, SNAPSHOT_TITLE_RENDER_DELAY_MS);
 }
 
 function releaseCurrentSnapshot() {
@@ -1963,27 +2160,39 @@ function releaseCurrentSnapshot() {
   }
 }
 
-function openShareModal(blob) {
-  releaseCurrentSnapshot();
-  currentSnapshot = {
-    blob,
-    url: URL.createObjectURL(blob),
-    fileName: getSnapshotFileName(new Date())
-  };
-  document.getElementById('share-preview').src = currentSnapshot.url;
+function openShareModal() {
   document.getElementById('share-modal').style.display = 'flex';
-  document.getElementById('share-copy-btn')?.focus();
+  updateShareModeButtons();
+}
+
+/** Focus for the dialog once its buttons are enabled again. */
+function focusShareModal({ wasOpen }) {
+  if (!isShareModalOpen()) return;
+  const modal = document.getElementById('share-modal');
+  if (!wasOpen) {
+    document.getElementById('share-copy-btn')?.focus();
+  } else if (!modal.contains(document.activeElement)) {
+    // The mode button that started the capture was disabled meanwhile.
+    modal.querySelector('.share-mode-btn[aria-checked="true"]')?.focus();
+  }
 }
 
 function closeShareModal() {
   const modal = document.getElementById('share-modal');
   if (!modal || modal.style.display === 'none') return;
+  if (isCapturingSnapshot) return;
   modal.style.display = 'none';
+  clearTimeout(snapshotRenderTimer);
+  snapshotRenderSequence += 1;
   document.getElementById('share-preview').removeAttribute('src');
   releaseCurrentSnapshot();
+  clearSnapshotCaptures();
+  snapshotHint = '';
+  snapshotMode = SNAPSHOT_MODES.CURRENT;
 }
 
 function getCaptureErrorMessage(error) {
+  if (error instanceof SnapshotCancelledError) return t('shareCaptureCancelled');
   if (error instanceof TabCaptureError) {
     if (error.code === TAB_CAPTURE_ERRORS.CANCELLED) return t('shareCaptureCancelled');
     if (error.code === TAB_CAPTURE_ERRORS.WRONG_SURFACE) return t('shareCaptureWrongSurface');
@@ -1991,24 +2200,109 @@ function getCaptureErrorMessage(error) {
   return t('shareCaptureFailed');
 }
 
-async function shareComparisonSnapshot() {
+function isSnapshotCancellation(error) {
+  return error instanceof SnapshotCancelledError || error?.code === TAB_CAPTURE_ERRORS.CANCELLED;
+}
+
+/**
+ * Captures the comparison in `mode` and shows it in the share dialog.
+ * Must run straight from a user gesture: without the activeTab grant the
+ * capture falls back to the Screen Capture API, which needs that gesture.
+ * @param {string} mode - A SNAPSHOT_MODES value.
+ * @param {object} [options]
+ * @param {boolean} [options.refresh] - Drop the captures of other modes.
+ */
+async function captureSnapshot(mode, { refresh = false } = {}) {
   if (isCapturingSnapshot) return;
-  const shareBtn = document.getElementById('share-snapshot-btn');
   isCapturingSnapshot = true;
-  shareBtn.disabled = true;
+  const controller = new AbortController();
+  snapshotAbortController = controller;
+  const wasOpen = isShareModalOpen();
+  setSnapshotBusy(true);
+  let source = null;
   try {
-    openShareModal(await createComparisonSnapshot());
+    const opened = await openTabCaptureSource();
+    source = opened.source;
+    await updateSnapshotHint(opened);
+
+    const theme = getSnapshotTheme();
+    const showWatermark = (await getSetting('shareWatermarkEnabled')) !== false;
+    const grid = document.getElementById('panel-grid');
+    const options = {
+      source,
+      grid,
+      panels: getSnapshotPanels(),
+      prompt: getSnapshotPrompt(),
+      signal: controller.signal,
+      onProgress: updateSnapshotProgress
+    };
+    const result = mode === SNAPSHOT_MODES.FULL
+      ? await captureFullAnswers({
+        ...options,
+        // Room for the frame, with the longest headline the title can take.
+        getChromeHeight: (scale) => getSnapshotFrameChromeHeight({
+          contentWidth: Math.round(grid.getBoundingClientRect().width * scale),
+          scale,
+          theme,
+          showWatermark,
+          titleLineCount: SNAPSHOT_MAX_PROMPT_LINES,
+          hasSubline: theme === 'dark',
+          hasNote: true
+        })
+      })
+      : await captureCurrentView(options);
+
+    setSnapshotCapture(mode, { ...result, theme, showWatermark, date: new Date() }, { replaceAll: refresh || !wasOpen });
+    snapshotMode = mode;
+    if (!wasOpen) {
+      document.getElementById('share-title-input').value = normalizePromptText(getSnapshotPrompt());
+    }
+    await renderSnapshot();
+    openShareModal();
   } catch (error) {
-    if (error?.code === TAB_CAPTURE_ERRORS.CANCELLED) {
+    if (isSnapshotCancellation(error)) {
       console.info('[Multi-Panel] Snapshot cancelled');
     } else {
       console.warn('[Multi-Panel] Failed to create snapshot:', error);
     }
     showToast(getCaptureErrorMessage(error));
   } finally {
+    source?.close();
+    snapshotAbortController = null;
     isCapturingSnapshot = false;
-    shareBtn.disabled = false;
+    setSnapshotBusy(false);
+    updateShareModeButtons();
+    focusShareModal({ wasOpen });
   }
+}
+
+function cancelSnapshotCapture() {
+  snapshotAbortController?.abort();
+}
+
+function shareComparisonSnapshot() {
+  return captureSnapshot(SNAPSHOT_MODES.CURRENT, { refresh: true });
+}
+
+function selectSnapshotMode(mode) {
+  if (isCapturingSnapshot || !Object.values(SNAPSHOT_MODES).includes(mode)) return;
+  if (snapshotCaptures.has(mode)) {
+    if (mode !== snapshotMode) {
+      snapshotMode = mode;
+      updateShareModeButtons();
+      renderSnapshot().catch(error => console.warn('[Multi-Panel] Failed to show the snapshot:', error));
+    }
+    return;
+  }
+  captureSnapshot(mode);
+}
+
+/** The toolbar icon, its shortcut or the context menu was used on this page. */
+async function handleShareSnapshotRequest(payload = {}) {
+  if (payload.tabId !== await getCurrentTabId() || isCapturingSnapshot) {
+    return;
+  }
+  captureSnapshot(isShareModalOpen() ? snapshotMode : SNAPSHOT_MODES.CURRENT, { refresh: true });
 }
 
 function downloadCurrentSnapshot() {
@@ -2038,12 +2332,24 @@ function setupShareSnapshot() {
   document.getElementById('close-share-modal')?.addEventListener('click', closeShareModal);
   document.getElementById('share-download-btn')?.addEventListener('click', downloadCurrentSnapshot);
   document.getElementById('share-copy-btn')?.addEventListener('click', copyCurrentSnapshot);
+  document.getElementById('snapshot-cancel-btn')?.addEventListener('click', cancelSnapshotCapture);
+  document.getElementById('share-title-input')?.addEventListener('input', scheduleSnapshotRender);
+  document.querySelectorAll('.share-mode-btn').forEach(button => {
+    button.addEventListener('click', () => selectSnapshotMode(button.dataset.mode));
+  });
   modal?.addEventListener('click', (event) => {
     if (event.target === modal) closeShareModal();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeShareModal();
+    if (event.key !== 'Escape') return;
+    if (isCapturingSnapshot) {
+      cancelSnapshotCapture();
+    } else {
+      closeShareModal();
+    }
   });
+  // Resolve early so the first shortcut press is matched without delay.
+  getCurrentTabId();
 }
 
 // ===== Image Management =====
@@ -2974,6 +3280,7 @@ function escapeHtml(text) {
 
 function showToast(message) {
   const toast = document.createElement('div');
+  toast.className = 'panelize-toast';
   toast.textContent = message;
   toast.style.cssText = `
     position: fixed;

@@ -844,7 +844,7 @@
     "message": "Compartir"
   },
   "shareButtonTitle": {
-    "message": "Comparte una captura de esta comparación. Chrome te pedirá confirmar que compartes esta pestaña; la imagen se queda en tu dispositivo."
+    "message": "Comparte una captura de esta comparación. La imagen se queda en tu dispositivo."
   },
   "shareDialogTitle": {
     "message": "Compartir comparación"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "No se pudo capturar la comparación"
   },
-  "shareFooterText": {
-    "message": "Comparado con Panelize"
+  "shareModeLabel": {
+    "message": "Área de la captura"
+  },
+  "shareModeCurrent": {
+    "message": "Vista actual"
+  },
+  "shareModeFull": {
+    "message": "Respuestas completas"
+  },
+  "shareTitleLabel": {
+    "message": "Título"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Añade un titular (opcional)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Compara IA en paralelo"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 IA"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 IA"
+  },
+  "shareSnapshotSubline": {
+    "message": "Mismo prompt · $1 · en paralelo"
+  },
+  "shareTruncatedNote": {
+    "message": "Respuestas largas recortadas: se muestran las primeras $1 pantallas"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Solo vista actual: $1"
+  },
+  "shareShortcutHint": {
+    "message": "Consejo: pulsa $1 en esta página para omitir la confirmación de Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Consejo: haz clic en el icono de Panelize de la barra de herramientas en esta página para omitir la confirmación de Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Preparando la captura…"
+  },
+  "shareProgressStep": {
+    "message": "Capturando pantalla $1 de $2…"
+  },
+  "shareProgressCancel": {
+    "message": "Cancelar"
   },
   "labelShareWatermark": {
     "message": "Mostrar marca de agua en las imágenes compartidas"
   },
   "descShareWatermark": {
-    "message": "Añade una franja \"Comparado con Panelize · panelize.dev\" a las capturas hechas con el botón Compartir"
+    "message": "Muestra el nombre Panelize, panelize.dev y la fecha en las capturas hechas con el botón Compartir. El titular y el marco se mantienen siempre."
   },
   "msgShareWatermarkEnabled": {
     "message": "Marca de agua en imágenes compartidas activada"

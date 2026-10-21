@@ -840,7 +840,7 @@
     "message": "分享"
   },
   "shareButtonTitle": {
-    "message": "分享目前比較畫面的截圖。Chrome 會請你確認分享此分頁；圖片只會保存在你的裝置上。"
+    "message": "分享目前比較的截圖，圖片只會保存在你的裝置上。"
   },
   "shareDialogTitle": {
     "message": "分享比較截圖"
@@ -872,14 +872,62 @@
   "shareCaptureFailed": {
     "message": "無法擷取比較畫面"
   },
-  "shareFooterText": {
-    "message": "使用 Panelize 比較"
+  "shareModeLabel": {
+    "message": "截圖範圍"
+  },
+  "shareModeCurrent": {
+    "message": "目前檢視"
+  },
+  "shareModeFull": {
+    "message": "完整回答"
+  },
+  "shareTitleLabel": {
+    "message": "標題"
+  },
+  "shareTitlePlaceholder": {
+    "message": "新增標題（選填）"
+  },
+  "shareSnapshotTagline": {
+    "message": "並排比較 AI"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "提示詞"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 個 AI"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 個 AI"
+  },
+  "shareSnapshotSubline": {
+    "message": "同一提示詞 · $1 · 並排比較"
+  },
+  "shareTruncatedNote": {
+    "message": "回答過長已截斷 — 僅顯示前 $1 個畫面"
+  },
+  "shareCurrentViewOnly": {
+    "message": "僅目前檢視：$1"
+  },
+  "shareShortcutHint": {
+    "message": "提示：在此頁面按 $1 即可略過 Chrome 的確認"
+  },
+  "shareToolbarHint": {
+    "message": "提示：在此頁面點擊工具列中的 Panelize 圖示即可略過 Chrome 的確認"
+  },
+  "shareProgressPreparing": {
+    "message": "正在準備截圖…"
+  },
+  "shareProgressStep": {
+    "message": "正在擷取第 $1 個畫面，共 $2 個…"
+  },
+  "shareProgressCancel": {
+    "message": "取消"
   },
   "labelShareWatermark": {
     "message": "在分享圖片上顯示浮水印"
   },
   "descShareWatermark": {
-    "message": "在「分享」按鈕產生的截圖底部加上「使用 Panelize 比較 · panelize.dev」標示"
+    "message": "在「分享」按鈕產生的截圖上顯示 Panelize 名稱、panelize.dev 和日期。標題和外框一律保留。"
   },
   "msgShareWatermarkEnabled": {
     "message": "已開啟分享圖片浮水印"

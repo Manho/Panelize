@@ -22,7 +22,23 @@ const FEATURE_KEYS = [
   'shareCaptureCancelled',
   'shareCaptureWrongSurface',
   'shareCaptureFailed',
-  'shareFooterText',
+  'shareModeLabel',
+  'shareModeCurrent',
+  'shareModeFull',
+  'shareTitleLabel',
+  'shareTitlePlaceholder',
+  'shareSnapshotTagline',
+  'shareSnapshotPromptLabel',
+  'shareSnapshotAiCountOne',
+  'shareSnapshotAiCountMany',
+  'shareSnapshotSubline',
+  'shareTruncatedNote',
+  'shareCurrentViewOnly',
+  'shareShortcutHint',
+  'shareToolbarHint',
+  'shareProgressPreparing',
+  'shareProgressStep',
+  'shareProgressCancel',
   'labelShareWatermark',
   'descShareWatermark',
   'msgShareWatermarkEnabled',
@@ -46,8 +62,26 @@ describe('share and rating strings', () => {
   it('keeps the brand and site name in the watermark strings', () => {
     locales.forEach((locale) => {
       const messages = JSON.parse(readFileSync(resolve(LOCALES_DIR, locale, 'messages.json'), 'utf8'));
-      expect(messages.shareFooterText.message, locale).toContain('Panelize');
+      expect(messages.descShareWatermark.message, locale).toContain('Panelize');
       expect(messages.descShareWatermark.message, locale).toContain('panelize.dev');
+      expect(messages.shareToolbarHint.message, locale).toContain('Panelize');
+    });
+  });
+
+  it('keeps every substitution in the snapshot strings', () => {
+    const substitutions = {
+      shareSnapshotAiCountMany: ['$1'],
+      shareSnapshotSubline: ['$1'],
+      shareTruncatedNote: ['$1'],
+      shareCurrentViewOnly: ['$1'],
+      shareShortcutHint: ['$1'],
+      shareProgressStep: ['$1', '$2']
+    };
+    locales.forEach((locale) => {
+      const messages = JSON.parse(readFileSync(resolve(LOCALES_DIR, locale, 'messages.json'), 'utf8'));
+      Object.entries(substitutions).forEach(([key, values]) => {
+        values.forEach((value) => expect(messages[key].message, `${locale}.${key}`).toContain(value));
+      });
     });
   });
 });

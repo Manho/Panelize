@@ -844,7 +844,7 @@
     "message": "Поделиться"
   },
   "shareButtonTitle": {
-    "message": "Поделиться снимком этого сравнения. Chrome попросит подтвердить показ этой вкладки; изображение остаётся на вашем устройстве."
+    "message": "Поделитесь снимком этого сравнения. Изображение остаётся на вашем устройстве."
   },
   "shareDialogTitle": {
     "message": "Поделиться сравнением"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "Не удалось сделать снимок сравнения"
   },
-  "shareFooterText": {
-    "message": "Сравнено в Panelize"
+  "shareModeLabel": {
+    "message": "Область снимка"
+  },
+  "shareModeCurrent": {
+    "message": "Текущий вид"
+  },
+  "shareModeFull": {
+    "message": "Полные ответы"
+  },
+  "shareTitleLabel": {
+    "message": "Заголовок"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Добавьте заголовок (необязательно)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Сравнивайте ИИ бок о бок"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Промпт"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 ИИ"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 ИИ"
+  },
+  "shareSnapshotSubline": {
+    "message": "Один промпт · $1 · бок о бок"
+  },
+  "shareTruncatedNote": {
+    "message": "Длинные ответы обрезаны — показаны первые экраны: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Только текущий вид: $1"
+  },
+  "shareShortcutHint": {
+    "message": "Совет: нажмите $1 на этой странице, чтобы пропустить подтверждение Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Совет: нажмите на значок Panelize на панели инструментов на этой странице, чтобы пропустить подтверждение Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Подготовка снимка…"
+  },
+  "shareProgressStep": {
+    "message": "Снимаем экран $1 из $2…"
+  },
+  "shareProgressCancel": {
+    "message": "Отмена"
   },
   "labelShareWatermark": {
     "message": "Показывать водяной знак на изображениях"
   },
   "descShareWatermark": {
-    "message": "Добавляет полосу «Сравнено в Panelize · panelize.dev» к снимкам, созданным кнопкой «Поделиться»"
+    "message": "Показывать название Panelize, panelize.dev и дату на снимках, созданных кнопкой «Поделиться». Заголовок и рамка остаются всегда."
   },
   "msgShareWatermarkEnabled": {
     "message": "Водяной знак на изображениях включён"

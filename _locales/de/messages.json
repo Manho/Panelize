@@ -844,7 +844,7 @@
     "message": "Teilen"
   },
   "shareButtonTitle": {
-    "message": "Teile einen Schnappschuss dieses Vergleichs. Chrome fragt nach, ob du diesen Tab teilen möchtest; das Bild bleibt auf deinem Gerät."
+    "message": "Teile einen Schnappschuss dieses Vergleichs. Das Bild bleibt auf deinem Gerät."
   },
   "shareDialogTitle": {
     "message": "Vergleich teilen"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "Der Vergleich konnte nicht aufgenommen werden"
   },
-  "shareFooterText": {
-    "message": "Verglichen mit Panelize"
+  "shareModeLabel": {
+    "message": "Bildausschnitt"
+  },
+  "shareModeCurrent": {
+    "message": "Aktuelle Ansicht"
+  },
+  "shareModeFull": {
+    "message": "Vollständige Antworten"
+  },
+  "shareTitleLabel": {
+    "message": "Titel"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Überschrift hinzufügen (optional)"
+  },
+  "shareSnapshotTagline": {
+    "message": "KI im direkten Vergleich"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 KI"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 KIs"
+  },
+  "shareSnapshotSubline": {
+    "message": "Gleicher Prompt · $1 · im direkten Vergleich"
+  },
+  "shareTruncatedNote": {
+    "message": "Lange Antworten gekürzt – die ersten $1 Bildschirme werden gezeigt"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Nur aktuelle Ansicht: $1"
+  },
+  "shareShortcutHint": {
+    "message": "Tipp: Drücke $1 auf dieser Seite, um die Bestätigung von Chrome zu überspringen"
+  },
+  "shareToolbarHint": {
+    "message": "Tipp: Klicke auf dieser Seite auf das Panelize-Symbol in der Symbolleiste, um die Bestätigung von Chrome zu überspringen"
+  },
+  "shareProgressPreparing": {
+    "message": "Schnappschuss wird vorbereitet…"
+  },
+  "shareProgressStep": {
+    "message": "Bildschirm $1 von $2 wird aufgenommen…"
+  },
+  "shareProgressCancel": {
+    "message": "Abbrechen"
   },
   "labelShareWatermark": {
     "message": "Wasserzeichen auf geteilten Bildern anzeigen"
   },
   "descShareWatermark": {
-    "message": "Fügt Schnappschüssen über die Teilen-Schaltfläche einen Streifen „Verglichen mit Panelize · panelize.dev“ hinzu"
+    "message": "Zeigt den Namen Panelize, panelize.dev und das Datum auf Schnappschüssen über die Teilen-Schaltfläche. Überschrift und Rahmen bleiben immer erhalten."
   },
   "msgShareWatermarkEnabled": {
     "message": "Wasserzeichen auf geteilten Bildern aktiviert"

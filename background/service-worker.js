@@ -1,6 +1,7 @@
 import { notifyMessage } from '../modules/messaging.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
 import { migrateEnabledProvidersOnUpdate } from '../modules/provider-defaults.js';
+import { SHARE_SNAPSHOT_ACTION, isMultiPanelTab } from '../modules/share-trigger.js';
 import { removeDeprecatedClaudeModelMode } from '../modules/settings.js';
 import {
   reconcileOptionalProviderAccess
@@ -308,10 +309,32 @@ function dispatchToMultiPanel(action, payload) {
   }, 500);
 }
 
+/**
+ * On the Multi-Panel page itself, invoking the extension shares a snapshot
+ * of it: this gesture is what grants activeTab for a silent capture.
+ * @returns {Promise<boolean>} Whether the page was asked to share.
+ */
+async function requestShareSnapshotOnMultiPanel(tab) {
+  if (!(await isMultiPanelTab(tab))) {
+    return false;
+  }
+  notifyMessage({
+    action: SHARE_SNAPSHOT_ACTION,
+    payload: { tabId: tab.id }
+  }).catch(() => {
+    // The page may still be loading; the user can invoke it again
+  });
+  return true;
+}
+
 // Context menu click handler - opens Multi-Panel and sends message
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
     if (!tab) {
+      return;
+    }
+
+    if (await requestShareSnapshotOnMultiPanel(tab)) {
       return;
     }
 
@@ -330,6 +353,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Handle action clicks (toolbar button) - opens Multi-Panel
 chrome.action.onClicked.addListener(async (tab) => {
   if (!keyboardShortcutEnabled) {
+    return;
+  }
+
+  if (await requestShareSnapshotOnMultiPanel(tab)) {
     return;
   }
 

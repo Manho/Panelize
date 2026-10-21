@@ -844,7 +844,7 @@
     "message": "Partager"
   },
   "shareButtonTitle": {
-    "message": "Partagez une capture de cette comparaison. Chrome vous demande de confirmer le partage de cet onglet ; l'image reste sur votre appareil."
+    "message": "Partagez une capture de cette comparaison. L'image reste sur votre appareil."
   },
   "shareDialogTitle": {
     "message": "Partager la comparaison"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "Impossible de capturer la comparaison"
   },
-  "shareFooterText": {
-    "message": "Comparé avec Panelize"
+  "shareModeLabel": {
+    "message": "Zone de la capture"
+  },
+  "shareModeCurrent": {
+    "message": "Vue actuelle"
+  },
+  "shareModeFull": {
+    "message": "Réponses complètes"
+  },
+  "shareTitleLabel": {
+    "message": "Titre"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Ajouter un titre (facultatif)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Comparez les IA côte à côte"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 IA"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 IA"
+  },
+  "shareSnapshotSubline": {
+    "message": "Même prompt · $1 · côte à côte"
+  },
+  "shareTruncatedNote": {
+    "message": "Réponses longues tronquées : affichage des $1 premiers écrans"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Vue actuelle uniquement : $1"
+  },
+  "shareShortcutHint": {
+    "message": "Astuce : appuyez sur $1 sur cette page pour éviter la confirmation de Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Astuce : cliquez sur l'icône Panelize de la barre d'outils sur cette page pour éviter la confirmation de Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Préparation de la capture…"
+  },
+  "shareProgressStep": {
+    "message": "Capture de l'écran $1 sur $2…"
+  },
+  "shareProgressCancel": {
+    "message": "Annuler"
   },
   "labelShareWatermark": {
     "message": "Afficher un filigrane sur les images partagées"
   },
   "descShareWatermark": {
-    "message": "Ajoute une bande « Comparé avec Panelize · panelize.dev » aux captures créées avec le bouton Partager"
+    "message": "Affiche le nom Panelize, panelize.dev et la date sur les captures prises avec le bouton Partager. Le titre et le cadre restent dans tous les cas."
   },
   "msgShareWatermarkEnabled": {
     "message": "Filigrane des images partagées activé"

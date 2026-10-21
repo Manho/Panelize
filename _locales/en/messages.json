@@ -861,7 +861,7 @@
     "message": "Share"
   },
   "shareButtonTitle": {
-    "message": "Share a snapshot of this comparison. Chrome asks you to confirm sharing this tab; the image stays on your device."
+    "message": "Share a snapshot of this comparison. The image stays on your device."
   },
   "shareDialogTitle": {
     "message": "Share comparison"
@@ -893,14 +893,62 @@
   "shareCaptureFailed": {
     "message": "Couldn't capture the comparison"
   },
-  "shareFooterText": {
-    "message": "Compared with Panelize"
+  "shareModeLabel": {
+    "message": "Snapshot area"
+  },
+  "shareModeCurrent": {
+    "message": "Current view"
+  },
+  "shareModeFull": {
+    "message": "Full answers"
+  },
+  "shareTitleLabel": {
+    "message": "Title"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Add a headline (optional)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Compare AI side by side"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 AI"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 AIs"
+  },
+  "shareSnapshotSubline": {
+    "message": "Same prompt · $1 · side by side"
+  },
+  "shareTruncatedNote": {
+    "message": "Long answers truncated — showing the first $1 screens"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Current view only: $1"
+  },
+  "shareShortcutHint": {
+    "message": "Tip: press $1 on this page to skip Chrome's confirmation"
+  },
+  "shareToolbarHint": {
+    "message": "Tip: click the Panelize toolbar icon on this page to skip Chrome's confirmation"
+  },
+  "shareProgressPreparing": {
+    "message": "Preparing snapshot…"
+  },
+  "shareProgressStep": {
+    "message": "Capturing screen $1 of $2…"
+  },
+  "shareProgressCancel": {
+    "message": "Cancel"
   },
   "labelShareWatermark": {
     "message": "Show watermark on shared images"
   },
   "descShareWatermark": {
-    "message": "Add a \"Compared with Panelize · panelize.dev\" strip to snapshots taken with the Share button"
+    "message": "Show the Panelize name, panelize.dev and the date on snapshots taken with the Share button. The headline and frame stay either way."
   },
   "msgShareWatermarkEnabled": {
     "message": "Watermark on shared images enabled"

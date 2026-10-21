@@ -844,7 +844,7 @@
     "message": "Condividi"
   },
   "shareButtonTitle": {
-    "message": "Condividi un'istantanea di questo confronto. Chrome ti chiede di confermare la condivisione di questa scheda; l'immagine resta sul tuo dispositivo."
+    "message": "Condividi un'istantanea di questo confronto. L'immagine resta sul tuo dispositivo."
   },
   "shareDialogTitle": {
     "message": "Condividi confronto"
@@ -876,14 +876,62 @@
   "shareCaptureFailed": {
     "message": "Impossibile acquisire il confronto"
   },
-  "shareFooterText": {
-    "message": "Confrontato con Panelize"
+  "shareModeLabel": {
+    "message": "Area dell'istantanea"
+  },
+  "shareModeCurrent": {
+    "message": "Vista attuale"
+  },
+  "shareModeFull": {
+    "message": "Risposte complete"
+  },
+  "shareTitleLabel": {
+    "message": "Titolo"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Aggiungi un titolo (facoltativo)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Confronta le IA fianco a fianco"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotAiCountOne": {
+    "message": "1 IA"
+  },
+  "shareSnapshotAiCountMany": {
+    "message": "$1 IA"
+  },
+  "shareSnapshotSubline": {
+    "message": "Stesso prompt · $1 · fianco a fianco"
+  },
+  "shareTruncatedNote": {
+    "message": "Risposte lunghe troncate: vengono mostrate le prime $1 schermate"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Solo vista attuale: $1"
+  },
+  "shareShortcutHint": {
+    "message": "Suggerimento: premi $1 in questa pagina per saltare la conferma di Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Suggerimento: fai clic sull'icona di Panelize nella barra degli strumenti in questa pagina per saltare la conferma di Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Preparazione dell'istantanea…"
+  },
+  "shareProgressStep": {
+    "message": "Acquisizione della schermata $1 di $2…"
+  },
+  "shareProgressCancel": {
+    "message": "Annulla"
   },
   "labelShareWatermark": {
     "message": "Mostra filigrana sulle immagini condivise"
   },
   "descShareWatermark": {
-    "message": "Aggiunge una fascia \"Confrontato con Panelize · panelize.dev\" alle istantanee create con il pulsante Condividi"
+    "message": "Mostra il nome Panelize, panelize.dev e la data sulle istantanee create con il pulsante Condividi. Titolo e cornice restano in ogni caso."
   },
   "msgShareWatermarkEnabled": {
     "message": "Filigrana sulle immagini condivise attivata"
