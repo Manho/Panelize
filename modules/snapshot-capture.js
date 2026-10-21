@@ -257,19 +257,24 @@ function createCanvas(width, height) {
   return canvas;
 }
 
-/** Crops page CSS rectangle `rect` from a whole-tab frame at `scale`. */
-function cropPageRect(frame, rect, scale) {
+/**
+ * Crops page CSS rectangle `rect` from a whole-tab frame at `scale`.
+ * `height` overrides the output height, e.g. to end a segment exactly where
+ * the next one starts.
+ */
+function cropPageRect(frame, rect, scale, height = Math.max(1, Math.round(rect.height * scale))) {
   const frameScaleX = frame.width / window.innerWidth;
   const frameScaleY = frame.height / window.innerHeight;
-  const width = Math.max(1, Math.round(rect.width * scale));
-  const height = Math.max(1, Math.round(rect.height * scale));
+  // Round edges rather than sizes, so adjacent rectangles share their edge.
+  const left = Math.round(rect.left * frameScaleX);
+  const top = Math.round(rect.top * frameScaleY);
   return createImageBitmap(
     frame,
-    Math.round(rect.left * frameScaleX),
-    Math.round(rect.top * frameScaleY),
-    Math.max(1, Math.round(rect.width * frameScaleX)),
-    Math.max(1, Math.round(rect.height * frameScaleY)),
-    { resizeWidth: width, resizeHeight: height, resizeQuality: 'high' }
+    left,
+    top,
+    Math.max(1, Math.round((rect.left + rect.width) * frameScaleX) - left),
+    Math.max(1, Math.round((rect.top + rect.height) * frameScaleY) - top),
+    { resizeWidth: Math.max(1, Math.round(rect.width * scale)), resizeHeight: height, resizeQuality: 'high' }
   );
 }
 
@@ -534,14 +539,17 @@ export async function captureFullAnswers({
           }
           const { geometry } = cell;
           const top = cell.iframeTop + segment.top * zoomOf(cell);
+          const contentTop = segment.contentTop * zoomOf(cell);
+          const height = segment.height * zoomOf(cell);
+          // Rounded where it is drawn, so it ends where the next one starts.
           const bitmap = await cropPageRect(currentFrame, toRect({
             left: geometry.contentLeft,
             right: geometry.contentRight,
             top,
-            bottom: top + segment.height * zoomOf(cell)
-          }), scale);
+            bottom: top + height
+          }), scale, Math.max(1, Math.round((contentTop + height) * scale) - Math.round(contentTop * scale)));
           bitmaps.push(bitmap);
-          cell.segments.push({ bitmap, contentTop: segment.contentTop * zoomOf(cell), height: segment.height * zoomOf(cell) });
+          cell.segments.push({ bitmap, contentTop, height });
         }
       };
 

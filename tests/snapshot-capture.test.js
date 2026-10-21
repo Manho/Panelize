@@ -192,6 +192,57 @@ describe('captureCurrentView', () => {
   });
 });
 
+/** A panel whose page scrolls to wherever it is asked, in a 2000px conversation. */
+function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400, bottom: 500 }) {
+  const element = document.createElement('div');
+  element.getBoundingClientRect = () => rect(left, 0, 400, 600);
+  document.body.appendChild(element);
+  const messages = [];
+  const contentWindow = {
+    postMessage: vi.fn((message) => {
+      messages.push(message);
+      queueMicrotask(() => window.dispatchEvent(messageEvent({
+        type: SNAPSHOT_MESSAGES.STATE,
+        context: 'multi-panel-snapshot',
+        requestId: message.requestId,
+        clip: { left: 0, top: 50, right: 400, bottom: 500 },
+        viewport: { width: 400, height: 560 },
+        alignedBy: 'prompt',
+        scrollTop: message.scrollTop ?? 0,
+        originalScrollTop: 0,
+        maxScrollTop: 2000
+      }, contentWindow)));
+    })
+  };
+  const iframe = { contentWindow, getBoundingClientRect: () => rect(left, 40, 400, 560) };
+  return { panel: { id: name, name, iframe, element }, messages };
+}
+
+function createGrid() {
+  const grid = document.createElement('div');
+  grid.getBoundingClientRect = () => rect(0, 0, 800, 600);
+  return grid;
+}
+
+/**
+ * Frames of the whole tab; `onGrab(count)` runs before each is returned.
+ * `frameScale` is captured pixels per CSS pixel.
+ */
+function createSource(onGrab, frameScale = 1) {
+  const frames = [];
+  let count = 0;
+  return {
+    frames,
+    grab: vi.fn(async () => {
+      count += 1;
+      onGrab(count);
+      const frame = { width: window.innerWidth * frameScale, height: window.innerHeight * frameScale, close: vi.fn() };
+      frames.push(frame);
+      return frame;
+    })
+  };
+}
+
 describe('a window resized during a capture', () => {
   const originalCreateImageBitmap = globalThis.createImageBitmap;
   const originalInnerWidth = window.innerWidth;
@@ -201,54 +252,6 @@ describe('a window resized during a capture', () => {
     window.innerWidth = originalInnerWidth;
     document.body.innerHTML = '';
   });
-
-  /** A panel whose page scrolls to wherever it is asked, in a 2000px conversation. */
-  function createScrollingPanel(name, left) {
-    const element = document.createElement('div');
-    element.getBoundingClientRect = () => rect(left, 0, 400, 600);
-    document.body.appendChild(element);
-    const messages = [];
-    const contentWindow = {
-      postMessage: vi.fn((message) => {
-        messages.push(message);
-        queueMicrotask(() => window.dispatchEvent(messageEvent({
-          type: SNAPSHOT_MESSAGES.STATE,
-          context: 'multi-panel-snapshot',
-          requestId: message.requestId,
-          clip: { left: 0, top: 50, right: 400, bottom: 500 },
-          viewport: { width: 400, height: 560 },
-          alignedBy: 'prompt',
-          scrollTop: message.scrollTop ?? 0,
-          originalScrollTop: 0,
-          maxScrollTop: 2000
-        }, contentWindow)));
-      })
-    };
-    const iframe = { contentWindow, getBoundingClientRect: () => rect(left, 40, 400, 560) };
-    return { panel: { id: name, name, iframe, element }, messages };
-  }
-
-  function createGrid() {
-    const grid = document.createElement('div');
-    grid.getBoundingClientRect = () => rect(0, 0, 800, 600);
-    return grid;
-  }
-
-  /** Frames of the whole tab; `onGrab(count)` runs before each is returned. */
-  function createSource(onGrab) {
-    const frames = [];
-    let count = 0;
-    return {
-      frames,
-      grab: vi.fn(async () => {
-        count += 1;
-        onGrab(count);
-        const frame = { width: window.innerWidth, height: window.innerHeight, close: vi.fn() };
-        frames.push(frame);
-        return frame;
-      })
-    };
-  }
 
   it('stops full answers rather than crop panels that moved, and puts the pages back', async () => {
     globalThis.createImageBitmap = vi.fn(async () => ({ width: 10, height: 10, close: vi.fn() }));
@@ -316,6 +319,56 @@ describe('a window resized during a capture', () => {
       expect(result.currentViewOnly).toEqual([]);
       expect(result.screens).toBe(source.grab.mock.calls.length);
       expect(result.screens).toBeGreaterThan(1);
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+});
+
+describe('stitched screens', () => {
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+
+  afterEach(() => {
+    globalThis.createImageBitmap = originalCreateImageBitmap;
+    document.body.innerHTML = '';
+  });
+
+  it('meet without a gap or an overlap at a fractional scale', async () => {
+    globalThis.createImageBitmap = vi.fn(async (frame, sx, sy, sw, sh, options) => ({
+      width: options.resizeWidth, height: options.resizeHeight, close: vi.fn()
+    }));
+    const draws = [];
+    // jsdom has no canvas: a 2D context that records what is drawn.
+    const context = new Proxy({}, {
+      get: (target, key) => {
+        if (key in target) return target[key];
+        if (key === 'drawImage') return (...args) => draws.push(args);
+        if (key === 'getImageData') return () => ({ data: new Uint8ClampedArray(4) });
+        return () => {};
+      },
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    // A page header ending between two pixels, like Gemini's.
+    const chat = createScrollingPanel('Gemini', 0, { left: 0, top: 50.4, right: 400, bottom: 500 });
+    const source = createSource(() => {}, 1.37);
+
+    try {
+      const result = await captureFullAnswers({
+        source,
+        grid: createGrid(),
+        panels: [chat.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.screens).toBeGreaterThan(2);
+      // Head first, then one draw per screen, top to bottom.
+      const placed = draws.filter((args) => args.length === 5).slice(1)
+        .map(([, , y, , height]) => ({ y, height }));
+      expect(placed).toHaveLength(result.screens);
+      placed.slice(1).forEach((segment, index) => {
+        expect(segment.y).toBe(placed[index].y + placed[index].height);
+      });
     } finally {
       getContext.mockRestore();
     }
