@@ -244,8 +244,39 @@ describe('snapshot scroll protocol in provider frames', () => {
           tag: 'button', text: '', box: { top: CLIP_BOTTOM - 60, left: 380, width: 36, height: 36 }
         }),
         fade: addOverlay(composerBox, { box: { top: CLIP_BOTTOM - 40, width: CONTAINER.width, height: 40 } }),
-        label: addOverlay(composerBox, { text: 'Thinking', box: { top: CLIP_BOTTOM - 30, left: 20, width: 80, height: 20 } })
+        // A text label pinned over the conversation, away from the composer.
+        label: addOverlay(document.body, {
+          text: 'Thinking', box: { top: CONTAINER.top + 80, left: 20, width: 80, height: 20 }
+        })
       };
+    }
+
+    /**
+     * Claude: the composer dock is stuck to the bottom of the conversation
+     * with a transparent background, and a plain notice card sits above the
+     * input box. The dock is too tall to be cut from the clip as a whole.
+     */
+    function addComposerDock(container, { position = 'sticky' } = {}) {
+      const dock = document.createElement('div');
+      dock.style.position = position;
+      setStaticRect(dock, { top: CONTAINER.top + CONTAINER.height - 320, width: CONTAINER.width, height: 320 });
+      const notice = document.createElement('div');
+      notice.textContent = "You've used 90% of your session limit";
+      setStaticRect(notice, { top: CONTAINER.top + CONTAINER.height - 280, left: 20, width: 760, height: 80 });
+      const close = document.createElement('button');
+      setStaticRect(close, { top: CONTAINER.top + CONTAINER.height - 270, left: 740, width: 28, height: 28 });
+      notice.appendChild(close);
+      const inputBox = document.createElement('div');
+      setStaticRect(inputBox, { top: CONTAINER.top + CONTAINER.height - 120, width: CONTAINER.width, height: 120 });
+      const textarea = document.createElement('textarea');
+      textarea.placeholder = 'Message DeepSeek';
+      setStaticRect(textarea, { top: CONTAINER.top + CONTAINER.height - 100, left: 20, width: 760, height: 60 });
+      const attach = document.createElement('button');
+      setStaticRect(attach, { top: CONTAINER.top + CONTAINER.height - 100, left: 20, width: 28, height: 28 });
+      inputBox.append(textarea, attach);
+      dock.append(notice, inputBox);
+      container.appendChild(dock);
+      return { dock, notice, inputBox, textarea, attach };
     }
 
     it('hides pinned buttons and fades over the conversation, then restores them', async () => {
@@ -272,6 +303,40 @@ describe('snapshot scroll protocol in provider frames', () => {
       expect(button.style.getPropertyValue('visibility')).toBe('');
       expect(fade.style.getPropertyValue('visibility')).toBe('visible');
       expect(fade.style.getPropertyPriority('visibility')).toBe('');
+    });
+
+    it('hides notices stacked on a pinned composer, then restores them', async () => {
+      const { container, elements } = createConversation(
+        [{ text: 'Explain how HTTPS works', offset: 1500 }],
+        { composer: false }
+      );
+      const { dock, notice, inputBox, textarea, attach } = addComposerDock(container);
+
+      const state = await prepare('Explain how HTTPS works', { stitch: true });
+
+      expect(state.clip.bottom).toBe(CONTAINER.top + CONTAINER.height - 120);
+      expect(notice.style.getPropertyValue('visibility')).toBe('hidden');
+      // The input box is under the clip; the dock and the message stay.
+      for (const element of [dock, inputBox, textarea, attach, elements[0]]) {
+        expect(element.style.getPropertyValue('visibility')).toBe('');
+      }
+
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+
+      expect(notice.style.getPropertyValue('visibility')).toBe('');
+    });
+
+    it('leaves the composer surroundings alone when the composer scrolls with the conversation', async () => {
+      const { container } = createConversation(
+        [{ text: 'Explain how HTTPS works', offset: 1500 }],
+        { composer: false }
+      );
+      const { notice } = addComposerDock(container, { position: 'static' });
+
+      await prepare('Explain how HTTPS works', { stitch: true });
+
+      expect(notice.style.getPropertyValue('visibility')).toBe('');
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
     });
 
     it('leaves floating elements alone for a current view', async () => {

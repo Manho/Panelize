@@ -80,8 +80,8 @@ const PROVIDER_ORIGINS = {
  * @param {string} layout
  */
 async function openConversationPanels(extension, conversations, layout = '1x1') {
-  for (const { provider, blocks } of conversations) {
-    const body = renderConversationFixture({ prompt: CONVERSATION_PROMPT, blocks });
+  for (const { provider, blocks, notice } of conversations) {
+    const body = renderConversationFixture({ prompt: CONVERSATION_PROMPT, blocks, notice });
     await extension.context.route(`${PROVIDER_ORIGINS[provider]}/**`, route => route.fulfill({
       contentType: 'text/html', body,
     }));
@@ -228,6 +228,7 @@ const CONVERSATION_PALETTE = {
   earlier: CONVERSATION_COLORS.earlier,
   user: CONVERSATION_COLORS.user,
   floating: CONVERSATION_COLORS.floating,
+  notice: CONVERSATION_COLORS.notice,
   ...Object.fromEntries(BLOCK_COLORS.map((color, index) => [`block${index}`, color])),
 };
 
@@ -260,6 +261,14 @@ function expectColorNear(actual, expected, tolerance = 12) {
     expect(Math.abs(channel - expected[index]), `channel ${index} of ${actual} vs ${expected}`)
       .toBeLessThanOrEqual(tolerance);
   });
+}
+
+/**
+ * Preview height for polling. Every render replaces the preview, and decoding
+ * an image whose source was just replaced fails; the next poll reads the new one.
+ */
+function pollPreviewHeight(page) {
+  return inspectPreview(page).then(preview => preview.height, () => null);
 }
 
 async function waitForNewPreview(page, previousSrc) {
@@ -390,7 +399,7 @@ test('editing the title re-renders the headline, and an empty title removes it',
     await expect(title).toHaveValue('A much longer headline that keeps going '.repeat(8).trim());
     const longTitle = await waitForNewPreview(page, noTitle.src);
     // Keystrokes are debounced into one render after typing stops.
-    await expect.poll(async () => (await inspectPreview(page)).height).toBe(oneLine.height + layoutFor(3) - layoutFor(1));
+    await expect.poll(() => pollPreviewHeight(page)).toBe(oneLine.height + layoutFor(3) - layoutFor(1));
     expect(longTitle.width).toBe(oneLine.width);
     await expect(page.locator('#unified-input')).toHaveValue('');
   } finally {
@@ -515,7 +524,7 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
   });
   try {
     const page = await openConversationPanels(extension, [
-      { provider: 'chatgpt', blocks: BLOCK_COLORS.slice(0, 6) },
+      { provider: 'chatgpt', blocks: BLOCK_COLORS.slice(0, 6), notice: true },
       { provider: 'deepseek', blocks: BLOCK_COLORS.slice(6, 8) },
     ], '1x2');
     const consoleErrors = [];
@@ -527,6 +536,8 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
     await clickToolbarIcon(extension, page);
     await expect(page.locator('#share-modal')).toBeVisible();
     const current = await inspectPreview(page);
+    // The notice on the composer is part of what is on screen.
+    expect((await readConversationRuns(page, current, 0)).filter(run => run.name === 'notice')).toHaveLength(1);
 
     await page.locator('.share-mode-btn[data-mode="full"]').click();
     await expect(page.locator('#snapshot-progress')).toBeVisible();
@@ -552,8 +563,9 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
       expect(names.filter(name => name === 'header'), `panel ${index}`).toHaveLength(1);
       expect(names, `panel ${index}`).not.toContain('composer');
       expect(names, `panel ${index}`).not.toContain('earlier');
-      // Floating buttons would repeat on every screen; they are left out.
+      // Floating buttons and notices would repeat on every screen; they are left out.
       expect(names, `panel ${index}`).not.toContain('floating');
+      expect(names, `panel ${index}`).not.toContain('notice');
       const blockRuns = runs.filter(run => run.name.startsWith('block'));
       expect(blockRuns.map(run => run.name), `panel ${index}`)
         .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
@@ -569,17 +581,18 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
         expect(fill.length).toBeGreaterThan(3 * blockHeight);
       }
     }
-    // Panels are back where they were, floating buttons included.
+    // Panels are back where they were, floating buttons and notices included.
     expect(await getThreadScrollTops(page)).toEqual(before);
     for (let index = 0; index < 2; index += 1) {
       await expect(page.frameLocator('#panel-grid iframe').nth(index).locator('#scroll-down')).toBeVisible();
     }
+    await expect(page.frameLocator('#panel-grid iframe').first().locator('.notice')).toBeVisible();
 
     // The current view is kept; switching back does not capture again.
     await page.locator('.share-mode-btn[data-mode="current"]').click();
     await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#snapshot-progress')).toBeHidden();
-    await expect.poll(async () => (await inspectPreview(page)).height).toBe(current.height);
+    await expect.poll(() => pollPreviewHeight(page)).toBe(current.height);
     expect(consoleErrors).toEqual([]);
   } finally {
     await extension.close();

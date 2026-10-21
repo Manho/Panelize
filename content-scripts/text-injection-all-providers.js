@@ -3781,7 +3781,7 @@
     }
 
     // The composer, also when it is a plain block laid over the conversation.
-    const input = provider === 'google' ? findGoogleInput(GOOGLE_PROVIDER_MODE_AI) : provider && findProviderInput(provider);
+    const input = findSnapshotComposerInput(provider);
     if (input) {
       let box = null;
       for (let node = input; node && node !== container && !node.contains(container); node = node.parentElement) {
@@ -3809,36 +3809,57 @@
     };
   }
 
-  /**
-   * Whether the element stays put while the container scrolls: it, or an
-   * ancestor inside the container, is fixed, stuck to an edge, or absolute
-   * against a box outside the scrolled content.
-   */
-  function isSnapshotPinned(element, container) {
-    if (!isSnapshotDocumentScroller(container) && !container.contains(element)) {
-      return true;
+  function findSnapshotComposerInput(provider) {
+    if (provider === 'google') {
+      return findGoogleInput(GOOGLE_PROVIDER_MODE_AI);
     }
+    return provider ? findProviderInput(provider) : null;
+  }
+
+  /**
+   * The outermost box that keeps the element put while the container
+   * scrolls: an ancestor inside the container that is fixed, stuck to an
+   * edge, or absolute against a box outside the scrolled content. For an
+   * element outside the container, its outermost ancestor that does not
+   * hold the container.
+   * @returns {Element|null} Null when the element scrolls with the content.
+   */
+  function getSnapshotPinningNode(element, container) {
+    const outside = !isSnapshotDocumentScroller(container) && !container.contains(element);
     const containerRect = getSnapshotContainerRect(container);
-    for (let node = element; node && node !== container && node !== document.body; node = node.parentElement) {
+    let pinning = null;
+    for (let node = element; node && node !== container && node !== document.body && !node.contains(container);
+      node = node.parentElement) {
+      if (outside) {
+        pinning = node;
+        continue;
+      }
       const position = window.getComputedStyle(node).position;
       if (position === 'fixed') {
-        return true;
-      }
-      if (position === 'sticky') {
+        pinning = node;
+      } else if (position === 'sticky') {
         // Sticky boxes in the middle of the content (e.g. code block
         // headers) scroll like the rest until they reach an edge.
         const rect = node.getBoundingClientRect();
         if (Math.abs(rect.top - containerRect.top) <= SNAPSHOT_EDGE_TOLERANCE_PX
           || Math.abs(rect.bottom - containerRect.bottom) <= SNAPSHOT_EDGE_TOLERANCE_PX) {
-          return true;
+          pinning = node;
         }
-      }
-      if (position === 'absolute' && !isSnapshotDocumentScroller(container)
+      } else if (position === 'absolute' && !isSnapshotDocumentScroller(container)
         && !isSnapshotScrolledContent(node, container)) {
-        return true;
+        pinning = node;
       }
     }
-    return false;
+    return pinning;
+  }
+
+  function isSnapshotPinned(element, container) {
+    return Boolean(getSnapshotPinningNode(element, container));
+  }
+
+  function overlapsSnapshotClip(rect, clip) {
+    return rect.width > 0 && rect.height > 0
+      && rect.bottom > clip.top && rect.top < clip.bottom && rect.right > clip.left && rect.left < clip.right;
   }
 
   function hasSnapshotReadableText(element) {
@@ -3857,8 +3878,10 @@
 
   /**
    * Hides what would repeat on every stitched screen: buttons and fades
-   * pinned over the visible conversation (e.g. "Scroll to bottom"), and
-   * masks that fade the edges of the conversation. Layout is kept. Runs
+   * pinned over the visible conversation (e.g. "Scroll to bottom"), notices
+   * stacked on a composer laid over it (e.g. "You've used 90% of your
+   * limit"), and masks that fade the edges of the conversation. Layout is
+   * kept. Runs
    * after every scroll, because some buttons only show up once the
    * conversation is no longer at the bottom.
    * @returns {boolean} Whether anything new was hidden.
@@ -3871,6 +3894,12 @@
     }
     const hidden = session.hiddenElements;
     let changed = false;
+    const hide = (element) => {
+      hidden.add(element);
+      session.savedStyles.push(saveSnapshotInlineStyle(element, 'visibility'));
+      element.style.setProperty('visibility', 'hidden', 'important');
+      changed = true;
+    };
 
     // Overlay scrollbars show up after every scroll; they take no room, so
     // hiding them does not move the content.
@@ -3921,20 +3950,31 @@
         continue;
       }
       const rect = element.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0 || rect.height > clipHeight * SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO) {
-        continue;
-      }
-      if (rect.bottom <= clip.top || rect.top >= clip.bottom || rect.right <= clip.left || rect.left >= clip.right) {
+      if (rect.height > clipHeight * SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO || !overlapsSnapshotClip(rect, clip)) {
         continue;
       }
       const isButton = element.matches('button, [role="button"]');
       if ((!isButton && hasSnapshotReadableText(element)) || !isSnapshotPinned(element, container)) {
         continue;
       }
-      hidden.add(element);
-      session.savedStyles.push(saveSnapshotInlineStyle(element, 'visibility'));
-      element.style.setProperty('visibility', 'hidden', 'important');
-      changed = true;
+      hide(element);
+    }
+
+    // The clip ends at the input box, so whatever else the pinned composer
+    // shows over the conversation sits next to the input's ancestors.
+    const input = findSnapshotComposerInput(session.provider);
+    const dock = input && getSnapshotPinningNode(input, container);
+    if (dock) {
+      for (let node = input; node !== dock; node = node.parentElement) {
+        for (const sibling of node.parentElement.children) {
+          if (sibling !== node && !hidden.has(sibling) && sibling.style
+            && !(session.matchElement && sibling.contains(session.matchElement))
+            && window.getComputedStyle(sibling).display !== 'none'
+            && overlapsSnapshotClip(sibling.getBoundingClientRect(), clip)) {
+            hide(sibling);
+          }
+        }
+      }
     }
     return changed;
   }
@@ -4025,6 +4065,7 @@
       container,
       matched: Boolean(matchElement),
       matchElement,
+      provider,
       originalScrollTop: getSnapshotScrollTop(container),
       clip: getSnapshotClip(container, provider),
       stitch: Boolean(data.stitch),

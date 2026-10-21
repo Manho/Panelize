@@ -3,7 +3,8 @@
  * for "Full answers" snapshots. It is laid out like ChatGPT: the
  * conversation scrolls in its own container under a sticky header, and the
  * composer floats over the bottom of it, with a "Scroll to bottom" button
- * floating over the middle of the conversation. Every part has a solid color, so a
+ * floating over the middle of the conversation and, optionally, a notice
+ * stacked on the composer. Every part has a solid color, so a
  * column of the stitched image tells which parts were captured, in which
  * order and how often.
  *
@@ -13,9 +14,11 @@
  * @param {string} options.prompt - Text of the user message.
  * @param {number[][]} options.blocks - RGB color of each answer block.
  * @param {number} [options.blockHeight] - Height of each answer block.
+ * @param {boolean} [options.notice] - Show a text notice right above the
+ *   composer, like Claude's "You've used 90% of your session limit".
  * @returns {string} HTML document.
  */
-export function renderConversationFixture({ prompt, blocks, blockHeight = CONVERSATION_COLORS.blockHeight }) {
+export function renderConversationFixture({ prompt, blocks, blockHeight = CONVERSATION_COLORS.blockHeight, notice = false }) {
   const rgb = (color) => `rgb(${color.join(', ')})`;
   const escape = (text) => text.replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`);
   const answer = blocks
@@ -36,6 +39,8 @@ export function renderConversationFixture({ prompt, blocks, blockHeight = CONVER
   .spacer { height: ${CONVERSATION_COLORS.composerHeight + 24}px; }
   form { position: absolute; left: 0; right: 0; bottom: 0; height: ${CONVERSATION_COLORS.composerHeight}px; margin: 0; background: ${rgb(CONVERSATION_COLORS.composer)}; }
   [data-composer-markdown] { height: 40px; margin: 12px; background: white; }
+  .notice { position: absolute; left: 0; right: 0; bottom: 100%; height: ${CONVERSATION_COLORS.noticeHeight}px; background: ${rgb(CONVERSATION_COLORS.notice)}; font: 14px/${CONVERSATION_COLORS.noticeHeight}px sans-serif; }
+  .notice span { margin-left: 120px; color: white; }
   #scroll-down { position: absolute; top: 45%; left: 16px; width: ${CONVERSATION_COLORS.floatingSize}px; height: ${CONVERSATION_COLORS.floatingSize}px; padding: 0; border: 0; border-radius: 50%; background: ${rgb(CONVERSATION_COLORS.floating)}; }
 </style>
 </head>
@@ -48,6 +53,7 @@ export function renderConversationFixture({ prompt, blocks, blockHeight = CONVER
     <div class="spacer"></div>
   </div>
   <form data-type="unified-composer" data-chatgpt-composer data-composer-placement="thread">
+    ${notice ? '<div class="notice"><span>You\'ve used 90% of your session limit</span></div>' : ''}
     <div data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror" aria-label="Chat with ChatGPT"></div>
     <button type="submit" aria-label="Send">Send</button>
   </form>
@@ -68,8 +74,10 @@ export const CONVERSATION_COLORS = Object.freeze({
   earlier: [150, 150, 150],
   user: [60, 60, 60],
   floating: [255, 0, 255],
+  notice: [0, 160, 0],
   headerHeight: 48,
   composerHeight: 80,
   blockHeight: 300,
   floatingSize: 36,
+  noticeHeight: 40,
 });
