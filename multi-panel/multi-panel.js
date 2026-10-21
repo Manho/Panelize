@@ -1914,7 +1914,14 @@ let currentSnapshot = null;
 let isCapturingSnapshot = false;
 // Captures behind the open dialog, by mode; title edits re-compose these.
 const snapshotCaptures = new Map();
-let snapshotMode = SNAPSHOT_MODES.CURRENT;
+let snapshotMode = SNAPSHOT_MODES.FULL;
+// Mode the dialog opens in: the last one picked, kept across sessions.
+let preferredSnapshotMode = SNAPSHOT_MODES.FULL;
+let preferredSnapshotModePromise = null;
+let isPreferredSnapshotModeChosen = false;
+const SNAPSHOT_MODE_STORAGE_KEY = 'shareSnapshotMode';
+// Tab sharing from an earlier snapshot, kept so Chrome asks only once.
+let keptSnapshotSource = null;
 let snapshotAbortController = null;
 let snapshotRenderTimer = null;
 let snapshotRenderSequence = 0;
@@ -1934,6 +1941,91 @@ function rememberSnapshotPrompt(text) {
 
 function getSnapshotPrompt() {
   return lastSnapshotPrompt || document.getElementById('unified-input')?.value || '';
+}
+
+/** Resolves with the mode picked last, read from storage the first time. */
+function loadPreferredSnapshotMode() {
+  if (!preferredSnapshotModePromise) {
+    preferredSnapshotModePromise = chrome.storage.local.get(SNAPSHOT_MODE_STORAGE_KEY)
+      .then(result => {
+        const mode = result?.[SNAPSHOT_MODE_STORAGE_KEY];
+        // A mode picked on this page meanwhile wins over the stored one.
+        if (!isPreferredSnapshotModeChosen && Object.values(SNAPSHOT_MODES).includes(mode)) {
+          preferredSnapshotMode = mode;
+        }
+      })
+      .catch(error => {
+        console.warn('[Multi-Panel] Failed to load the snapshot mode:', error);
+      });
+  }
+  return preferredSnapshotModePromise.then(() => preferredSnapshotMode);
+}
+
+function savePreferredSnapshotMode(mode) {
+  isPreferredSnapshotModeChosen = true;
+  if (mode === preferredSnapshotMode) return;
+  preferredSnapshotMode = mode;
+  chrome.storage.local.set({ [SNAPSHOT_MODE_STORAGE_KEY]: mode }).catch(error => {
+    console.warn('[Multi-Panel] Failed to save the snapshot mode:', error);
+  });
+}
+
+function updateShareStreamStatus() {
+  const status = document.getElementById('share-stream-status');
+  if (status) status.hidden = !keptSnapshotSource?.isActive();
+}
+
+/** Sharing ended: from Stop, Chrome's own bar, or the shared tab going away. */
+function handleSnapshotSharingEnded() {
+  if (keptSnapshotSource && !keptSnapshotSource.isActive()) {
+    keptSnapshotSource = null;
+  }
+  updateShareStreamStatus();
+}
+
+function stopSnapshotSharing() {
+  keptSnapshotSource?.close();
+  keptSnapshotSource = null;
+  updateShareStreamStatus();
+}
+
+/**
+ * Silent capture when this tab has the activeTab grant; otherwise the kept
+ * tab sharing, or a new one that is then kept.
+ */
+async function openSnapshotSource() {
+  const opened = await openTabCaptureSource({
+    keptSource: keptSnapshotSource,
+    onEnded: handleSnapshotSharingEnded
+  });
+  if (opened.source.kind === TAB_CAPTURE_KINDS.DISPLAY_MEDIA) {
+    keptSnapshotSource = opened.source;
+  } else if (keptSnapshotSource) {
+    // The grant lasts for the life of the page: sharing is no longer needed.
+    stopSnapshotSharing();
+  }
+  updateShareStreamStatus();
+  return opened;
+}
+
+function isStaleSnapshotSourceError(error) {
+  return error instanceof TabCaptureError
+    && (error.code === TAB_CAPTURE_ERRORS.ENDED || error.code === TAB_CAPTURE_ERRORS.WRONG_SURFACE);
+}
+
+/** Opens the capture source and gets it ready for a run. */
+async function startSnapshotSource() {
+  let opened = await openSnapshotSource();
+  if (!opened.reused) return opened;
+  try {
+    await opened.source.start();
+  } catch (error) {
+    if (!isStaleSnapshotSourceError(error)) throw error;
+    // Sharing ended since the last snapshot: ask again.
+    stopSnapshotSharing();
+    opened = await openSnapshotSource();
+  }
+  return opened;
 }
 
 function getCurrentTabId() {
@@ -2163,6 +2255,7 @@ function releaseCurrentSnapshot() {
 function openShareModal() {
   document.getElementById('share-modal').style.display = 'flex';
   updateShareModeButtons();
+  updateShareStreamStatus();
 }
 
 /** Focus for the dialog once its buttons are enabled again. */
@@ -2188,7 +2281,7 @@ function closeShareModal() {
   releaseCurrentSnapshot();
   clearSnapshotCaptures();
   snapshotHint = '';
-  snapshotMode = SNAPSHOT_MODES.CURRENT;
+  snapshotMode = preferredSnapshotMode;
 }
 
 function getCaptureErrorMessage(error) {
@@ -2221,9 +2314,11 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
   setSnapshotBusy(true);
   let source = null;
   try {
-    const opened = await openTabCaptureSource();
+    const opened = await startSnapshotSource();
     source = opened.source;
     await updateSnapshotHint(opened);
+    const hideCursor = source.kind === TAB_CAPTURE_KINDS.DISPLAY_MEDIA;
+    document.documentElement.classList.toggle('snapshot-hide-cursor', hideCursor);
 
     const theme = getSnapshotTheme();
     const showWatermark = (await getSetting('shareWatermarkEnabled')) !== false;
@@ -2233,6 +2328,7 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
       grid,
       panels: getSnapshotPanels(),
       prompt: getSnapshotPrompt(),
+      hideCursor,
       signal: controller.signal,
       onProgress: updateSnapshotProgress
     };
@@ -2251,9 +2347,11 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
         })
       })
       : await captureCurrentView(options);
+    console.info('[Multi-Panel] Snapshot alignment:', JSON.stringify(result.alignment));
 
     setSnapshotCapture(mode, { ...result, theme, showWatermark, date: new Date() }, { replaceAll: refresh || !wasOpen });
     snapshotMode = mode;
+    savePreferredSnapshotMode(mode);
     if (!wasOpen) {
       document.getElementById('share-title-input').value = normalizePromptText(getSnapshotPrompt());
     }
@@ -2267,7 +2365,14 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
     }
     showToast(getCaptureErrorMessage(error));
   } finally {
-    source?.close();
+    document.documentElement.classList.remove('snapshot-hide-cursor');
+    if (source && source === keptSnapshotSource) {
+      // Paused until the next snapshot.
+      source.stop().catch(error => console.warn('[Multi-Panel] Failed to pause tab sharing:', error));
+    } else {
+      source?.close();
+    }
+    updateShareStreamStatus();
     snapshotAbortController = null;
     isCapturingSnapshot = false;
     setSnapshotBusy(false);
@@ -2280,8 +2385,8 @@ function cancelSnapshotCapture() {
   snapshotAbortController?.abort();
 }
 
-function shareComparisonSnapshot() {
-  return captureSnapshot(SNAPSHOT_MODES.CURRENT, { refresh: true });
+async function shareComparisonSnapshot() {
+  return captureSnapshot(await loadPreferredSnapshotMode(), { refresh: true });
 }
 
 function selectSnapshotMode(mode) {
@@ -2289,6 +2394,7 @@ function selectSnapshotMode(mode) {
   if (snapshotCaptures.has(mode)) {
     if (mode !== snapshotMode) {
       snapshotMode = mode;
+      savePreferredSnapshotMode(mode);
       updateShareModeButtons();
       renderSnapshot().catch(error => console.warn('[Multi-Panel] Failed to show the snapshot:', error));
     }
@@ -2302,7 +2408,7 @@ async function handleShareSnapshotRequest(payload = {}) {
   if (payload.tabId !== await getCurrentTabId() || isCapturingSnapshot) {
     return;
   }
-  captureSnapshot(isShareModalOpen() ? snapshotMode : SNAPSHOT_MODES.CURRENT, { refresh: true });
+  captureSnapshot(isShareModalOpen() ? snapshotMode : await loadPreferredSnapshotMode(), { refresh: true });
 }
 
 function downloadCurrentSnapshot() {
@@ -2333,6 +2439,12 @@ function setupShareSnapshot() {
   document.getElementById('share-download-btn')?.addEventListener('click', downloadCurrentSnapshot);
   document.getElementById('share-copy-btn')?.addEventListener('click', copyCurrentSnapshot);
   document.getElementById('snapshot-cancel-btn')?.addEventListener('click', cancelSnapshotCapture);
+  document.getElementById('share-stream-stop')?.addEventListener('click', () => {
+    stopSnapshotSharing();
+    document.getElementById('share-copy-btn')?.focus();
+  });
+  // Tab sharing ends with the page.
+  window.addEventListener('pagehide', stopSnapshotSharing);
   document.getElementById('share-title-input')?.addEventListener('input', scheduleSnapshotRender);
   document.querySelectorAll('.share-mode-btn').forEach(button => {
     button.addEventListener('click', () => selectSnapshotMode(button.dataset.mode));
@@ -2350,6 +2462,9 @@ function setupShareSnapshot() {
   });
   // Resolve early so the first shortcut press is matched without delay.
   getCurrentTabId();
+  loadPreferredSnapshotMode().then(mode => {
+    if (!isShareModalOpen()) snapshotMode = mode;
+  });
 }
 
 // ===== Image Management =====

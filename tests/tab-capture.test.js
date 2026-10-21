@@ -1,15 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  IDLE_CAPTURE_FRAME_RATE,
   MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND,
   TAB_CAPTURE_ERRORS,
   TAB_CAPTURE_KINDS,
   TabCaptureError,
   VISIBLE_TAB_CAPTURE_INTERVAL_MS,
   createCallThrottle,
+  createDisplayMediaSource,
   createVisibleTabSource,
   dataUrlToBlob,
   isCapturePermissionError,
-  isCaptureQuotaError
+  isCaptureQuotaError,
+  openTabCaptureSource
 } from '../modules/tab-capture.js';
 
 // Chrome's error messages; the permission one was observed in Chrome for Testing 151.
@@ -127,5 +130,169 @@ describe('createVisibleTabSource', () => {
 
   it('is unsupported without the tabs API', () => {
     expect(() => createVisibleTabSource({ tabs: {} })).toThrow(TabCaptureError);
+  });
+});
+
+describe('tab sharing kept between snapshots', () => {
+  let calls;
+  let tracks;
+  let capturedHandle;
+  const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+  const originalSrcObject = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+
+  /** A browser-tab track as Chrome hands it out; end() is Chrome's "Stop sharing". */
+  function createTrack() {
+    const track = new EventTarget();
+    track.readyState = 'live';
+    track.stop = vi.fn(() => { track.readyState = 'ended'; });
+    track.getSettings = () => ({ displaySurface: 'browser', frameRate: 30 });
+    track.getCaptureHandle = () => ({ handle: capturedHandle });
+    track.applyConstraints = vi.fn(async () => {});
+    track.end = () => {
+      track.readyState = 'ended';
+      track.dispatchEvent(new Event('ended'));
+    };
+    return track;
+  }
+
+  beforeEach(() => {
+    calls = [];
+    tracks = [];
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        setCaptureHandleConfig: ({ handle }) => { capturedHandle = handle; },
+        getDisplayMedia: vi.fn(async (constraints) => {
+          calls.push(constraints);
+          const track = createTrack();
+          tracks.push(track);
+          return { getTracks: () => [track], getVideoTracks: () => [track] };
+        })
+      }
+    });
+    // happy-dom only takes its own MediaStream.
+    Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+      configurable: true,
+      get() { return this.testSrcObject ?? null; },
+      set(value) { this.testSrcObject = value; }
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async function play() {
+      Object.defineProperty(this, 'paused', { configurable: true, value: false });
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(function pause() {
+      Object.defineProperty(this, 'paused', { configurable: true, value: true });
+    });
+    HTMLVideoElement.prototype.requestVideoFrameCallback = function requestVideoFrameCallback(callback) {
+      queueMicrotask(() => callback(0, {}));
+      return 1;
+    };
+    globalThis.createImageBitmap = vi.fn(async (video) => ({ width: 1280, height: 800, video }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete HTMLVideoElement.prototype.requestVideoFrameCallback;
+    if (originalSrcObject) {
+      Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', originalSrcObject);
+    }
+    globalThis.createImageBitmap = originalCreateImageBitmap;
+    if (originalMediaDevices) {
+      Object.defineProperty(navigator, 'mediaDevices', originalMediaDevices);
+    } else {
+      delete navigator.mediaDevices;
+    }
+  });
+
+  it('asks for this tab without the pointer', async () => {
+    const source = await createDisplayMediaSource();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].video).toEqual({ displaySurface: 'browser', cursor: 'never' });
+    expect(calls[0].preferCurrentTab).toBe(true);
+    expect(source.kind).toBe(TAB_CAPTURE_KINDS.DISPLAY_MEDIA);
+    source.close();
+  });
+
+  it('reuses the kept stream for the next snapshot, paused and slowed down in between', async () => {
+    const first = await openTabCaptureSource({ preferVisibleTab: false });
+    expect(first.reused).toBe(false);
+    const { source } = first;
+    const bitmap = await source.grab();
+    expect(bitmap.video.srcObject).toBeTruthy();
+
+    await source.stop();
+    expect(bitmap.video.paused).toBe(true);
+    expect(tracks[0].applyConstraints).toHaveBeenLastCalledWith({ frameRate: IDLE_CAPTURE_FRAME_RATE });
+    expect(tracks[0].stop).not.toHaveBeenCalled();
+
+    const second = await openTabCaptureSource({ preferVisibleTab: false, keptSource: source });
+    expect(second).toMatchObject({ source, reused: true });
+    expect(navigator.mediaDevices.getDisplayMedia).toHaveBeenCalledTimes(1);
+
+    await source.start();
+    expect(bitmap.video.paused).toBe(false);
+    expect(tracks[0].applyConstraints).toHaveBeenLastCalledWith({ frameRate: 30 });
+    await expect(source.grab()).resolves.toMatchObject({ width: 1280 });
+    source.close();
+  });
+
+  it('asks again once sharing was stopped from Chrome', async () => {
+    const onEnded = vi.fn();
+    const { source } = await openTabCaptureSource({ preferVisibleTab: false, onEnded });
+
+    tracks[0].end();
+
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    expect(source.isActive()).toBe(false);
+    const error = await source.start().catch((caught) => caught);
+    expect(error).toBeInstanceOf(TabCaptureError);
+    expect(error.code).toBe(TAB_CAPTURE_ERRORS.ENDED);
+    await expect(source.grab()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.ENDED });
+
+    const next = await openTabCaptureSource({ preferVisibleTab: false, keptSource: source });
+    expect(next.reused).toBe(false);
+    expect(next.source).not.toBe(source);
+    expect(navigator.mediaDevices.getDisplayMedia).toHaveBeenCalledTimes(2);
+    next.source.close();
+  });
+
+  it('stops every track when closed, e.g. from Stop or when the page goes away, and reports it once', async () => {
+    const onEnded = vi.fn();
+    const source = await createDisplayMediaSource({ onEnded });
+
+    source.close();
+    source.close();
+
+    expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    expect(source.isActive()).toBe(false);
+    // Stopping the track itself fires no "ended" event, and none is needed.
+    tracks[0].end();
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a kept stream that no longer shows this tab', async () => {
+    const source = await createDisplayMediaSource();
+    capturedHandle = 'panelize-snapshot-another-page';
+
+    await expect(source.start()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.WRONG_SURFACE });
+    await expect(source.grab()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.WRONG_SURFACE });
+    source.close();
+  });
+
+  it('still tries the silent capture first while a stream is kept', async () => {
+    const kept = await createDisplayMediaSource();
+    const captureVisibleTab = vi.fn(async () => 'data:image/png;base64,iVBORw0KGgo=');
+    const previousTabs = chrome.tabs;
+    chrome.tabs = { captureVisibleTab };
+    try {
+      const opened = await openTabCaptureSource({ keptSource: kept });
+      expect(opened.source.kind).toBe(TAB_CAPTURE_KINDS.VISIBLE_TAB);
+      expect(opened.reused).toBe(false);
+      expect(captureVisibleTab).toHaveBeenCalledTimes(1);
+    } finally {
+      chrome.tabs = previousTabs;
+      kept.close();
+    }
   });
 });

@@ -924,6 +924,12 @@
   "shareProgressStep": {
     "message": "Снимаем экран $1 из $2…"
   },
+  "shareStreamStatus": {
+    "message": "Эта вкладка транслируется для снимков"
+  },
+  "shareStreamStop": {
+    "message": "Остановить"
+  },
   "shareProgressCancel": {
     "message": "Отмена"
   },

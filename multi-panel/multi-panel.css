@@ -1920,6 +1920,43 @@ body {
   font-size: 18px;
 }
 
+.share-stream-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #455a64;
+}
+
+.share-stream-status[hidden] {
+  display: none;
+}
+
+.share-stream-status .material-symbols-outlined {
+  font-size: 18px;
+  color: #c62828;
+}
+
+.share-stream-stop {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #1565c0;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.share-stream-stop:focus-visible {
+  outline: 2px solid #1565c0;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* Capture progress, laid over the input bar so the grid does not move. */
 .snapshot-progress {
   position: absolute;
@@ -1965,6 +2002,14 @@ body.snapshot-capturing .panelize-toast {
   visibility: hidden;
 }
 
+/* Tab sharing can draw the pointer into the frames. */
+html.snapshot-hide-cursor,
+html.snapshot-hide-cursor *,
+html.snapshot-hide-cursor *::before,
+html.snapshot-hide-cursor *::after {
+  cursor: none !important;
+}
+
 [data-theme="dark"] .share-mode-switch {
   background: #2d2d2d;
 }
@@ -1991,6 +2036,18 @@ body.snapshot-capturing .panelize-toast {
 [data-theme="dark"] .share-hint {
   background: #0d2a45;
   color: #bbdefb;
+}
+
+[data-theme="dark"] .share-stream-status {
+  color: #cfd8dc;
+}
+
+[data-theme="dark"] .share-stream-stop {
+  color: #90caf9;
+}
+
+[data-theme="dark"] .share-stream-stop:focus-visible {
+  outline-color: #90caf9;
 }
 
 [data-theme="dark"] .share-notes,

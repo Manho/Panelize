@@ -76,12 +76,13 @@ const PROVIDER_ORIGINS = {
 /**
  * Opens panels showing long conversations.
  * @param {object} extension
- * @param {{provider: string, blocks: number[][]}[]} conversations
+ * @param {({provider: string} & object)[]} conversations - Provider and
+ *   renderConversationFixture options.
  * @param {string} layout
  */
 async function openConversationPanels(extension, conversations, layout = '1x1') {
-  for (const { provider, blocks, notice } of conversations) {
-    const body = renderConversationFixture({ prompt: CONVERSATION_PROMPT, blocks, notice });
+  for (const { provider, ...fixture } of conversations) {
+    const body = renderConversationFixture({ prompt: CONVERSATION_PROMPT, ...fixture });
     await extension.context.route(`${PROVIDER_ORIGINS[provider]}/**`, route => route.fulfill({
       contentType: 'text/html', body,
     }));
@@ -105,6 +106,18 @@ function getThreadScrollTops(page) {
       const thread = document.getElementById('thread');
       return thread ? { top: thread.scrollTop, max: thread.scrollHeight - thread.clientHeight } : null;
     })));
+}
+
+/** Scroll positions once the layout stops moving, e.g. after the input grew. */
+async function getSettledThreadScrollTops(page) {
+  let last = null;
+  await expect.poll(async () => {
+    const now = JSON.stringify(await getThreadScrollTops(page));
+    const settled = now === last;
+    last = now;
+    return settled;
+  }, { intervals: [250] }).toBe(true);
+  return JSON.parse(last);
 }
 
 async function sendAll(page, text) {
@@ -229,6 +242,10 @@ const CONVERSATION_PALETTE = {
   user: CONVERSATION_COLORS.user,
   floating: CONVERSATION_COLORS.floating,
   notice: CONVERSATION_COLORS.notice,
+  heading: CONVERSATION_COLORS.heading,
+  tableHeader: CONVERSATION_COLORS.tableHeader,
+  tableRow: CONVERSATION_COLORS.tableRow,
+  fade: CONVERSATION_COLORS.fade,
   ...Object.fromEntries(BLOCK_COLORS.map((color, index) => [`block${index}`, color])),
 };
 
@@ -309,10 +326,22 @@ test('Share falls back to tab sharing with a shortcut hint, then copies and down
     await expect(page.locator('#share-capture-hint-text')).toHaveText(await getExpectedHint(extension));
     await expect(page.locator('#share-capture-hint')).toBeVisible();
     expect(await page.evaluate(flag => sessionStorage.getItem(flag), VISIBLE_TAB_FLAG)).toBeNull();
-    await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    // Full answers is the default; the shared tab is kept for the next snapshot.
+    await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#share-stream-status')).toBeVisible();
+    await expect(page.locator('#share-stream-status')).toContainText('Sharing this tab for snapshots');
+    await expect(page.locator('#share-stream-stop')).toHaveText('Stop');
     await expect(page.locator('#share-title-input')).toHaveValue('Which answer explains snapshots best?');
     await expect(page.locator('#share-snapshot-btn')).toBeEnabled();
     await page.screenshot({ path: testInfo.outputPath('share-modal.png') });
+    // The pointer is shown again once the capture is done.
+    expect(await page.evaluate(() => document.documentElement.classList.contains('snapshot-hide-cursor'))).toBe(false);
+
+    // The current view comes from the same shared tab, without asking again.
+    await page.locator('.share-mode-btn[data-mode="current"]').click();
+    await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#snapshot-progress')).toBeHidden();
+    expect(await getDisplayMediaCalls(page)).toBe(1);
 
     // Layout A: brand row, "PROMPT" label, one headline line, the capture.
     const preview = await inspectPreview(page);
@@ -487,6 +516,14 @@ test('the toolbar icon on the Panelize tab captures silently and the hint never 
     await expect(page.locator('#share-capture-hint')).toBeHidden();
     expect(await page.evaluate(flag => sessionStorage.getItem(flag), VISIBLE_TAB_FLAG)).toBe('1');
     await page.screenshot({ path: testInfo.outputPath('share-modal-visible-tab.png') });
+    // Full answers is the default.
+    await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#share-stream-status')).toBeHidden();
+
+    await page.locator('.share-mode-btn[data-mode="current"]').click();
+    await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#snapshot-progress')).toBeHidden();
+    expect(await getDisplayMediaCalls(page)).toBe(0);
 
     // Current view: the user message sits right under the provider header.
     const preview = await inspectPreview(page);
@@ -497,19 +534,27 @@ test('the toolbar icon on the Panelize tab captures silently and the hint never 
     const header = names.indexOf('header');
     expect(names.slice(header, header + 3)).toEqual(['header', 'page', 'user']);
     expect(Math.abs(runs[header + 1].length - 16 * scale)).toBeLessThanOrEqual(3 * scale);
-    // What is on screen, the composer and the floating button included.
+    // What is on screen with the composer, but without the floating button.
     expect(names).toContain('composer');
-    expect(names.filter(name => name === 'floating')).toHaveLength(1);
-    // The conversation is scrolled back once the capture is done.
+    expect(names).not.toContain('floating');
+    // The conversation is scrolled back once the capture is done, and the
+    // button shows again.
     expect(await getThreadScrollTops(page)).toEqual([before]);
+    expect(await page.frames().find(frame => frame.url().startsWith('https://')).evaluate(() => (
+      document.getElementById('scroll-down').style.visibility
+    ))).toBe('');
 
-    // The grant lasts for this page: the Share button stays silent too.
+    // The grant lasts for this page: the Share button stays silent too, and
+    // opens in the mode picked last.
     await page.keyboard.press('Escape');
     await expect(page.locator('#share-modal')).toBeHidden();
     await page.locator('#share-snapshot-btn').click();
     await expect(page.locator('#share-modal')).toBeVisible();
     expect(await getDisplayMediaCalls(page)).toBe(0);
     await expect(page.locator('#share-capture-hint')).toBeHidden();
+    await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    expect(await page.evaluate(() => chrome.storage.local.get('shareSnapshotMode')))
+      .toEqual({ shareSnapshotMode: 'current' });
     expect(consoleErrors).toEqual([]);
   } finally {
     await extension.close();
@@ -533,13 +578,8 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
     });
     const before = await getThreadScrollTops(page);
 
+    // Full answers is the default.
     await clickToolbarIcon(extension, page);
-    await expect(page.locator('#share-modal')).toBeVisible();
-    const current = await inspectPreview(page);
-    // The notice on the composer is part of what is on screen.
-    expect((await readConversationRuns(page, current, 0)).filter(run => run.name === 'notice')).toHaveLength(1);
-
-    await page.locator('.share-mode-btn[data-mode="full"]').click();
     await expect(page.locator('#snapshot-progress')).toBeVisible();
     await expect(page.locator('#snapshot-progress-text')).toHaveText(/Capturing screen \d+ of \d+/);
     await expect(page.locator('.share-mode-btn[data-mode="current"]')).toBeDisabled();
@@ -547,9 +587,7 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
     await expect(page.locator('#share-modal')).toBeVisible();
     await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#share-capture-notes')).toBeHidden();
-    const full = await waitForNewPreview(page, current.src);
-    expect(full.width).toBe(current.width);
-    expect(full.height).toBeGreaterThan(current.height + 1000);
+    const full = await inspectPreview(page);
     expect(full.height).toBeLessThanOrEqual(SNAPSHOT_MAX_OUTPUT_HEIGHT);
     await page.screenshot({ path: testInfo.outputPath('share-modal-full.png') });
     await page.locator('#share-preview').screenshot({ path: testInfo.outputPath('share-preview-full.png') });
@@ -588,12 +626,153 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
     }
     await expect(page.frameLocator('#panel-grid iframe').first().locator('.notice')).toBeVisible();
 
-    // The current view is kept; switching back does not capture again.
+    // The current view leaves floating buttons and notices out too.
     await page.locator('.share-mode-btn[data-mode="current"]').click();
     await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    const current = await waitForNewPreview(page, full.src);
+    expect(full.width).toBe(current.width);
+    expect(full.height).toBeGreaterThan(current.height + 1000);
+    for (const index of [0, 1]) {
+      const names = (await readConversationRuns(page, current, index)).map(run => run.name);
+      expect(names, `panel ${index}`).toContain('composer');
+      expect(names, `panel ${index}`).not.toContain('floating');
+      expect(names, `panel ${index}`).not.toContain('notice');
+    }
+    await expect(page.frameLocator('#panel-grid iframe').first().locator('.notice')).toBeVisible();
+
+    // Full answers is kept; switching back does not capture again.
+    await page.locator('.share-mode-btn[data-mode="full"]').click();
+    await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#snapshot-progress')).toBeHidden();
-    await expect.poll(() => pollPreviewHeight(page)).toBe(current.height);
+    await expect.poll(() => pollPreviewHeight(page)).toBe(full.height);
     expect(consoleErrors).toEqual([]);
+  } finally {
+    await extension.close();
+  }
+});
+
+/** Switches the open dialog to Full answers, unless it shows it already. */
+async function showFullAnswers(page) {
+  const full = page.locator('.share-mode-btn[data-mode="full"]');
+  if (await full.getAttribute('aria-checked') !== 'true') {
+    await full.click();
+  }
+  await expect(full).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+  return inspectPreview(page);
+}
+
+test('Full answers un-sticks headings and table headers and leaves fades out of every screen', async ({}, testInfo) => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const blocks = BLOCK_COLORS.slice(0, 5);
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks, stickyHeading: true, wideTable: true, fade: true },
+    ]);
+    const before = await getThreadScrollTops(page);
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const full = await showFullAnswers(page);
+    await page.locator('#share-preview').screenshot({ path: testInfo.outputPath('share-preview-sticky-fade.png') });
+
+    const scale = getPreviewScale(full);
+    const runs = await readConversationRuns(page, full, 0, { hasNote: false });
+    const names = runs.map(run => run.name);
+    const expectHeight = (name, height) => {
+      const matching = runs.filter(run => run.name === name);
+      expect(matching, name).toHaveLength(1);
+      expect(Math.abs(matching[0].length - height * scale), name).toBeLessThanOrEqual(3 * scale);
+    };
+    // Each part once, at its place in the conversation, at its own height.
+    expect(names.filter(name => name !== 'page' && name !== 'other')).toEqual([
+      'header', 'user', 'block0', 'heading', 'block1', 'tableHeader', 'tableRow', 'block2', 'block3', 'block4',
+    ]);
+    expectHeight('heading', CONVERSATION_COLORS.headingHeight);
+    expectHeight('tableHeader', CONVERSATION_COLORS.tableHeaderHeight);
+    expectHeight('tableRow', CONVERSATION_COLORS.tableRowHeight * CONVERSATION_COLORS.tableRows);
+    // Neither the heading's shadow nor the composer's fade covers a block.
+    runs.filter(run => run.name.startsWith('block')).forEach(run => {
+      expect(Math.abs(run.length - CONVERSATION_COLORS.blockHeight * scale), run.name).toBeLessThanOrEqual(3 * scale);
+    });
+    expect(names).not.toContain('fade');
+
+    // Everything is back as it was.
+    expect(await getThreadScrollTops(page)).toEqual(before);
+    const styles = await page.frames().find(frame => frame.url().startsWith('https://chatgpt.com')).evaluate(() => ({
+      heading: getComputedStyle(document.querySelector('.sticky-heading')).position,
+      th: getComputedStyle(document.querySelector('th')).position,
+      fade: getComputedStyle(document.querySelector('form'), '::before').visibility,
+      marked: document.querySelectorAll('[data-panelize-snapshot-hide]').length,
+    }));
+    expect(styles).toEqual({ heading: 'sticky', th: 'sticky', fade: 'visible', marked: 0 });
+  } finally {
+    await extension.close();
+  }
+});
+
+test('Full answers starts at the latest user message, or at the top, when the prompt is not found', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: BLOCK_COLORS.slice(0, 2), userRole: true },
+      { provider: 'deepseek', blocks: BLOCK_COLORS.slice(2, 4) },
+    ], '1x2');
+    // A prompt neither page shows, e.g. one typed into a provider directly.
+    await page.locator('#unified-input').fill('A prompt that was never sent');
+    const before = await getSettledThreadScrollTops(page);
+    expect(before.every(({ top, max }) => top === max)).toBe(true);
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const full = await showFullAnswers(page);
+
+    const contentNames = async (index) => (await readConversationRuns(page, full, index, { hasNote: false }))
+      .map(run => run.name)
+      .filter(name => name !== 'page' && name !== 'other');
+    // ChatGPT marks the user message: it starts there.
+    expect(await contentNames(0)).toEqual(['header', 'user', 'block0', 'block1']);
+    // Nothing to go by: it starts at the top, not where it was scrolled.
+    expect(await contentNames(1)).toEqual(['header', 'earlier', 'user', 'block2', 'block3']);
+    expect(await getThreadScrollTops(page)).toEqual(before);
+  } finally {
+    await extension.close();
+  }
+});
+
+test('Full answers keeps a panel whose page does not answer as on screen and says so', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    // DeepSeek fails to load: Chrome's error page does not answer.
+    await extension.context.route(`${PROVIDER_ORIGINS.deepseek}/**`, route => route.abort('connectionrefused'));
+    const body = renderConversationFixture({ prompt: CONVERSATION_PROMPT, blocks: BLOCK_COLORS.slice(0, 2) });
+    await extension.context.route(`${PROVIDER_ORIGINS.chatgpt}/**`, route => route.fulfill({
+      contentType: 'text/html', body,
+    }));
+    const page = await openMultiPanel(extension, { providers: ['chatgpt', 'deepseek'], layout: '1x2' });
+    await expect(page.frameLocator('#panel-grid iframe').nth(0).locator('.user')).toBeVisible();
+    await expect.poll(() => page.frames().some(frame => frame.url().startsWith('chrome-error://'))).toBe(true);
+    await page.locator('#unified-input').fill(CONVERSATION_PROMPT);
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#share-capture-notes')).toBeVisible();
+    await expect(page.locator('#share-capture-notes')).toHaveText('Current view only: DeepSeek');
   } finally {
     await extension.close();
   }
@@ -613,27 +792,32 @@ test('Full answers over one tab-sharing stream truncates long answers with a not
     const before = await getThreadScrollTops(page);
 
     await page.locator('#share-snapshot-btn').click();
-    await expect(page.locator('#share-modal')).toBeVisible();
-    const current = await inspectPreview(page);
-    await page.locator('.share-mode-btn[data-mode="full"]').click();
     await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 90_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
     // One shared stream for the whole run.
-    expect(await getDisplayMediaCalls(page)).toBe(2);
+    expect(await getDisplayMediaCalls(page)).toBe(1);
     const notes = page.locator('#share-capture-notes');
     await expect(notes).toBeVisible();
     await expect(notes).toHaveText(/^Long answers truncated — showing the first \d+ screens$/);
-    const full = await waitForNewPreview(page, current.src);
+    const full = await inspectPreview(page);
     expect(full.height).toBeLessThanOrEqual(SNAPSHOT_MAX_OUTPUT_HEIGHT);
     expect(full.height).toBeGreaterThan(SNAPSHOT_MAX_OUTPUT_HEIGHT - 400);
     await page.locator('#share-preview').screenshot({ path: testInfo.outputPath('share-preview-truncated.png') });
     expect(await getThreadScrollTops(page)).toEqual(before);
 
-    // Cancel a new run halfway: the dialog keeps the current view.
+    // The current view, then a second Share: Chrome asked only once.
     await page.locator('.share-mode-btn[data-mode="current"]').click();
+    await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#snapshot-progress')).toBeHidden();
     await page.keyboard.press('Escape');
     await expect(page.locator('#share-modal')).toBeHidden();
     await page.locator('#share-snapshot-btn').click();
     await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
+    expect(await getDisplayMediaCalls(page)).toBe(1);
+
+    // Cancel a new run halfway: the dialog keeps the current view.
     await page.locator('.share-mode-btn[data-mode="full"]').click();
     await expect(page.locator('#snapshot-progress-text')).toHaveText(/Capturing screen [3-9] of/);
     await page.locator('#snapshot-cancel-btn').click();
@@ -643,6 +827,99 @@ test('Full answers over one tab-sharing stream truncates long answers with a not
     await expect(page.locator('.share-mode-btn[data-mode="current"]')).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('.share-mode-btn[data-mode="full"]')).toBeEnabled();
     await expect.poll(() => getThreadScrollTops(page)).toEqual(before);
+  } finally {
+    await extension.close();
+  }
+});
+
+/**
+ * Replaces the browser's screen capture with a stream that passes as this
+ * tab, so tests can follow its life. window.__fakeTracks lists the tracks.
+ */
+function fakeDisplayMedia(page) {
+  return page.evaluate(() => {
+    let handle = null;
+    const setCaptureHandleConfig = navigator.mediaDevices.setCaptureHandleConfig.bind(navigator.mediaDevices);
+    navigator.mediaDevices.setCaptureHandleConfig = (config) => {
+      handle = config.handle;
+      setCaptureHandleConfig(config);
+    };
+    window.__fakeTracks = [];
+    window.__displayMediaCalls = 0;
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      window.__displayMediaCalls += 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const context = canvas.getContext('2d');
+      const stream = canvas.captureStream(30);
+      const [track] = stream.getVideoTracks();
+      track.getSettings = () => ({ displaySurface: 'browser', frameRate: 30 });
+      track.getCaptureHandle = () => ({ handle });
+      const draw = () => {
+        if (track.readyState !== 'live') return;
+        context.fillStyle = `hsl(${Date.now() % 360}, 50%, 90%)`;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        requestAnimationFrame(draw);
+      };
+      draw();
+      window.__fakeTracks.push(track);
+      return stream;
+    };
+  });
+}
+
+const getFakeTrackStates = page => page.evaluate(() => window.__fakeTracks.map(track => track.readyState));
+
+test('the shared tab serves later snapshots until Stop, Chrome or leaving the page ends it', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+  try {
+    const page = await openConversationPanels(extension, [{ provider: 'chatgpt', blocks: BLOCK_COLORS.slice(0, 2) }]);
+    await fakeDisplayMedia(page);
+    const modal = page.locator('#share-modal');
+    const status = page.locator('#share-stream-status');
+    const share = async () => {
+      await page.locator('#share-snapshot-btn').click();
+      await expect(modal).toBeVisible({ timeout: 60_000 });
+    };
+    const close = async () => {
+      await page.keyboard.press('Escape');
+      await expect(modal).toBeHidden();
+    };
+
+    // Two shares, one request.
+    await share();
+    await expect(status).toBeVisible();
+    await close();
+    await share();
+    expect(await getDisplayMediaCalls(page)).toBe(1);
+    expect(await getFakeTrackStates(page)).toEqual(['live']);
+
+    // Stop ends the sharing; the next share asks again.
+    await page.locator('#share-stream-stop').click();
+    await expect(status).toBeHidden();
+    expect(await getFakeTrackStates(page)).toEqual(['ended']);
+    await close();
+    await share();
+    expect(await getDisplayMediaCalls(page)).toBe(2);
+    await expect(status).toBeVisible();
+
+    // Chrome's "Stop sharing" bar ends the track on its own.
+    await page.evaluate(() => {
+      const track = window.__fakeTracks.at(-1);
+      track.stop();
+      track.dispatchEvent(new Event('ended'));
+    });
+    await expect(status).toBeHidden();
+    await close();
+    await share();
+    expect(await getDisplayMediaCalls(page)).toBe(3);
+
+    // Leaving the page ends it too.
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    expect(await getFakeTrackStates(page)).toEqual(['ended', 'ended', 'ended']);
+    await expect(status).toBeHidden();
   } finally {
     await extension.close();
   }

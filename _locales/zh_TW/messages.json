@@ -920,6 +920,12 @@
   "shareProgressStep": {
     "message": "正在擷取第 $1 個畫面，共 $2 個…"
   },
+  "shareStreamStatus": {
+    "message": "正在分享此分頁，用於截圖"
+  },
+  "shareStreamStop": {
+    "message": "停止"
+  },
   "shareProgressCancel": {
     "message": "取消"
   },

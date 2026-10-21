@@ -920,6 +920,12 @@
   "shareProgressStep": {
     "message": "正在截取第 $1 屏，共 $2 屏…"
   },
+  "shareStreamStatus": {
+    "message": "正在共享此标签页，用于截图"
+  },
+  "shareStreamStop": {
+    "message": "停止"
+  },
   "shareProgressCancel": {
     "message": "取消"
   },

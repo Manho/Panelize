@@ -924,6 +924,12 @@
   "shareProgressStep": {
     "message": "$2개 화면 중 $1번째 캡처 중…"
   },
+  "shareStreamStatus": {
+    "message": "스냅샷용으로 이 탭을 공유하는 중"
+  },
+  "shareStreamStop": {
+    "message": "중지"
+  },
   "shareProgressCancel": {
     "message": "취소"
   },

@@ -3,12 +3,15 @@
 // grant, which Chrome gives when the user invokes the extension on this page
 // (toolbar icon, its shortcut or the context menu). Without that grant the
 // Screen Capture API is used instead, and Chrome asks the user to confirm
-// sharing this tab. Frames never leave the page.
+// sharing this tab. That stream is kept for later snapshots, paused between
+// them, until the user stops sharing or the page goes away. Frames never
+// leave the page.
 
 import { getCaptureCrop } from './share-snapshot.js';
 
 export const TAB_CAPTURE_ERRORS = Object.freeze({
   CANCELLED: 'capture-cancelled',
+  ENDED: 'capture-ended',
   UNSUPPORTED: 'capture-unsupported',
   WRONG_SURFACE: 'capture-wrong-surface',
   PERMISSION: 'capture-permission'
@@ -40,6 +43,9 @@ const SETTLE_FRAMES = 2;
 
 /** Upper bound for one frame callback; capture streams can idle on static pages. */
 const FRAME_WAIT_TIMEOUT_MS = 500;
+
+/** Frame rate of a kept stream between snapshots, to keep it nearly free. */
+export const IDLE_CAPTURE_FRAME_RATE = 1;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -182,12 +188,26 @@ function assertCapturedThisTab(track, handle) {
   }
 }
 
+function setCaptureFrameRate(track, frameRate) {
+  if (!frameRate || typeof track.applyConstraints !== 'function') {
+    return Promise.resolve();
+  }
+  return track.applyConstraints({ frameRate }).catch((error) => {
+    console.warn('[TabCapture] Could not change the capture frame rate:', error);
+  });
+}
+
 /**
- * Capture through the Screen Capture API. One stream serves every frame of
- * a run; close() stops it.
- * @returns {Promise<{kind: string, grab: () => Promise<ImageBitmap>, close: () => void}>}
+ * Capture through the Screen Capture API. The stream outlives a run, so
+ * later snapshots do not ask again: start() before a run plays it at full
+ * rate, stop() after it pauses it at IDLE_CAPTURE_FRAME_RATE, close() ends
+ * it. Sharing can also end from Chrome's own "Stop sharing" bar.
+ * @param {object} [options]
+ * @param {() => void} [options.onEnded] - Sharing ended, whoever stopped it.
+ * @returns {Promise<{kind: string, isActive: () => boolean, start: () => Promise<void>,
+ *   grab: () => Promise<ImageBitmap>, stop: () => Promise<void>, close: () => void}>}
  */
-export async function createDisplayMediaSource() {
+export async function createDisplayMediaSource({ onEnded = () => {} } = {}) {
   const mediaDevices = navigator.mediaDevices;
   if (typeof mediaDevices?.getDisplayMedia !== 'function') {
     throw new TabCaptureError(TAB_CAPTURE_ERRORS.UNSUPPORTED, 'Screen capture is not available');
@@ -207,7 +227,8 @@ export async function createDisplayMediaSource() {
   let stream;
   try {
     stream = await mediaDevices.getDisplayMedia({
-      video: { displaySurface: 'browser' },
+      // The pointer would be drawn over the panels.
+      video: { displaySurface: 'browser', cursor: 'never' },
       audio: false,
       preferCurrentTab: true,
       selfBrowserSurface: 'include',
@@ -221,37 +242,74 @@ export async function createDisplayMediaSource() {
     throw error;
   }
 
+  const [track] = stream.getVideoTracks();
   const video = document.createElement('video');
-  const close = () => {
-    stream.getTracks().forEach((track) => track.stop());
+  const activeFrameRate = track.getSettings?.().frameRate;
+  let ended = false;
+  const end = () => {
+    if (ended) {
+      return;
+    }
+    ended = true;
+    stream.getTracks().forEach((streamTrack) => streamTrack.stop());
+    video.pause();
     video.srcObject = null;
+    onEnded();
   };
+  // Chrome's "Stop sharing" ends the track without calling close().
+  track.addEventListener('ended', end, { once: true });
+  const isActive = () => !ended && track.readyState === 'live';
+  const assertActive = () => {
+    if (!isActive()) {
+      throw new TabCaptureError(TAB_CAPTURE_ERRORS.ENDED, 'Tab sharing has ended');
+    }
+    // Checked on every use: the shared surface must still be this tab.
+    assertCapturedThisTab(track, handle);
+  };
+  const waitForFreshFrames = async () => {
+    for (let frame = 0; frame < SETTLE_FRAMES; frame += 1) {
+      await waitForVideoFrame(video);
+    }
+  };
+
   try {
-    const [track] = stream.getVideoTracks();
     assertCapturedThisTab(track, handle);
     video.muted = true;
     video.playsInline = true;
     video.srcObject = stream;
     await video.play();
-    for (let frame = 0; frame < SETTLE_FRAMES; frame += 1) {
-      await waitForVideoFrame(video);
-    }
+    await waitForFreshFrames();
   } catch (error) {
-    close();
+    end();
     throw error;
   }
 
   return {
     kind: TAB_CAPTURE_KINDS.DISPLAY_MEDIA,
+    isActive,
+    async start() {
+      assertActive();
+      await setCaptureFrameRate(track, activeFrameRate);
+      await video.play();
+      await waitForFreshFrames();
+    },
     async grab() {
+      assertActive();
       // A frame rendered after the latest scroll; a static page may not
-      // produce one, and then the current frame is still up to date.
-      for (let frame = 0; frame < SETTLE_FRAMES; frame += 1) {
-        await waitForVideoFrame(video);
-      }
+      // produce one, and then the current frame is still up to date. The
+      // bitmap takes the video's current size, so a resized tab is measured
+      // again on every capture.
+      await waitForFreshFrames();
       return createImageBitmap(video);
     },
-    close
+    async stop() {
+      if (!isActive()) {
+        return;
+      }
+      video.pause();
+      await setCaptureFrameRate(track, IDLE_CAPTURE_FRAME_RATE);
+    },
+    close: end
   };
 }
 
@@ -262,11 +320,19 @@ export async function createDisplayMediaSource() {
  * @param {object} [options]
  * @param {number} [options.windowId]
  * @param {boolean} [options.preferVisibleTab]
- * @returns {Promise<{source: object, fallbackReason: string | null}>}
+ * @param {object | null} [options.keptSource] - A display media source from
+ *   an earlier snapshot, used instead of asking again while it is active.
+ * @param {() => void} [options.onEnded] - For a new display media source.
+ * @returns {Promise<{source: object, fallbackReason: string | null, reused: boolean}>}
  *   fallbackReason is TAB_CAPTURE_ERRORS.PERMISSION when this tab has no
  *   activeTab grant, or UNSUPPORTED without the tabs API.
  */
-export async function openTabCaptureSource({ windowId, preferVisibleTab = true } = {}) {
+export async function openTabCaptureSource({
+  windowId,
+  preferVisibleTab = true,
+  keptSource = null,
+  onEnded
+} = {}) {
   let fallbackReason = null;
   if (preferVisibleTab) {
     try {
@@ -274,7 +340,7 @@ export async function openTabCaptureSource({ windowId, preferVisibleTab = true }
       // Probe once: the grant can only be learned by trying.
       const probe = await source.grab();
       probe.close?.();
-      return { source, fallbackReason };
+      return { source, fallbackReason, reused: false };
     } catch (error) {
       if (!(error instanceof TabCaptureError)) {
         throw error;
@@ -282,7 +348,10 @@ export async function openTabCaptureSource({ windowId, preferVisibleTab = true }
       fallbackReason = error.code;
     }
   }
-  return { source: await createDisplayMediaSource(), fallbackReason };
+  if (keptSource?.isActive()) {
+    return { source: keptSource, fallbackReason, reused: true };
+  }
+  return { source: await createDisplayMediaSource({ onEnded }), fallbackReason, reused: false };
 }
 
 /**

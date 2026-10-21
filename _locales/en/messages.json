@@ -941,6 +941,12 @@
   "shareProgressStep": {
     "message": "Capturing screen $1 of $2…"
   },
+  "shareStreamStatus": {
+    "message": "Sharing this tab for snapshots"
+  },
+  "shareStreamStop": {
+    "message": "Stop"
+  },
   "shareProgressCancel": {
     "message": "Cancel"
   },

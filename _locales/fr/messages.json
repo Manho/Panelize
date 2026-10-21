@@ -924,6 +924,12 @@
   "shareProgressStep": {
     "message": "Capture de l'écran $1 sur $2…"
   },
+  "shareStreamStatus": {
+    "message": "Cet onglet est partagé pour les captures"
+  },
+  "shareStreamStop": {
+    "message": "Arrêter"
+  },
   "shareProgressCancel": {
     "message": "Annuler"
   },

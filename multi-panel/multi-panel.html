@@ -395,8 +395,8 @@
         <div class="modal-body share-modal-body">
           <div class="share-controls">
             <div class="share-mode-switch" role="radiogroup" data-i18n-aria="shareModeLabel" aria-label="Snapshot area">
-              <button type="button" class="share-mode-btn" role="radio" aria-checked="true" data-mode="current" data-i18n="shareModeCurrent">Current view</button>
-              <button type="button" class="share-mode-btn" role="radio" aria-checked="false" data-mode="full" data-i18n="shareModeFull">Full answers</button>
+              <button type="button" class="share-mode-btn" role="radio" aria-checked="false" data-mode="current" data-i18n="shareModeCurrent">Current view</button>
+              <button type="button" class="share-mode-btn" role="radio" aria-checked="true" data-mode="full" data-i18n="shareModeFull">Full answers</button>
             </div>
             <label class="share-title-field">
               <span data-i18n="shareTitleLabel">Title</span>
@@ -406,6 +406,12 @@
           <p id="share-capture-hint" class="share-hint" hidden>
             <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
             <span id="share-capture-hint-text"></span>
+          </p>
+          <p id="share-stream-status" class="share-stream-status" hidden>
+            <span class="material-symbols-outlined" aria-hidden="true">screen_share</span>
+            <span data-i18n="shareStreamStatus">Sharing this tab for snapshots</span>
+            <span aria-hidden="true">·</span>
+            <button type="button" id="share-stream-stop" class="share-stream-stop" data-i18n="shareStreamStop">Stop</button>
           </p>
           <p id="share-capture-notes" class="share-notes" role="status" hidden></p>
           <p class="share-privacy-warning">

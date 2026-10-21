@@ -924,6 +924,12 @@
   "shareProgressStep": {
     "message": "Bildschirm $1 von $2 wird aufgenommen…"
   },
+  "shareStreamStatus": {
+    "message": "Dieser Tab wird für Schnappschüsse geteilt"
+  },
+  "shareStreamStop": {
+    "message": "Beenden"
+  },
   "shareProgressCancel": {
     "message": "Abbrechen"
   },

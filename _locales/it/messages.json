@@ -924,6 +924,12 @@
   "shareProgressStep": {
     "message": "Acquisizione della schermata $1 di $2…"
   },
+  "shareStreamStatus": {
+    "message": "Questa scheda è condivisa per le istantanee"
+  },
+  "shareStreamStop": {
+    "message": "Interrompi"
+  },
   "shareProgressCancel": {
     "message": "Annulla"
   },

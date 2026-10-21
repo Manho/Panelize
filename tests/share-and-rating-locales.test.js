@@ -39,6 +39,8 @@ const FEATURE_KEYS = [
   'shareProgressPreparing',
   'shareProgressStep',
   'shareProgressCancel',
+  'shareStreamStatus',
+  'shareStreamStop',
   'labelShareWatermark',
   'descShareWatermark',
   'msgShareWatermarkEnabled',
