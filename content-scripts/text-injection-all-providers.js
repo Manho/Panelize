@@ -15,6 +15,29 @@
   const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
   const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
   const PANELIZE_RESTORE_USER_FOCUS = 'PANELIZE_RESTORE_USER_FOCUS';
+  const PANELIZE_SNAPSHOT_PREPARE = 'PANELIZE_SNAPSHOT_PREPARE';
+  const PANELIZE_SNAPSHOT_SCROLL = 'PANELIZE_SNAPSHOT_SCROLL';
+  const PANELIZE_SNAPSHOT_RESTORE = 'PANELIZE_SNAPSHOT_RESTORE';
+  const PANELIZE_SNAPSHOT_STATE = 'PANELIZE_SNAPSHOT_STATE';
+  const MULTI_PANEL_SNAPSHOT_CONTEXT = 'multi-panel-snapshot';
+  // Normalized prompt prefix that identifies the user's message.
+  const SNAPSHOT_MATCH_KEY_LENGTH = 40;
+  const SNAPSHOT_MIN_MATCH_KEY_LENGTH = 2;
+  const SNAPSHOT_MAX_MATCH_CANDIDATES = 50;
+  const SNAPSHOT_ALIGN_MARGIN_PX = 16;
+  const SNAPSHOT_PAINT_SETTLE_MS = 100;
+  const SNAPSHOT_PAINT_TIMEOUT_MS = 400;
+  // A conversation list fills a good part of the frame; smaller scrolling
+  // boxes are code blocks or collapsed messages.
+  const SNAPSHOT_MIN_CONTAINER_HEIGHT_RATIO = 0.3;
+  // Pinned bars cover at most this share of the container at each edge.
+  const SNAPSHOT_MAX_EDGE_RATIO = 0.4;
+  const SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO = 0.5;
+  const SNAPSHOT_EDGE_TOLERANCE_PX = 24;
+  const SNAPSHOT_SKIPPED_TEXT_PARENTS = [
+    'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select',
+    '[contenteditable=""]', '[contenteditable="true"]', '[aria-hidden="true"]'
+  ].join(', ');
   const USER_FOCUS_RESTORE_WINDOW_MS = 2000;
   const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
@@ -43,6 +66,8 @@
   let lastUserFocus = null;
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
+  // Scroll container and positions of the snapshot being taken.
+  let snapshotSession = null;
 
   // Provider-specific selectors. ChatGPT's composer lookup lives in
   // chatgpt-composer.js, shared with the other ChatGPT content scripts.
@@ -3231,6 +3256,10 @@
       return;
     }
 
+    if (handleSnapshotMessage(event)) {
+      return;
+    }
+
     if (event.data.type === PANELIZE_RESTORE_USER_FOCUS && event.data.context === 'multi-panel') {
       restoreUserFocus();
       return;
@@ -3461,6 +3490,414 @@
         }, delay);
       });
     }
+  }
+
+  // ===== Share snapshot: align and scroll the conversation for a capture =====
+  // The multi-panel page captures the whole tab, so all it needs from a
+  // provider frame is where the conversation scrolls and which part of it is
+  // covered by the provider's own header and composer. Only geometry is sent
+  // back; no page text leaves the frame.
+
+  function normalizeSnapshotMatchText(text) {
+    return String(text || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[\s​-‍⁠﻿*_`]+/g, '');
+  }
+
+  function getSnapshotMatchKey(prompt) {
+    return Array.from(normalizeSnapshotMatchText(prompt)).slice(0, SNAPSHOT_MATCH_KEY_LENGTH).join('');
+  }
+
+  function getSnapshotViewport() {
+    return {
+      width: window.innerWidth || document.documentElement?.clientWidth || 0,
+      height: window.innerHeight || document.documentElement?.clientHeight || 0
+    };
+  }
+
+  function isSnapshotDocumentScroller(element) {
+    return !element || element === document.scrollingElement
+      || element === document.documentElement || element === document.body;
+  }
+
+  function isSnapshotScrollable(element) {
+    if (isSnapshotDocumentScroller(element)) {
+      const scroller = document.scrollingElement || document.documentElement;
+      return Boolean(scroller) && scroller.scrollHeight > scroller.clientHeight + 1;
+    }
+    const overflowY = window.getComputedStyle(element).overflowY;
+    return /(auto|scroll|overlay)/.test(overflowY) && element.scrollHeight > element.clientHeight + 1;
+  }
+
+  function isSnapshotElementRendered(element) {
+    if (typeof element.checkVisibility === 'function') {
+      return element.checkVisibility();
+    }
+    return true;
+  }
+
+  function getSnapshotContainerRect(container) {
+    const viewport = getSnapshotViewport();
+    if (isSnapshotDocumentScroller(container)) {
+      return { left: 0, top: 0, right: viewport.width, bottom: viewport.height };
+    }
+    // Client box: excludes borders and scrollbars.
+    const rect = container.getBoundingClientRect();
+    const left = rect.left + container.clientLeft;
+    const top = rect.top + container.clientTop;
+    return {
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      right: Math.min(viewport.width, left + container.clientWidth),
+      bottom: Math.min(viewport.height, top + container.clientHeight)
+    };
+  }
+
+  function isLargeSnapshotContainer(element) {
+    const viewport = getSnapshotViewport();
+    if (isSnapshotDocumentScroller(element)) {
+      return true;
+    }
+    const rect = getSnapshotContainerRect(element);
+    return rect.bottom - rect.top >= viewport.height * SNAPSHOT_MIN_CONTAINER_HEIGHT_RATIO;
+  }
+
+  /** Nearest large scrolling ancestor, e.g. the conversation list. */
+  function findSnapshotScrollContainer(element) {
+    for (let node = element; node && !isSnapshotDocumentScroller(node); node = node.parentElement) {
+      if (isSnapshotScrollable(node) && isLargeSnapshotContainer(node)) {
+        return node;
+      }
+    }
+    return isSnapshotScrollable(null) ? document.scrollingElement || document.documentElement : null;
+  }
+
+  /** Largest visible scrolling element; the document when nothing else scrolls. */
+  function findMainSnapshotScrollContainer() {
+    let best = null;
+    let bestArea = 0;
+    for (const element of document.body?.querySelectorAll('*') || []) {
+      if (!isSnapshotScrollable(element) || !isLargeSnapshotContainer(element)) {
+        continue;
+      }
+      const rect = getSnapshotContainerRect(element);
+      const area = Math.max(0, rect.right - rect.left) * Math.max(0, rect.bottom - rect.top);
+      if (area > bestArea) {
+        best = element;
+        bestArea = area;
+      }
+    }
+    return best || document.scrollingElement || document.documentElement;
+  }
+
+  function collectSnapshotTextIndex() {
+    const segments = [];
+    let text = '';
+    if (!document.body) {
+      return { segments, text };
+    }
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || parent.closest(SNAPSHOT_SKIPPED_TEXT_PARENTS)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const normalized = normalizeSnapshotMatchText(node.nodeValue);
+      if (normalized) {
+        segments.push({ node, start: text.length });
+        text += normalized;
+      }
+    }
+    return { segments, text };
+  }
+
+  function findSnapshotSegment(segments, offset) {
+    let low = 0;
+    let high = segments.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (segments[middle].start <= offset) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return segments[low];
+  }
+
+  /**
+   * Finds the latest rendered message that starts like the prompt. A match
+   * at the start of a text node (a message bubble) beats one in the middle of
+   * a paragraph, e.g. an answer quoting the question.
+   */
+  function findSnapshotPromptMatch(prompt) {
+    const key = getSnapshotMatchKey(prompt);
+    if (Array.from(key).length < SNAPSHOT_MIN_MATCH_KEY_LENGTH) {
+      return null;
+    }
+    const { segments, text } = collectSnapshotTextIndex();
+    let fallback = null;
+    let offset = text.lastIndexOf(key);
+    for (let checked = 0; offset !== -1 && checked < SNAPSHOT_MAX_MATCH_CANDIDATES; checked += 1) {
+      const segment = findSnapshotSegment(segments, offset);
+      const element = segment.node.parentElement;
+      if (element && isSnapshotElementRendered(element)) {
+        const container = findSnapshotScrollContainer(element);
+        if (container) {
+          const candidate = { element, container };
+          if (segment.start === offset) {
+            return candidate;
+          }
+          fallback = fallback || candidate;
+        }
+      }
+      offset = offset > 0 ? text.lastIndexOf(key, offset - 1) : -1;
+    }
+    return fallback;
+  }
+
+  function getSnapshotScrollTop(container) {
+    return isSnapshotDocumentScroller(container) ? window.scrollY : container.scrollTop;
+  }
+
+  function getSnapshotMaxScrollTop(container) {
+    const scroller = isSnapshotDocumentScroller(container)
+      ? document.scrollingElement || document.documentElement
+      : container;
+    return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  }
+
+  function scrollSnapshotContainer(container, top) {
+    const target = Math.max(0, Math.min(getSnapshotMaxScrollTop(container), Math.round(top)));
+    // "instant" overrides a smooth scroll-behavior set by the page.
+    if (isSnapshotDocumentScroller(container)) {
+      window.scrollTo({ top: target, behavior: 'instant' });
+    } else if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: target, behavior: 'instant' });
+    } else {
+      container.scrollTop = target;
+    }
+  }
+
+  function isSnapshotScrolledContent(element, container) {
+    // Absolute elements scroll with the content when their containing block
+    // is the scroll container or inside it.
+    const containingBlock = element.offsetParent;
+    if (!containingBlock) {
+      return false;
+    }
+    if (isSnapshotDocumentScroller(container)) {
+      return true;
+    }
+    return containingBlock === container || container.contains(containingBlock);
+  }
+
+  /**
+   * Visible part of the container minus bars pinned over its top or bottom:
+   * sticky or fixed headers, the composer and its fade. Narrow floating
+   * buttons are ignored.
+   */
+  function getSnapshotClip(container, provider) {
+    const rect = getSnapshotContainerRect(container);
+    const clip = { ...rect };
+    const height = rect.bottom - rect.top;
+    const width = rect.right - rect.left;
+    if (height <= 0 || width <= 0) {
+      return clip;
+    }
+    const maxEdge = height * SNAPSHOT_MAX_EDGE_RATIO;
+    const scope = isSnapshotDocumentScroller(container) ? document.body : container;
+    const candidates = Array.from(scope?.querySelectorAll('*') || []);
+    if (!isSnapshotDocumentScroller(container)) {
+      // Fixed bars elsewhere in the page can still cover the container.
+      candidates.push(...Array.from(document.body.querySelectorAll('*')).filter((element) => (
+        !container.contains(element) && !element.contains(container)
+      )));
+    }
+
+    const pinBar = (barRect) => {
+      if (barRect.width < width * SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO || barRect.height <= 0) {
+        return;
+      }
+      if (barRect.bottom <= rect.top || barRect.top >= rect.bottom
+        || barRect.right <= rect.left || barRect.left >= rect.right) {
+        return;
+      }
+      if (barRect.top <= rect.top + SNAPSHOT_EDGE_TOLERANCE_PX && barRect.bottom - rect.top <= maxEdge) {
+        clip.top = Math.max(clip.top, barRect.bottom);
+      } else if (barRect.bottom >= rect.bottom - SNAPSHOT_EDGE_TOLERANCE_PX && rect.bottom - barRect.top <= maxEdge) {
+        clip.bottom = Math.min(clip.bottom, barRect.top);
+      }
+    };
+
+    for (const element of candidates) {
+      const style = window.getComputedStyle(element);
+      const position = style.position;
+      if (position !== 'sticky' && position !== 'fixed' && position !== 'absolute') {
+        continue;
+      }
+      if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
+        continue;
+      }
+      if (position === 'absolute' && container.contains(element) && isSnapshotScrolledContent(element, container)) {
+        continue;
+      }
+      if (position === 'absolute' && !container.contains(element)) {
+        // Absolute siblings only count when they sit over the container.
+        const sample = document.elementFromPoint?.(
+          Math.round((rect.left + rect.right) / 2),
+          Math.round(element.getBoundingClientRect().top + 1)
+        );
+        if (!sample || !element.contains(sample)) {
+          continue;
+        }
+      }
+      pinBar(element.getBoundingClientRect());
+    }
+
+    // The composer, also when it is a plain block laid over the conversation.
+    const input = provider === 'google' ? findGoogleInput(GOOGLE_PROVIDER_MODE_AI) : provider && findProviderInput(provider);
+    if (input) {
+      let box = null;
+      for (let node = input; node && node !== container && !node.contains(container); node = node.parentElement) {
+        const nodeRect = node.getBoundingClientRect();
+        if (nodeRect.height > maxEdge || nodeRect.width > width + 2) {
+          break;
+        }
+        box = nodeRect;
+      }
+      if (box && box.top < clip.bottom && box.bottom > rect.top + height - maxEdge
+        && box.right > rect.left && box.left < rect.right) {
+        clip.bottom = Math.min(clip.bottom, box.top);
+      }
+    }
+
+    if (clip.bottom - clip.top < height * (1 - SNAPSHOT_MAX_EDGE_RATIO * 2)) {
+      // Something went wrong (e.g. a full-height overlay); keep the container.
+      return { ...rect };
+    }
+    return {
+      left: Math.round(clip.left),
+      top: Math.round(clip.top),
+      right: Math.round(clip.right),
+      bottom: Math.round(clip.bottom)
+    };
+  }
+
+  function waitForSnapshotPaint() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+      // Frames can be throttled when hidden; the timeout keeps replies coming.
+      setTimeout(finish, SNAPSHOT_PAINT_TIMEOUT_MS);
+      if (typeof requestAnimationFrame !== 'function') {
+        setTimeout(finish, SNAPSHOT_PAINT_SETTLE_MS);
+        return;
+      }
+      requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(finish, SNAPSHOT_PAINT_SETTLE_MS)));
+    });
+  }
+
+  function postSnapshotState(requestId, session, extra = {}) {
+    const container = session?.container || null;
+    window.parent.postMessage({
+      type: PANELIZE_SNAPSHOT_STATE,
+      context: MULTI_PANEL_SNAPSHOT_CONTEXT,
+      requestId,
+      sessionId: session?.id || null,
+      provider: detectProvider(),
+      matched: Boolean(session?.matched),
+      scrollTop: container ? getSnapshotScrollTop(container) : 0,
+      maxScrollTop: container ? getSnapshotMaxScrollTop(container) : 0,
+      clip: session?.clip || null,
+      viewport: getSnapshotViewport(),
+      ...extra
+    }, '*');
+  }
+
+  async function handleSnapshotPrepare(data) {
+    const provider = detectProvider();
+    let container = null;
+    let matchElement = null;
+    if (data.align && typeof data.prompt === 'string') {
+      const match = findSnapshotPromptMatch(data.prompt);
+      if (match) {
+        container = match.container;
+        matchElement = match.element;
+      }
+    }
+    container = container || findMainSnapshotScrollContainer();
+    const session = {
+      id: data.sessionId,
+      container,
+      matched: Boolean(matchElement),
+      originalScrollTop: getSnapshotScrollTop(container),
+      clip: getSnapshotClip(container, provider)
+    };
+    snapshotSession = session;
+
+    if (matchElement) {
+      // Put the message just under the provider's header, not behind it.
+      const offset = matchElement.getBoundingClientRect().top - session.clip.top - SNAPSHOT_ALIGN_MARGIN_PX;
+      scrollSnapshotContainer(container, getSnapshotScrollTop(container) + offset);
+      await waitForSnapshotPaint();
+    }
+    postSnapshotState(data.requestId, session);
+  }
+
+  async function handleSnapshotScroll(data) {
+    const session = snapshotSession;
+    if (!session || session.id !== data.sessionId || typeof data.scrollTop !== 'number') {
+      postSnapshotState(data.requestId, null, { error: 'no-session' });
+      return;
+    }
+    scrollSnapshotContainer(session.container, data.scrollTop);
+    await waitForSnapshotPaint();
+    postSnapshotState(data.requestId, session);
+  }
+
+  async function handleSnapshotRestore(data) {
+    const session = snapshotSession;
+    if (!session || session.id !== data.sessionId) {
+      postSnapshotState(data.requestId, null, { error: 'no-session' });
+      return;
+    }
+    snapshotSession = null;
+    if (getSnapshotScrollTop(session.container) !== session.originalScrollTop) {
+      scrollSnapshotContainer(session.container, session.originalScrollTop);
+      await waitForSnapshotPaint();
+    }
+    postSnapshotState(data.requestId, session, { restored: true });
+  }
+
+  /** Returns true when the message belonged to the snapshot protocol. */
+  function handleSnapshotMessage(event) {
+    const type = event.data.type;
+    if (type !== PANELIZE_SNAPSHOT_PREPARE && type !== PANELIZE_SNAPSHOT_SCROLL && type !== PANELIZE_SNAPSHOT_RESTORE) {
+      return false;
+    }
+    // Only the page embedding this frame may scroll it.
+    if (event.data.context !== 'multi-panel' || event.source !== window.parent) {
+      return true;
+    }
+    const handler = type === PANELIZE_SNAPSHOT_PREPARE
+      ? handleSnapshotPrepare
+      : type === PANELIZE_SNAPSHOT_SCROLL ? handleSnapshotScroll : handleSnapshotRestore;
+    handler(event.data).catch((error) => {
+      console.warn('[Snapshot] Could not prepare the conversation:', error);
+      postSnapshotState(event.data.requestId, null, { error: 'failed' });
+    });
+    return true;
   }
 
   // Listen for messages from the multi-panel host
