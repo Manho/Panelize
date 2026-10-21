@@ -123,6 +123,32 @@ describe('snapshot scroll protocol in provider frames', () => {
     expect(state.maxScrollTop).toBe(CONTAINER.scrollHeight - CONTAINER.height);
   });
 
+  it('cuts the fading backdrop of a header laid over the conversation from the clip', async () => {
+    createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }], { stickyHeader: false });
+    // Claude: an absolute title row next to the conversation, whose backdrop
+    // has no pointer events and fades out below the row.
+    const header = document.createElement('div');
+    header.style.position = 'absolute';
+    setStaticRect(header, { top: CONTAINER.top, width: CONTAINER.width, height: 48 });
+    const button = document.createElement('button');
+    setStaticRect(button, { top: CONTAINER.top + 10, left: 760, width: 28, height: 28 });
+    const backdrop = document.createElement('div');
+    backdrop.style.position = 'absolute';
+    backdrop.style.pointerEvents = 'none';
+    setStaticRect(backdrop, { top: CONTAINER.top, width: CONTAINER.width - 12, height: 72 });
+    header.append(button, backdrop);
+    document.body.appendChild(header);
+    const originalElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = (x, y) => (y >= CONTAINER.top && y < CONTAINER.top + 48 ? button : null);
+
+    try {
+      const state = await prepare('Explain how HTTPS works');
+      expect(state.clip.top).toBe(CONTAINER.top + 72);
+    } finally {
+      document.elementFromPoint = originalElementFromPoint;
+    }
+  });
+
   it('matches through whitespace, markdown, zero-width and full-width differences', async () => {
     const { getScrollTop } = createConversation([
       { text: 'Explain how ＨＴＴＰＳ​ works,\n  step by step, for a curious beginner who knows a bit of networking', offset: 900 }
@@ -287,6 +313,22 @@ describe('snapshot scroll protocol in provider frames', () => {
 
       await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
       expect(wrapper.style.getPropertyValue('mask-image')).toBe('linear-gradient(transparent 0px, black 40px)');
+    });
+
+    it('hides an overlay scrollbar, but not one that takes room', async () => {
+      const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      let offsetWidth = CONTAINER.width;
+      Object.defineProperty(container, 'offsetWidth', { configurable: true, get: () => offsetWidth });
+
+      await prepare('Explain how HTTPS works', { stitch: true });
+      expect(container.style.getPropertyValue('scrollbar-width')).toBe('none');
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      expect(container.style.getPropertyValue('scrollbar-width')).toBe('');
+
+      offsetWidth = CONTAINER.width + 15;
+      await prepare('Explain how HTTPS works', { stitch: true });
+      expect(container.style.getPropertyValue('scrollbar-width')).toBe('');
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
     });
 
     it('puts hidden elements back when a new capture starts without a restore', async () => {

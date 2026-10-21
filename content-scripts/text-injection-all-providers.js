@@ -3739,6 +3739,18 @@
       }
     };
 
+    // Absolute bars outside the container that sit over it, so that their
+    // own layers count too, e.g. a header's fading backdrop.
+    const overlayingBars = new Set();
+    const isInOverlayingBar = (element) => {
+      for (let node = element.parentElement; node; node = node.parentElement) {
+        if (overlayingBars.has(node)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     for (const element of candidates) {
       const style = window.getComputedStyle(element);
       const position = style.position;
@@ -3753,11 +3765,15 @@
       }
       if (position === 'absolute' && !container.contains(element)) {
         // Absolute siblings only count when they sit over the container.
+        // Layers without pointer events are not hit, so they count through
+        // the bar they belong to.
         const sample = document.elementFromPoint?.(
           Math.round((rect.left + rect.right) / 2),
           Math.round(element.getBoundingClientRect().top + 1)
         );
-        if (!sample || !element.contains(sample)) {
+        if (sample && element.contains(sample)) {
+          overlayingBars.add(element);
+        } else if (!isInOverlayingBar(element)) {
           continue;
         }
       }
@@ -3856,6 +3872,22 @@
     const hidden = session.hiddenElements;
     let changed = false;
 
+    // Overlay scrollbars show up after every scroll; they take no room, so
+    // hiding them does not move the content.
+    const scroller = isSnapshotDocumentScroller(container)
+      ? document.scrollingElement || document.documentElement
+      : container;
+    if (!session.hidesScrollbar) {
+      const style = window.getComputedStyle(scroller);
+      const borders = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+      if (scroller.offsetWidth > 0 && scroller.offsetWidth - scroller.clientWidth <= borders) {
+        session.hidesScrollbar = true;
+        session.savedStyles.push(saveSnapshotInlineStyle(scroller, 'scrollbar-width'));
+        scroller.style.setProperty('scrollbar-width', 'none', 'important');
+        changed = true;
+      }
+    }
+
     for (let node = container; node && node.style; node = node.parentElement) {
       if (session.unmaskedElements.has(node)) {
         continue;
@@ -3920,6 +3952,7 @@
       }
     }
     session.savedStyles = [];
+    session.hidesScrollbar = false;
     session.hiddenElements.clear();
     session.unmaskedElements.clear();
   }
@@ -3997,6 +4030,7 @@
       stitch: Boolean(data.stitch),
       hiddenElements: new Set(),
       unmaskedElements: new Set(),
+      hidesScrollbar: false,
       savedStyles: []
     };
     snapshotSession = session;
