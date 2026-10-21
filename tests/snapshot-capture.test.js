@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   SNAPSHOT_MESSAGES,
+  captureCurrentView,
   createSnapshotBridge,
   getPanelCellGeometry,
   getStitchBudget,
@@ -126,5 +127,65 @@ describe('getStitchBudget', () => {
     const budget = getStitchBudget({ frameScale: 2, gridWidth: 1600, getChromeHeight: () => 0 });
     expect(budget.scale).toBe(1.6);
     expect(budget.contentHeight).toBe(5000);
+  });
+});
+
+describe('captureCurrentView', () => {
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+
+  afterEach(() => {
+    globalThis.createImageBitmap = originalCreateImageBitmap;
+    document.body.innerHTML = '';
+  });
+
+  /** A panel whose page answers every snapshot request. */
+  function createPanel(name, left, state) {
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => rect(left, 0, 400, 600);
+    document.body.appendChild(element);
+    const messages = [];
+    const contentWindow = {
+      postMessage: vi.fn((message) => {
+        messages.push(message);
+        queueMicrotask(() => window.dispatchEvent(messageEvent({
+          type: SNAPSHOT_MESSAGES.STATE,
+          context: 'multi-panel-snapshot',
+          requestId: message.requestId,
+          clip: { left: 0, top: 50, right: 400, bottom: 500 },
+          viewport: { width: 400, height: 560 },
+          ...state
+        }, contentWindow)));
+      })
+    };
+    return { panel: { id: name, name, iframe: { contentWindow }, element }, messages };
+  }
+
+  it('hides floating controls, and the pointer when asked, and reports where each panel started', async () => {
+    globalThis.createImageBitmap = vi.fn(async () => ({ width: 800, height: 600, close: vi.fn() }));
+    const grid = document.createElement('div');
+    grid.getBoundingClientRect = () => rect(0, 0, 800, 600);
+    const chat = createPanel('ChatGPT', 0, { alignedBy: 'prompt', scrollTop: 900, originalScrollTop: 2000, maxScrollTop: 2000 });
+    const quiet = createPanel('DeepSeek', 400, { alignedBy: null, scrollTop: 300, originalScrollTop: 300, maxScrollTop: 1000 });
+    const frame = { width: window.innerWidth, height: window.innerHeight, close: vi.fn() };
+
+    const result = await captureCurrentView({
+      source: { grab: async () => frame },
+      grid,
+      panels: [chat.panel, quiet.panel],
+      prompt: 'Explain HTTPS',
+      hideCursor: true
+    });
+
+    expect(chat.messages[0]).toMatchObject({
+      type: SNAPSHOT_MESSAGES.PREPARE, align: true, prompt: 'Explain HTTPS', stitch: false, hideFloating: true, hideCursor: true
+    });
+    // Everything is put back afterwards.
+    expect(chat.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
+    expect(quiet.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
+    expect(result.alignment).toEqual([
+      { name: 'ChatGPT', alignedBy: 'prompt', originalScrollTop: 2000, startScrollTop: 900, endScrollTop: 900, maxScrollTop: 2000 },
+      { name: 'DeepSeek', alignedBy: null, originalScrollTop: 300, startScrollTop: 300, endScrollTop: 300, maxScrollTop: 1000 }
+    ]);
+    expect(frame.close).toHaveBeenCalled();
   });
 });

@@ -253,14 +253,20 @@ function sampleFillColor(bitmap) {
 }
 
 /**
- * @param {boolean} [stitch] - Also hide floating buttons and fades that would
- *   repeat on every stitched screen.
+ * Lines the panels up and hides floating buttons, fades and overlay
+ * scrollbars. Stitching also un-sticks headings and always starts from the
+ * latest turn.
+ * @param {object} options
+ * @param {string} options.prompt
+ * @param {boolean} [options.stitch]
+ * @param {boolean} [options.hideCursor] - Hide the pointer, which tab
+ *   sharing can draw into the frames.
  */
-async function prepareAll(bridge, panels, prompt, signal, stitch = false) {
+async function prepareAll(bridge, panels, { prompt, stitch = false, hideCursor = false }, signal) {
   const states = await Promise.all(panels.map((panel) => bridge.request(
     panel.iframe,
     SNAPSHOT_MESSAGES.PREPARE,
-    { align: Boolean(prompt), prompt: prompt || '', stitch },
+    { align: Boolean(prompt), prompt: prompt || '', stitch, hideFloating: true, hideCursor },
     PREPARE_TIMEOUT_MS
   )));
   throwIfAborted(signal);
@@ -296,7 +302,31 @@ function isUsableState(state) {
  * @property {string[]} currentViewOnly - Providers shown as on screen in full mode.
  * @property {boolean} truncated
  * @property {number} screens - Captures taken.
+ * @property {SnapshotAlignment[]} alignment - Where each panel started and ended.
  */
+
+/**
+ * @typedef {object} SnapshotAlignment
+ * @property {string} name
+ * @property {'prompt' | 'user-turn' | 'top' | null} alignedBy - What the
+ *   capture started from; null when the panel was left as it was.
+ * @property {number | null} originalScrollTop
+ * @property {number | null} startScrollTop
+ * @property {number | null} endScrollTop
+ * @property {number | null} maxScrollTop
+ */
+
+function describeAlignment(name, firstState, lastState = firstState) {
+  const usable = isUsableState(firstState);
+  return {
+    name,
+    alignedBy: usable ? firstState.alignedBy || null : null,
+    originalScrollTop: usable ? firstState.originalScrollTop ?? null : null,
+    startScrollTop: usable ? firstState.scrollTop : null,
+    endScrollTop: isUsableState(lastState) ? lastState.scrollTop : null,
+    maxScrollTop: isUsableState(lastState) ? lastState.maxScrollTop : null
+  };
+}
 
 function readPanels(panels, visibleGrid) {
   return selectVisiblePanels(panels.map((panel) => ({
@@ -324,15 +354,16 @@ function orderByGrid(panels) {
  * @param {HTMLElement} options.grid - #panel-grid.
  * @param {SnapshotPanel[]} options.panels
  * @param {string} options.prompt - Shared prompt to align on; '' leaves panels as they are.
+ * @param {boolean} [options.hideCursor]
  * @param {AbortSignal} [options.signal]
  * @returns {Promise<SnapshotCaptureResult>}
  */
-export async function captureCurrentView({ source, grid, panels, prompt, signal }) {
+export async function captureCurrentView({ source, grid, panels, prompt, hideCursor = false, signal }) {
   const bridge = createSnapshotBridge();
   const visibleGrid = getVisibleGrid(grid);
   const visiblePanels = orderByGrid(readPanels(panels, visibleGrid));
   try {
-    await prepareAll(bridge, visiblePanels, prompt, signal);
+    const states = await prepareAll(bridge, visiblePanels, { prompt, hideCursor }, signal);
     const frame = await source.grab();
     try {
       throwIfAborted(signal);
@@ -345,7 +376,8 @@ export async function captureCurrentView({ source, grid, panels, prompt, signal 
         names: visiblePanels.map((panel) => panel.name),
         currentViewOnly: [],
         truncated: false,
-        screens: 1
+        screens: 1,
+        alignment: visiblePanels.map((panel, index) => describeAlignment(panel.name, states[index]))
       };
     } finally {
       frame.close?.();
@@ -366,19 +398,20 @@ export async function captureCurrentView({ source, grid, panels, prompt, signal 
  * @param {SnapshotPanel[]} options.panels
  * @param {string} options.prompt
  * @param {(scale: number) => number} options.getChromeHeight - See getStitchBudget.
+ * @param {boolean} [options.hideCursor]
  * @param {AbortSignal} [options.signal]
  * @param {(progress: {step: number, total: number}) => void} [options.onProgress]
  * @returns {Promise<SnapshotCaptureResult>}
  */
 export async function captureFullAnswers({
-  source, grid, panels, prompt, getChromeHeight, signal, onProgress = () => {}
+  source, grid, panels, prompt, getChromeHeight, hideCursor = false, signal, onProgress = () => {}
 }) {
   const bridge = createSnapshotBridge();
   const visibleGrid = getVisibleGrid(grid);
   const visiblePanels = readPanels(panels, visibleGrid);
   const bitmaps = [];
   try {
-    const states = await prepareAll(bridge, visiblePanels, prompt, signal, true);
+    const states = await prepareAll(bridge, visiblePanels, { prompt, stitch: true, hideCursor }, signal);
     let frame = await source.grab();
     let screens = 1;
     try {
@@ -525,7 +558,12 @@ export async function captureFullAnswers({
         names: orderByGrid(cells).map((cell) => cell.panel.name),
         currentViewOnly: orderByGrid(cells).filter((cell) => cell.fallback).map((cell) => cell.panel.name),
         truncated: capped || content.truncated,
-        screens
+        screens,
+        alignment: orderByGrid(cells).map((cell) => describeAlignment(
+          cell.panel.name,
+          states[visiblePanels.indexOf(cell.panel)],
+          cell.state
+        ))
       };
     } finally {
       frame.close?.();

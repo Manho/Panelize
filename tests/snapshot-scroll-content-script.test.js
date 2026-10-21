@@ -42,13 +42,17 @@ function createConversation(messages, { stickyHeader = true, composer = true } =
     const header = document.createElement('header');
     header.style.position = 'sticky';
     header.textContent = 'Model picker';
-    setStaticRect(header, { top: CONTAINER.top, width: CONTAINER.width, height: 56 });
+    // Stuck to the top; once un-stuck, at the start of the content.
+    header.getBoundingClientRect = () => rect({
+      top: CONTAINER.top - (header.style.position === 'sticky' ? 0 : scrollTop), width: CONTAINER.width, height: 56
+    });
     container.appendChild(header);
   }
 
-  const elements = messages.map(({ text, offset, tag = 'div' }) => {
+  const elements = messages.map(({ text, offset, tag = 'div', attributes = {} }) => {
     const element = document.createElement(tag);
     element.textContent = text;
+    Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, value));
     element.getBoundingClientRect = () => rect({
       top: CONTAINER.top + offset - scrollTop, width: 600, height: 40
     });
@@ -62,7 +66,12 @@ function createConversation(messages, { stickyHeader = true, composer = true } =
     const textarea = document.createElement('textarea');
     textarea.placeholder = 'Message DeepSeek';
     box.appendChild(textarea);
-    setStaticRect(box, { top: CONTAINER.top + CONTAINER.height - 120, width: CONTAINER.width, height: 120 });
+    // Stuck to the bottom; once un-stuck, at the end of the content.
+    box.getBoundingClientRect = () => rect({
+      top: CONTAINER.top + (box.style.position === 'sticky' ? CONTAINER.height : CONTAINER.scrollHeight - scrollTop) - 120,
+      width: CONTAINER.width,
+      height: 120
+    });
     setStaticRect(textarea, { top: CONTAINER.top + CONTAINER.height - 100, left: 20, width: 760, height: 60 });
     container.appendChild(box);
   }
@@ -114,7 +123,7 @@ describe('snapshot scroll protocol in provider frames', () => {
 
     const state = await prepare('Explain how HTTPS works in detail');
 
-    expect(state).toMatchObject({ matched: true, sessionId: 'session-1', provider: 'deepseek' });
+    expect(state).toMatchObject({ matched: true, alignedBy: 'prompt', originalScrollTop: 0, sessionId: 'session-1', provider: 'deepseek' });
     // Sticky header (56px) and composer (120px) are cut from the clip.
     expect(state.clip).toEqual({ left: 0, top: CONTAINER.top + 56, right: 800, bottom: CONTAINER.top + CONTAINER.height - 120 });
     expect(getScrollTop()).toBe(2200 - 56 - 16);
@@ -188,7 +197,7 @@ describe('snapshot scroll protocol in provider frames', () => {
 
     const state = await prepare('A prompt that was never sent here');
 
-    expect(state).toMatchObject({ matched: false, scrollTop: 321 });
+    expect(state).toMatchObject({ matched: false, alignedBy: null, scrollTop: 321 });
     expect(getScrollTop()).toBe(321);
     // The main conversation container is still reported for stitching.
     expect(state.clip.top).toBe(CONTAINER.top + 56);
@@ -220,6 +229,100 @@ describe('snapshot scroll protocol in provider frames', () => {
     const stale = await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_SCROLL', sessionId: 'session-1', scrollTop: 10 });
     expect(stale.error).toBe('no-session');
     expect(getScrollTop()).toBe(77);
+  });
+
+
+  it('skips matches in navigation and fixed layers', async () => {
+    const { getScrollTop } = createConversation([
+      { text: 'Explain how HTTPS works', offset: 1200 }
+    ]);
+    // A sidebar title and a dialog, both after the message in the page.
+    const nav = document.createElement('nav');
+    const title = document.createElement('a');
+    title.href = '/c/1';
+    title.textContent = 'Explain how HTTPS works';
+    setStaticRect(title, { top: 100, width: 200, height: 20 });
+    nav.appendChild(title);
+    const dialog = document.createElement('div');
+    dialog.style.position = 'fixed';
+    dialog.textContent = 'Explain how HTTPS works';
+    setStaticRect(dialog, { top: 200, width: 400, height: 40 });
+    document.body.append(nav, dialog);
+
+    const state = await prepare('Explain how HTTPS works');
+
+    expect(state.matched).toBe(true);
+    expect(getScrollTop()).toBe(1200 - 56 - 16);
+  });
+
+  it('only aligns a match that moves with the scroll', async () => {
+    const { elements, getScrollTop } = createConversation([
+      { text: 'Explain how HTTPS works', offset: 1200 },
+      { text: 'Explain how HTTPS works', offset: 2400 }
+    ]);
+    // The latest copy stays put, e.g. it sits in a box that scrolls on its own.
+    setStaticRect(elements[1], { top: 500, width: 600, height: 40 });
+
+    const state = await prepare('Explain how HTTPS works');
+
+    expect(state).toMatchObject({ matched: true, alignedBy: 'prompt' });
+    expect(getScrollTop()).toBe(1200 - 56 - 16);
+  });
+
+  describe('when full answers find no prompt', () => {
+    it('starts at the latest user message', async () => {
+      const { setScrollTop, getScrollTop } = createConversation([
+        { text: 'First question', offset: 300, attributes: { 'data-message-author-role': 'user' } },
+        { text: 'First answer', offset: 400 },
+        { text: 'Second question', offset: 1800, attributes: { 'data-message-author-role': 'user' } },
+        { text: 'Second answer', offset: 1900 }
+      ]);
+      setScrollTop(3300);
+
+      const state = await prepare('A prompt typed into the provider directly', { stitch: true });
+
+      expect(state).toMatchObject({ matched: false, alignedBy: 'user-turn', originalScrollTop: 3300 });
+      expect(getScrollTop()).toBe(1800 - 56 - 16);
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      expect(getScrollTop()).toBe(3300);
+    });
+
+    it('starts at the top when no user message is marked, never where the panel was', async () => {
+      const { setScrollTop, getScrollTop } = createConversation([{ text: 'Something else entirely', offset: 400 }]);
+      setScrollTop(3300);
+
+      const state = await prepare('A prompt typed into the provider directly', { stitch: true });
+
+      expect(state).toMatchObject({ matched: false, alignedBy: 'top', scrollTop: 0, originalScrollTop: 3300 });
+      expect(getScrollTop()).toBe(0);
+      const restored = await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      expect(restored.scrollTop).toBe(3300);
+    });
+
+    it('also starts at the top without a prompt at all', async () => {
+      const { setScrollTop, getScrollTop } = createConversation([{ text: 'Something else entirely', offset: 400 }]);
+      setScrollTop(900);
+
+      const state = await prepare('', { stitch: true, align: false });
+
+      expect(state.alignedBy).toBe('top');
+      expect(getScrollTop()).toBe(0);
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+    });
+  });
+
+  it('hides the pointer in the frame while asked to, then shows it again', async () => {
+    createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+    const root = document.documentElement;
+
+    await prepare('Explain how HTTPS works', { hideCursor: true });
+    expect(root.hasAttribute('data-panelize-snapshot-cursor')).toBe(true);
+    const sheets = document.adoptedStyleSheets.length + document.querySelectorAll('#panelize-snapshot-style').length;
+    expect(sheets).toBe(1);
+
+    await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+    expect(root.hasAttribute('data-panelize-snapshot-cursor')).toBe(false);
+    expect(document.adoptedStyleSheets.length + document.querySelectorAll('#panelize-snapshot-style').length).toBe(0);
   });
 
   describe('while stitching full answers', () => {
@@ -293,16 +396,79 @@ describe('snapshot scroll protocol in provider frames', () => {
 
       expect(button.style.getPropertyValue('visibility')).toBe('hidden');
       expect(fade.style.getPropertyValue('visibility')).toBe('hidden');
-      // Readable text, content and large layers stay.
-      expect(label.style.getPropertyValue('visibility')).toBe('');
+      // Pinned text would show on every stitched screen.
+      expect(label.style.getPropertyValue('visibility')).toBe('hidden');
+      // Content and large layers stay.
       expect(badge.style.getPropertyValue('visibility')).toBe('');
       expect(background.style.getPropertyValue('visibility')).toBe('');
 
       await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
 
       expect(button.style.getPropertyValue('visibility')).toBe('');
+      expect(label.style.getPropertyValue('visibility')).toBe('');
       expect(fade.style.getPropertyValue('visibility')).toBe('visible');
       expect(fade.style.getPropertyPriority('visibility')).toBe('');
+    });
+
+    it('un-sticks headings in the middle of the conversation and drops their shadow, then restores them', async () => {
+      const { container, getScrollTop } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      // A section heading stuck under the header, 1700px into the content.
+      const heading = document.createElement('h2');
+      heading.textContent = 'Handshake';
+      heading.style.position = 'sticky';
+      heading.style.top = '56px';
+      heading.style.boxShadow = '0 4px 8px black';
+      heading.getBoundingClientRect = () => rect({
+        top: heading.style.position === 'sticky' ? CONTAINER.top + 56 : CONTAINER.top + 1700 - getScrollTop(),
+        width: 600,
+        height: 40
+      });
+      container.insertBefore(heading, container.querySelector('textarea').parentElement);
+
+      const state = await prepare('Explain how HTTPS works', { stitch: true });
+
+      expect(heading.style.getPropertyValue('position')).toBe('relative');
+      expect(heading.style.getPropertyValue('top')).toBe('auto');
+      expect(heading.style.getPropertyValue('box-shadow')).toBe('none');
+      expect(heading.style.getPropertyValue('visibility')).toBe('');
+      // Header and composer at the edges keep sticking, so the clip is the same.
+      expect(container.querySelector('header').style.position).toBe('sticky');
+      expect(container.querySelector('textarea').parentElement.style.position).toBe('sticky');
+      expect(state.clip.top).toBe(CONTAINER.top + 56);
+      expect(state.clip.bottom).toBe(CLIP_BOTTOM);
+
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+
+      expect(heading.style.position).toBe('sticky');
+      expect(heading.style.top).toBe('56px');
+      expect(heading.style.boxShadow).toBe('0 4px 8px black');
+      expect(heading.style.getPropertyPriority('position')).toBe('');
+    });
+
+    it('hides fades drawn by pseudo-elements of the composer, then shows them again', async () => {
+      const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      const composerBox = container.querySelector('textarea').parentElement;
+      const getComputedStyle = window.getComputedStyle;
+      // Gemini: the composer's ::before is a gradient over the conversation.
+      window.getComputedStyle = (element, pseudo) => {
+        if (pseudo === '::before' && element === composerBox) {
+          return { content: '""', display: 'block', position: 'absolute', backgroundImage: 'linear-gradient(transparent, white)', boxShadow: 'none' };
+        }
+        if (pseudo) {
+          return { content: 'none', display: 'inline', position: 'static', backgroundImage: 'none', boxShadow: 'none' };
+        }
+        return getComputedStyle.call(window, element);
+      };
+      try {
+        await prepare('Explain how HTTPS works', { stitch: true });
+        expect(composerBox.getAttribute('data-panelize-snapshot-hide')).toBe('before');
+        expect(container.hasAttribute('data-panelize-snapshot-hide')).toBe(false);
+
+        await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+        expect(composerBox.hasAttribute('data-panelize-snapshot-hide')).toBe(false);
+      } finally {
+        window.getComputedStyle = getComputedStyle;
+      }
     });
 
     it('hides notices stacked on a pinned composer, then restores them', async () => {
@@ -339,7 +505,7 @@ describe('snapshot scroll protocol in provider frames', () => {
       await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
     });
 
-    it('leaves floating elements alone for a current view', async () => {
+    it('leaves floating elements alone when not asked to hide them', async () => {
       const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
       const { button, fade } = addFloatingParts(container);
 
@@ -348,6 +514,39 @@ describe('snapshot scroll protocol in provider frames', () => {
       expect(button.style.getPropertyValue('visibility')).toBe('');
       expect(fade.style.getPropertyValue('visibility')).toBe('');
       await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+    });
+
+    it('hides floating controls for a current view, keeping the composer, pinned text and stuck headings', async () => {
+      const { container, elements, setScrollTop, getScrollTop } = createConversation(
+        [{ text: 'Explain how HTTPS works', offset: 1500 }],
+        { composer: false }
+      );
+      const { notice, inputBox, textarea } = addComposerDock(container);
+      const { button, fade, label } = addFloatingParts({ querySelector: () => textarea });
+      const heading = document.createElement('h2');
+      heading.style.position = 'sticky';
+      setStaticRect(heading, { top: CONTAINER.top + 56, width: 600, height: 40 });
+      container.insertBefore(heading, elements[0]);
+      setScrollTop(1234);
+
+      const state = await prepare('A prompt that was never sent here', { hideFloating: true });
+
+      expect(state.alignedBy).toBe(null);
+      expect(getScrollTop()).toBe(1234);
+      for (const element of [button, fade, notice]) {
+        expect(element.style.getPropertyValue('visibility')).toBe('hidden');
+      }
+      for (const element of [inputBox, textarea, label]) {
+        expect(element.style.getPropertyValue('visibility')).toBe('');
+      }
+      // A current view shows the heading where it is stuck.
+      expect(heading.style.getPropertyValue('position')).toBe('sticky');
+      expect(heading.style.getPropertyPriority('position')).toBe('');
+
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      for (const element of [button, fade, notice]) {
+        expect(element.style.getPropertyValue('visibility')).toBe('');
+      }
     });
 
     it('hides a button that only shows up after scrolling', async () => {
