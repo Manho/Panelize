@@ -308,6 +308,7 @@ async function readModalState(page) {
       theme: document.documentElement.getAttribute('data-theme'),
       displayMediaCalls: window.__displayMediaCalls,
       visibleTabFlag: sessionStorage.getItem('panelize.snapshotVisibleTabCaptured'),
+      window: { innerWidth, innerHeight, devicePixelRatio },
     };
   });
 }
@@ -609,6 +610,9 @@ test('Share snapshot v3: latest turn, one tab-sharing grant and clean answers on
       const text = message.text();
       if (text.startsWith(ALIGNMENT_LOG_PREFIX)) {
         alignments.push(JSON.parse(text.slice(ALIGNMENT_LOG_PREFIX.length)));
+      } else if (text.includes('Window changed size during the snapshot')) {
+        // The window was re-tiled or resized under a capture, which started over.
+        summary.layoutRestarts = (summary.layoutRestarts ?? 0) + 1;
       } else if (message.type() === 'error') {
         consoleMessages.push({ type: 'error', text, url: message.location().url });
       }
@@ -754,6 +758,9 @@ test('Share snapshot v3: latest turn, one tab-sharing grant and clean answers on
     // Two Shares, one prompt from Chrome.
     expect(summary.steps.secondShare.displayMediaCalls).toBe(1);
     expect(summary.steps.aFull.alignment?.map((entry) => entry.name)).toHaveLength(V3_PROVIDERS.length);
+    // Every panel was stitched, none left as on screen.
+    expect(summary.steps.aFull.alignment.filter((entry) => !entry.alignedBy)).toEqual([]);
+    expect(summary.steps.bFull.alignment?.filter((entry) => !entry.alignedBy)).toEqual([]);
     expect(summary.extensionErrors).toEqual([]);
   } finally {
     await writeFile(path.join(V3_EVIDENCE_DIR, 'summary.json'), `${JSON.stringify({ ...summary, consoleMessages }, null, 2)}\n`);
