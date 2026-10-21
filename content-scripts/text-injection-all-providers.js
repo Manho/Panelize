@@ -34,6 +34,10 @@
   const SNAPSHOT_MAX_EDGE_RATIO = 0.4;
   const SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO = 0.5;
   const SNAPSHOT_EDGE_TOLERANCE_PX = 24;
+  // Floating buttons and fades hidden while stitching are at most this share
+  // of the visible conversation high; taller layers are backgrounds.
+  const SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO = 0.5;
+  const SNAPSHOT_HIDDEN_MASK_PROPERTIES = ['mask-image', '-webkit-mask-image'];
   const SNAPSHOT_SKIPPED_TEXT_PARENTS = [
     'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select',
     '[contenteditable=""]', '[contenteditable="true"]', '[aria-hidden="true"]'
@@ -3789,6 +3793,149 @@
     };
   }
 
+  /**
+   * Whether the element stays put while the container scrolls: it, or an
+   * ancestor inside the container, is fixed, stuck to an edge, or absolute
+   * against a box outside the scrolled content.
+   */
+  function isSnapshotPinned(element, container) {
+    if (!isSnapshotDocumentScroller(container) && !container.contains(element)) {
+      return true;
+    }
+    const containerRect = getSnapshotContainerRect(container);
+    for (let node = element; node && node !== container && node !== document.body; node = node.parentElement) {
+      const position = window.getComputedStyle(node).position;
+      if (position === 'fixed') {
+        return true;
+      }
+      if (position === 'sticky') {
+        // Sticky boxes in the middle of the content (e.g. code block
+        // headers) scroll like the rest until they reach an edge.
+        const rect = node.getBoundingClientRect();
+        if (Math.abs(rect.top - containerRect.top) <= SNAPSHOT_EDGE_TOLERANCE_PX
+          || Math.abs(rect.bottom - containerRect.bottom) <= SNAPSHOT_EDGE_TOLERANCE_PX) {
+          return true;
+        }
+      }
+      if (position === 'absolute' && !isSnapshotDocumentScroller(container)
+        && !isSnapshotScrolledContent(node, container)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hasSnapshotReadableText(element) {
+    // Icon fonts use private-use characters, which are not letters.
+    return /[\p{L}\p{N}]/u.test(element.textContent || '');
+  }
+
+  function saveSnapshotInlineStyle(element, property) {
+    return {
+      element,
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property)
+    };
+  }
+
+  /**
+   * Hides what would repeat on every stitched screen: buttons and fades
+   * pinned over the visible conversation (e.g. "Scroll to bottom"), and
+   * masks that fade the edges of the conversation. Layout is kept. Runs
+   * after every scroll, because some buttons only show up once the
+   * conversation is no longer at the bottom.
+   * @returns {boolean} Whether anything new was hidden.
+   */
+  function hideSnapshotFloatingElements(session) {
+    const { container, clip } = session;
+    const clipHeight = clip.bottom - clip.top;
+    if (!container || clipHeight <= 0 || clip.right <= clip.left) {
+      return false;
+    }
+    const hidden = session.hiddenElements;
+    let changed = false;
+
+    for (let node = container; node && node.style; node = node.parentElement) {
+      if (session.unmaskedElements.has(node)) {
+        continue;
+      }
+      const style = window.getComputedStyle(node);
+      const masked = SNAPSHOT_HIDDEN_MASK_PROPERTIES.some((property) => {
+        const value = style.getPropertyValue(property);
+        return value && value !== 'none';
+      });
+      if (masked) {
+        session.unmaskedElements.add(node);
+        SNAPSHOT_HIDDEN_MASK_PROPERTIES.forEach((property) => {
+          session.savedStyles.push(saveSnapshotInlineStyle(node, property));
+          node.style.setProperty(property, 'none', 'important');
+        });
+        changed = true;
+      }
+    }
+
+    for (const element of document.body?.querySelectorAll('*') || []) {
+      if (hidden.has(element) || element === container || element.contains(container)
+        || (session.matchElement && element.contains(session.matchElement))) {
+        continue;
+      }
+      const style = window.getComputedStyle(element);
+      const position = style.position;
+      if (position !== 'sticky' && position !== 'fixed' && position !== 'absolute') {
+        continue;
+      }
+      if (style.display === 'none') {
+        continue;
+      }
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || rect.height > clipHeight * SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO) {
+        continue;
+      }
+      if (rect.bottom <= clip.top || rect.top >= clip.bottom || rect.right <= clip.left || rect.left >= clip.right) {
+        continue;
+      }
+      const isButton = element.matches('button, [role="button"]');
+      if ((!isButton && hasSnapshotReadableText(element)) || !isSnapshotPinned(element, container)) {
+        continue;
+      }
+      hidden.add(element);
+      session.savedStyles.push(saveSnapshotInlineStyle(element, 'visibility'));
+      element.style.setProperty('visibility', 'hidden', 'important');
+      changed = true;
+    }
+    return changed;
+  }
+
+  function restoreSnapshotHiddenStyles(session) {
+    if (!session?.savedStyles) {
+      return;
+    }
+    // Newest first, so a property saved twice ends up as it started.
+    for (const { element, property, value, priority } of session.savedStyles.reverse()) {
+      if (value) {
+        element.style.setProperty(property, value, priority);
+      } else {
+        element.style.removeProperty(property);
+      }
+    }
+    session.savedStyles = [];
+    session.hiddenElements.clear();
+    session.unmaskedElements.clear();
+  }
+
+  /** Hides floating elements of a stitching session and waits for the result to show. */
+  async function settleSnapshotScreen(session) {
+    await waitForSnapshotPaint();
+    if (session.stitch && hideSnapshotFloatingElements(session)) {
+      await waitForSnapshotPaint();
+      // Buttons that only appeared after the first pass.
+      if (hideSnapshotFloatingElements(session)) {
+        await waitForSnapshotPaint();
+      }
+    }
+  }
+
   function waitForSnapshotPaint() {
     return new Promise((resolve) => {
       let settled = false;
@@ -3826,6 +3973,9 @@
   }
 
   async function handleSnapshotPrepare(data) {
+    // A capture that never restored, e.g. when the page went away.
+    restoreSnapshotHiddenStyles(snapshotSession);
+    snapshotSession = null;
     const provider = detectProvider();
     let container = null;
     let matchElement = null;
@@ -3841,8 +3991,13 @@
       id: data.sessionId,
       container,
       matched: Boolean(matchElement),
+      matchElement,
       originalScrollTop: getSnapshotScrollTop(container),
-      clip: getSnapshotClip(container, provider)
+      clip: getSnapshotClip(container, provider),
+      stitch: Boolean(data.stitch),
+      hiddenElements: new Set(),
+      unmaskedElements: new Set(),
+      savedStyles: []
     };
     snapshotSession = session;
 
@@ -3850,7 +4005,9 @@
       // Put the message just under the provider's header, not behind it.
       const offset = matchElement.getBoundingClientRect().top - session.clip.top - SNAPSHOT_ALIGN_MARGIN_PX;
       scrollSnapshotContainer(container, getSnapshotScrollTop(container) + offset);
-      await waitForSnapshotPaint();
+      await settleSnapshotScreen(session);
+    } else if (session.stitch) {
+      await settleSnapshotScreen(session);
     }
     postSnapshotState(data.requestId, session);
   }
@@ -3862,7 +4019,7 @@
       return;
     }
     scrollSnapshotContainer(session.container, data.scrollTop);
-    await waitForSnapshotPaint();
+    await settleSnapshotScreen(session);
     postSnapshotState(data.requestId, session);
   }
 
@@ -3873,6 +4030,7 @@
       return;
     }
     snapshotSession = null;
+    restoreSnapshotHiddenStyles(session);
     if (getSnapshotScrollTop(session.container) !== session.originalScrollTop) {
       scrollSnapshotContainer(session.container, session.originalScrollTop);
       await waitForSnapshotPaint();

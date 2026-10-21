@@ -252,11 +252,15 @@ function sampleFillColor(bitmap) {
   return getDominantColor(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
 }
 
-async function prepareAll(bridge, panels, prompt, signal) {
+/**
+ * @param {boolean} [stitch] - Also hide floating buttons and fades that would
+ *   repeat on every stitched screen.
+ */
+async function prepareAll(bridge, panels, prompt, signal, stitch = false) {
   const states = await Promise.all(panels.map((panel) => bridge.request(
     panel.iframe,
     SNAPSHOT_MESSAGES.PREPARE,
-    { align: Boolean(prompt), prompt: prompt || '' },
+    { align: Boolean(prompt), prompt: prompt || '', stitch },
     PREPARE_TIMEOUT_MS
   )));
   throwIfAborted(signal);
@@ -374,7 +378,7 @@ export async function captureFullAnswers({
   const visiblePanels = readPanels(panels, visibleGrid);
   const bitmaps = [];
   try {
-    const states = await prepareAll(bridge, visiblePanels, prompt, signal);
+    const states = await prepareAll(bridge, visiblePanels, prompt, signal, true);
     let frame = await source.grab();
     let screens = 1;
     try {

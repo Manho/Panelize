@@ -227,6 +227,7 @@ const CONVERSATION_PALETTE = {
   composer: CONVERSATION_COLORS.composer,
   earlier: CONVERSATION_COLORS.earlier,
   user: CONVERSATION_COLORS.user,
+  floating: CONVERSATION_COLORS.floating,
   ...Object.fromEntries(BLOCK_COLORS.map((color, index) => [`block${index}`, color])),
 };
 
@@ -487,8 +488,9 @@ test('the toolbar icon on the Panelize tab captures silently and the hint never 
     const header = names.indexOf('header');
     expect(names.slice(header, header + 3)).toEqual(['header', 'page', 'user']);
     expect(Math.abs(runs[header + 1].length - 16 * scale)).toBeLessThanOrEqual(3 * scale);
-    // What is on screen, the composer included.
+    // What is on screen, the composer and the floating button included.
     expect(names).toContain('composer');
+    expect(names.filter(name => name === 'floating')).toHaveLength(1);
     // The conversation is scrolled back once the capture is done.
     expect(await getThreadScrollTops(page)).toEqual([before]);
 
@@ -550,6 +552,8 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
       expect(names.filter(name => name === 'header'), `panel ${index}`).toHaveLength(1);
       expect(names, `panel ${index}`).not.toContain('composer');
       expect(names, `panel ${index}`).not.toContain('earlier');
+      // Floating buttons would repeat on every screen; they are left out.
+      expect(names, `panel ${index}`).not.toContain('floating');
       const blockRuns = runs.filter(run => run.name.startsWith('block'));
       expect(blockRuns.map(run => run.name), `panel ${index}`)
         .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
@@ -565,8 +569,11 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
         expect(fill.length).toBeGreaterThan(3 * blockHeight);
       }
     }
-    // Panels are back where they were.
+    // Panels are back where they were, floating buttons included.
     expect(await getThreadScrollTops(page)).toEqual(before);
+    for (let index = 0; index < 2; index += 1) {
+      await expect(page.frameLocator('#panel-grid iframe').nth(index).locator('#scroll-down')).toBeVisible();
+    }
 
     // The current view is kept; switching back does not capture again.
     await page.locator('.share-mode-btn[data-mode="current"]').click();

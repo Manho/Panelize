@@ -2,7 +2,8 @@
  * Long chat page served in place of a provider inside multi-panel iframes,
  * for "Full answers" snapshots. It is laid out like ChatGPT: the
  * conversation scrolls in its own container under a sticky header, and the
- * composer floats over the bottom of it. Every part has a solid color, so a
+ * composer floats over the bottom of it, with a "Scroll to bottom" button
+ * floating over the middle of the conversation. Every part has a solid color, so a
  * column of the stitched image tells which parts were captured, in which
  * order and how often.
  *
@@ -35,6 +36,7 @@ export function renderConversationFixture({ prompt, blocks, blockHeight = CONVER
   .spacer { height: ${CONVERSATION_COLORS.composerHeight + 24}px; }
   form { position: absolute; left: 0; right: 0; bottom: 0; height: ${CONVERSATION_COLORS.composerHeight}px; margin: 0; background: ${rgb(CONVERSATION_COLORS.composer)}; }
   [data-composer-markdown] { height: 40px; margin: 12px; background: white; }
+  #scroll-down { position: absolute; top: 45%; left: 16px; width: ${CONVERSATION_COLORS.floatingSize}px; height: ${CONVERSATION_COLORS.floatingSize}px; padding: 0; border: 0; border-radius: 50%; background: ${rgb(CONVERSATION_COLORS.floating)}; }
 </style>
 </head>
 <body>
@@ -49,6 +51,7 @@ export function renderConversationFixture({ prompt, blocks, blockHeight = CONVER
     <div data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror" aria-label="Chat with ChatGPT"></div>
     <button type="submit" aria-label="Send">Send</button>
   </form>
+  <button id="scroll-down" type="button" aria-label="Scroll to bottom"></button>
   <script>
     const thread = document.getElementById('thread');
     thread.scrollTop = thread.scrollHeight;
@@ -64,7 +67,9 @@ export const CONVERSATION_COLORS = Object.freeze({
   composer: [0, 0, 200],
   earlier: [150, 150, 150],
   user: [60, 60, 60],
+  floating: [255, 0, 255],
   headerHeight: 48,
   composerHeight: 80,
   blockHeight: 300,
+  floatingSize: 36,
 });

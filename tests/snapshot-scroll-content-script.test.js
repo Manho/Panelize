@@ -196,6 +196,112 @@ describe('snapshot scroll protocol in provider frames', () => {
     expect(getScrollTop()).toBe(77);
   });
 
+  describe('while stitching full answers', () => {
+    const CLIP_BOTTOM = CONTAINER.top + CONTAINER.height - 120;
+
+    /** Absolute element with a fixed place on screen, inside `parent`. */
+    function addOverlay(parent, { tag = 'div', text = '', box, offsetParent = parent }) {
+      const element = document.createElement(tag);
+      element.style.position = 'absolute';
+      element.textContent = text;
+      setStaticRect(element, box);
+      Object.defineProperty(element, 'offsetParent', { configurable: true, get: () => offsetParent });
+      parent.appendChild(element);
+      return element;
+    }
+
+    function addFloatingParts(container) {
+      const composerBox = container.querySelector('textarea').parentElement;
+      return {
+        // Icon-only "Scroll to bottom" button above the composer.
+        button: addOverlay(composerBox, {
+          tag: 'button', text: '', box: { top: CLIP_BOTTOM - 60, left: 380, width: 36, height: 36 }
+        }),
+        fade: addOverlay(composerBox, { box: { top: CLIP_BOTTOM - 40, width: CONTAINER.width, height: 40 } }),
+        label: addOverlay(composerBox, { text: 'Thinking', box: { top: CLIP_BOTTOM - 30, left: 20, width: 80, height: 20 } })
+      };
+    }
+
+    it('hides pinned buttons and fades over the conversation, then restores them', async () => {
+      const { container, elements } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      const { button, fade, label } = addFloatingParts(container);
+      fade.style.setProperty('visibility', 'visible');
+      // Absolute parts of a message scroll with it.
+      const badge = addOverlay(elements[0], { box: { top: 300, left: 610, width: 20, height: 20 } });
+      const background = addOverlay(container, {
+        box: { top: CONTAINER.top, width: CONTAINER.width, height: CONTAINER.height }, offsetParent: document.body
+      });
+
+      await prepare('Explain how HTTPS works', { stitch: true });
+
+      expect(button.style.getPropertyValue('visibility')).toBe('hidden');
+      expect(fade.style.getPropertyValue('visibility')).toBe('hidden');
+      // Readable text, content and large layers stay.
+      expect(label.style.getPropertyValue('visibility')).toBe('');
+      expect(badge.style.getPropertyValue('visibility')).toBe('');
+      expect(background.style.getPropertyValue('visibility')).toBe('');
+
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+
+      expect(button.style.getPropertyValue('visibility')).toBe('');
+      expect(fade.style.getPropertyValue('visibility')).toBe('visible');
+      expect(fade.style.getPropertyPriority('visibility')).toBe('');
+    });
+
+    it('leaves floating elements alone for a current view', async () => {
+      const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      const { button, fade } = addFloatingParts(container);
+
+      await prepare('Explain how HTTPS works');
+
+      expect(button.style.getPropertyValue('visibility')).toBe('');
+      expect(fade.style.getPropertyValue('visibility')).toBe('');
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+    });
+
+    it('hides a button that only shows up after scrolling', async () => {
+      const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      const { button } = addFloatingParts(container);
+      button.style.display = 'none';
+
+      await prepare('Explain how HTTPS works', { stitch: true });
+      expect(button.style.getPropertyValue('visibility')).toBe('');
+
+      button.style.display = '';
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_SCROLL', sessionId: 'session-1', scrollTop: 2000 });
+      expect(button.style.getPropertyValue('visibility')).toBe('hidden');
+
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      expect(button.style.getPropertyValue('visibility')).toBe('');
+    });
+
+    it('removes masks that fade the conversation edges and puts them back', async () => {
+      const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      const wrapper = document.createElement('div');
+      wrapper.style.setProperty('mask-image', 'linear-gradient(transparent 0px, black 40px)');
+      container.replaceWith(wrapper);
+      wrapper.appendChild(container);
+
+      await prepare('Explain how HTTPS works', { stitch: true });
+      expect(wrapper.style.getPropertyValue('mask-image')).toBe('none');
+
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      expect(wrapper.style.getPropertyValue('mask-image')).toBe('linear-gradient(transparent 0px, black 40px)');
+    });
+
+    it('puts hidden elements back when a new capture starts without a restore', async () => {
+      const { container } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
+      const { button } = addFloatingParts(container);
+
+      await prepare('Explain how HTTPS works', { stitch: true });
+      expect(button.style.getPropertyValue('visibility')).toBe('hidden');
+
+      await prepare('Explain how HTTPS works', { sessionId: 'session-2' });
+      expect(button.style.getPropertyValue('visibility')).toBe('');
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-2' });
+    });
+  });
+
   it('ignores snapshot messages that do not come from the embedding page', async () => {
     const { getScrollTop } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
     const replies = [];
