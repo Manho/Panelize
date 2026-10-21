@@ -608,6 +608,62 @@ describe('snapshot scroll protocol in provider frames', () => {
     });
   });
 
+  describe('putting a virtual list back', () => {
+    /**
+     * DeepSeek: rows far from the position are not rendered, so the range is
+     * an estimate that is short at first and grows once the rows near the
+     * position render.
+     */
+    function createVirtualList(scrollTop) {
+      const conversation = createConversation([
+        { text: 'Explain how TCP works', offset: 300 },
+        { text: 'A long answer', offset: 400 }
+      ]);
+      let scrollHeight = CONTAINER.scrollHeight;
+      Object.defineProperty(conversation.container, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+      conversation.setScrollTop(scrollTop);
+      return { ...conversation, setScrollHeight: (value) => { scrollHeight = value; } };
+    }
+
+    async function restoreWhileTheRangeIsShort(list) {
+      list.setScrollHeight(CONTAINER.scrollHeight - 400);
+      const restored = sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      setTimeout(() => list.setScrollHeight(CONTAINER.scrollHeight), 250);
+      return restored;
+    }
+
+    it('goes back to the end when it was at the end', async () => {
+      const max = CONTAINER.scrollHeight - CONTAINER.height;
+      const list = createVirtualList(max);
+      const state = await prepare('Explain how TCP works', { stitch: true, hideFloating: true });
+      expect(state).toMatchObject({ alignedBy: 'prompt', originalScrollTop: max });
+
+      await restoreWhileTheRangeIsShort(list);
+      expect(list.getScrollTop()).toBe(max);
+    });
+
+    it('goes back to the position it was held short of', async () => {
+      const list = createVirtualList(3100);
+      await prepare('Explain how TCP works', { stitch: true, hideFloating: true });
+
+      await restoreWhileTheRangeIsShort(list);
+      expect(list.getScrollTop()).toBe(3100);
+    });
+
+    it('leaves a list the page scrolled itself meanwhile', async () => {
+      const list = createVirtualList(3100);
+      await prepare('Explain how TCP works', { stitch: true, hideFloating: true });
+
+      list.setScrollHeight(CONTAINER.scrollHeight - 400);
+      const restored = sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      // Held at 2900 by the range, then the page scrolls up on its own.
+      setTimeout(() => list.setScrollTop(1000), 50);
+      setTimeout(() => list.setScrollHeight(CONTAINER.scrollHeight), 250);
+      await restored;
+      expect(list.getScrollTop()).toBe(1000);
+    });
+  });
+
   it('ignores snapshot messages that do not come from the embedding page', async () => {
     const { getScrollTop } = createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
     const replies = [];

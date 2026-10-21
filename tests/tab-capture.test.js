@@ -192,6 +192,14 @@ describe('tab sharing kept between snapshots', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    for (const [key, descriptor] of originalWindowSize) {
+      if (descriptor) {
+        Object.defineProperty(window, key, descriptor);
+      } else {
+        delete window[key];
+      }
+    }
+    originalWindowSize.clear();
     delete HTMLVideoElement.prototype.requestVideoFrameCallback;
     if (originalSrcObject) {
       Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', originalSrcObject);
@@ -204,16 +212,35 @@ describe('tab sharing kept between snapshots', () => {
     }
   });
 
-  it('asks for this tab without the pointer', async () => {
+  /** Window size in CSS pixels and device scale, as Chrome reports them. */
+  const originalWindowSize = new Map();
+  function setWindowSize(width, height, scale) {
+    for (const key of ['innerWidth', 'innerHeight', 'devicePixelRatio']) {
+      if (!originalWindowSize.has(key)) {
+        originalWindowSize.set(key, Object.getOwnPropertyDescriptor(window, key));
+      }
+    }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: scale });
+  }
+
+  it('asks for this tab without the pointer, no larger than the tab in device pixels', async () => {
+    setWindowSize(948, 879, 2);
     const source = await createDisplayMediaSource();
     expect(calls).toHaveLength(1);
-    expect(calls[0].video).toEqual({ displaySurface: 'browser', cursor: 'never' });
+    // A larger frame makes Chrome scale the page up, and lay it out again
+    // whenever the constraints change.
+    expect(calls[0].video).toEqual({
+      displaySurface: 'browser', cursor: 'never', width: { max: 1896 }, height: { max: 1758 }
+    });
     expect(calls[0].preferCurrentTab).toBe(true);
     expect(source.kind).toBe(TAB_CAPTURE_KINDS.DISPLAY_MEDIA);
     source.close();
   });
 
   it('reuses the kept stream for the next snapshot, paused and slowed down in between', async () => {
+    setWindowSize(948, 879, 2);
     const first = await openTabCaptureSource({ preferVisibleTab: false });
     expect(first.reused).toBe(false);
     const { source } = first;
@@ -222,16 +249,23 @@ describe('tab sharing kept between snapshots', () => {
 
     await source.stop();
     expect(bitmap.video.paused).toBe(true);
-    expect(tracks[0].applyConstraints).toHaveBeenLastCalledWith({ frameRate: IDLE_CAPTURE_FRAME_RATE });
+    // Constraints are replaced as a whole: the size goes with the frame rate.
+    expect(tracks[0].applyConstraints).toHaveBeenLastCalledWith({
+      width: { max: 1896 }, height: { max: 1758 }, frameRate: IDLE_CAPTURE_FRAME_RATE
+    });
     expect(tracks[0].stop).not.toHaveBeenCalled();
 
     const second = await openTabCaptureSource({ preferVisibleTab: false, keptSource: source });
     expect(second).toMatchObject({ source, reused: true });
     expect(navigator.mediaDevices.getDisplayMedia).toHaveBeenCalledTimes(1);
 
+    // The window was resized in between: measured again.
+    setWindowSize(1200, 800, 2);
     await source.start();
     expect(bitmap.video.paused).toBe(false);
-    expect(tracks[0].applyConstraints).toHaveBeenLastCalledWith({ frameRate: 30 });
+    expect(tracks[0].applyConstraints).toHaveBeenLastCalledWith({
+      width: { max: 2400 }, height: { max: 1600 }, frameRate: 30
+    });
     await expect(source.grab()).resolves.toMatchObject({ width: 1280 });
     source.close();
   });

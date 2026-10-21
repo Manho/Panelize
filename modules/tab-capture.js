@@ -188,11 +188,29 @@ function assertCapturedThisTab(track, handle) {
   }
 }
 
+/**
+ * At most the tab's size in device pixels. A larger frame makes Chrome raise
+ * the device scale of the captured page to fill it, and reset and re-apply
+ * that scale whenever the constraints change: the panels then lay out at
+ * another size for a moment, which moves virtual lists such as DeepSeek's.
+ */
+function getTabCaptureSize() {
+  const scale = window.devicePixelRatio || 1;
+  return {
+    width: { max: Math.round(window.innerWidth * scale) },
+    height: { max: Math.round(window.innerHeight * scale) }
+  };
+}
+
+/**
+ * Sets the frame rate, with the tab's current size: constraints are
+ * replaced as a whole, and the tab may have been resized meanwhile.
+ */
 function setCaptureFrameRate(track, frameRate) {
   if (!frameRate || typeof track.applyConstraints !== 'function') {
     return Promise.resolve();
   }
-  return track.applyConstraints({ frameRate }).catch((error) => {
+  return track.applyConstraints({ ...getTabCaptureSize(), frameRate }).catch((error) => {
     console.warn('[TabCapture] Could not change the capture frame rate:', error);
   });
 }
@@ -227,8 +245,9 @@ export async function createDisplayMediaSource({ onEnded = () => {} } = {}) {
   let stream;
   try {
     stream = await mediaDevices.getDisplayMedia({
-      // The pointer would be drawn over the panels.
-      video: { displaySurface: 'browser', cursor: 'never' },
+      // The pointer would be drawn over the panels. Chrome ignores this for
+      // tabs ("motion"), so the page also hides it while capturing.
+      video: { displaySurface: 'browser', cursor: 'never', ...getTabCaptureSize() },
       audio: false,
       preferCurrentTab: true,
       selfBrowserSurface: 'include',

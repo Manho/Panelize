@@ -63,6 +63,8 @@
   ].join(', ');
   // How far an aligned message may be from where it was put.
   const SNAPSHOT_ALIGN_TOLERANCE_PX = 2;
+  // Paints to wait for a virtual list to grow back to the position it had.
+  const SNAPSHOT_RESTORE_ATTEMPTS = 10;
   // Inline properties set to take a sticky box out of sticking, keeping its
   // place in the flow.
   const SNAPSHOT_UNSTICK_PROPERTIES = ['position', 'top', 'right', 'bottom', 'left'];
@@ -4309,7 +4311,7 @@
       alignedBy: session?.alignedBy || null,
       scrollTop: container ? getSnapshotScrollTop(container) : 0,
       maxScrollTop: container ? getSnapshotMaxScrollTop(container) : 0,
-      originalScrollTop: container ? session.scrolled.get(container) ?? null : null,
+      originalScrollTop: container ? session.scrolled.get(container)?.top ?? null : null,
       clip: session?.clip || null,
       viewport: getSnapshotViewport(),
       ...extra
@@ -4323,7 +4325,13 @@
     }
     session.container = container;
     if (!session.scrolled.has(container)) {
-      session.scrolled.set(container, getSnapshotScrollTop(container));
+      const top = getSnapshotScrollTop(container);
+      const maxScrollTop = getSnapshotMaxScrollTop(container);
+      session.scrolled.set(container, {
+        top,
+        maxScrollTop,
+        atEnd: top >= maxScrollTop - SNAPSHOT_ALIGN_TOLERANCE_PX
+      });
     }
     session.keptStickyElements.clear();
     if (session.stitch) {
@@ -4447,17 +4455,50 @@
     }
     snapshotSession = null;
     restoreSnapshotPage(session);
-    let moved = false;
-    for (const [container, top] of Array.from(session.scrolled).reverse()) {
-      if (getSnapshotScrollTop(container) !== top) {
-        scrollSnapshotContainer(container, top);
-        moved = true;
-      }
+    const positions = Array.from(session.scrolled).reverse();
+    let { scrolled, heldBack } = restoreSnapshotScrollPositions(positions, false);
+    // A virtual list (DeepSeek) renders the rows near its old position only
+    // once scrolled there, so its range can be short at first and hold it
+    // back: follow the range while it grows back.
+    for (let attempt = 0; heldBack && !snapshotSession && attempt < SNAPSHOT_RESTORE_ATTEMPTS; attempt += 1) {
+      await waitForSnapshotPaint();
+      scrolled = false;
+      ({ heldBack } = restoreSnapshotScrollPositions(positions, true));
     }
-    if (moved) {
+    if (scrolled) {
       await waitForSnapshotPaint();
     }
     postSnapshotState(data.requestId, session, { restored: true });
+  }
+
+  /**
+   * Scrolls each container back; one that was at the end goes back to the
+   * end. With `onlyHeldBack`, only containers left at the end of the short
+   * range seen last time are touched; one that moved off it was scrolled by
+   * the page meanwhile and is left alone.
+   * @returns {{scrolled: boolean, heldBack: boolean}} heldBack: a range is
+   *   still shorter than the position needs.
+   */
+  function restoreSnapshotScrollPositions(positions, onlyHeldBack) {
+    let scrolled = false;
+    let heldBack = false;
+    for (const [container, position] of positions) {
+      const current = getSnapshotScrollTop(container);
+      if (onlyHeldBack && (position.heldAt === undefined || Math.abs(current - position.heldAt) > 1)) {
+        continue;
+      }
+      const max = getSnapshotMaxScrollTop(container);
+      const target = position.atEnd ? max : position.top;
+      if (Math.abs(current - target) > 1) {
+        scrollSnapshotContainer(container, target);
+        scrolled = true;
+      }
+      const needed = position.atEnd ? position.maxScrollTop : position.top;
+      const reached = getSnapshotMaxScrollTop(container);
+      position.heldAt = reached < needed - 1 ? getSnapshotScrollTop(container) : undefined;
+      heldBack = heldBack || position.heldAt !== undefined;
+    }
+    return { scrolled, heldBack };
   }
 
   /** Returns true when the message belonged to the snapshot protocol. */
