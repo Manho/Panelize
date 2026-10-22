@@ -64,12 +64,12 @@ export class SnapshotCancelledError extends Error {
 }
 
 /**
- * The window or grid changed size during a capture, so the panels are no
- * longer where they were measured and the frames cannot be cropped.
+ * The window, grid or a panel changed size during a capture, so the panels
+ * are no longer where they were measured and the frames cannot be cropped.
  */
 export class SnapshotLayoutChangedError extends Error {
   constructor() {
-    super('The window changed size during the snapshot');
+    super('The layout changed during the snapshot');
     this.name = 'SnapshotLayoutChangedError';
   }
 }
@@ -82,20 +82,24 @@ function throwIfAborted(signal) {
 
 /**
  * Returns a check that throws SnapshotLayoutChangedError once the window
- * size, device scale, grid box or grid scroll differs from now, e.g. after a
- * tiling window manager re-tiles the window mid-capture.
+ * size, device scale, grid box, grid scroll or a panel's box differs from
+ * now, e.g. after a tiling window manager re-tiles the window or a panel
+ * divider is dragged mid-capture.
  * @param {HTMLElement} grid
+ * @param {SnapshotPanel[]} panels
  */
-function watchLayout(grid) {
-  const read = () => {
-    const box = grid.getBoundingClientRect();
-    return [
-      window.innerWidth, window.innerHeight, window.devicePixelRatio,
-      box.left, box.top, box.width, box.height, grid.scrollLeft, grid.scrollTop
-    ]
-      .map((value) => Math.round(value * 100))
-      .join(',');
+function watchLayout(grid, panels) {
+  const boxOf = (element) => {
+    const box = element.getBoundingClientRect();
+    return [box.left, box.top, box.width, box.height];
   };
+  const read = () => [
+    window.innerWidth, window.innerHeight, window.devicePixelRatio,
+    ...boxOf(grid), grid.scrollLeft, grid.scrollTop,
+    ...panels.flatMap((panel) => [...boxOf(panel.element), ...boxOf(panel.iframe)])
+  ]
+    .map((value) => Math.round(value * 100))
+    .join(',');
   const measured = read();
   return () => {
     if (read() !== measured) {
@@ -457,7 +461,7 @@ export async function captureCurrentView({
   source, grid, panels, prompt, hideCursor = false, beforeGrab = async () => {}, signal
 }) {
   const bridge = createSnapshotBridge();
-  const checkLayout = watchLayout(grid);
+  const checkLayout = watchLayout(grid, panels);
   const { captured, area, outOfView } = readPanels(panels, grid);
   const visiblePanels = orderByGrid(captured);
   try {
@@ -512,7 +516,7 @@ export async function captureFullAnswers({
   onProgress = () => {}
 }) {
   const bridge = createSnapshotBridge();
-  const checkLayout = watchLayout(grid);
+  const checkLayout = watchLayout(grid, panels);
   const { captured: visiblePanels, area, outOfView } = readPanels(panels, grid);
   const bitmaps = [];
   try {

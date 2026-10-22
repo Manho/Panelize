@@ -897,7 +897,7 @@
     "message": "Couldn't capture the comparison"
   },
   "shareCaptureLayoutChanged": {
-    "message": "The window kept changing size, so the comparison couldn't be captured. Try again."
+    "message": "The window or panels kept changing size, so the comparison couldn't be captured. Try again."
   },
   "shareModeLabel": {
     "message": "Snapshot area"

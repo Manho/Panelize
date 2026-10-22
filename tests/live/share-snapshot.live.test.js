@@ -632,7 +632,7 @@ test('Share snapshot v3: latest turn, one tab-sharing grant and clean answers on
       const text = message.text();
       if (text.startsWith(ALIGNMENT_LOG_PREFIX)) {
         alignments.push(JSON.parse(text.slice(ALIGNMENT_LOG_PREFIX.length)));
-      } else if (text.includes('Window changed size during the snapshot')) {
+      } else if (text.includes('Layout changed during the snapshot')) {
         // The window was re-tiled or resized under a capture, which started over.
         summary.layoutRestarts = (summary.layoutRestarts ?? 0) + 1;
       } else if (message.type() === 'error') {

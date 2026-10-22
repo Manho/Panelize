@@ -739,7 +739,7 @@ test('Full answers starts over when the window changes size mid-capture', async 
     ], '1x2');
     const restarts = [];
     page.on('console', message => {
-      if (message.text().includes('Window changed size during the snapshot')) restarts.push(message.text());
+      if (message.text().includes('Layout changed during the snapshot')) restarts.push(message.text());
     });
 
     await clickToolbarIcon(extension, page);
@@ -1365,6 +1365,66 @@ test('switching tabs during a silent capture stops it instead of taking the othe
 
     await expect(page.getByText('Snapshot stopped: keep this Panelize tab in front until it is done')).toBeVisible();
     await expect(page.locator('#share-preview')).not.toHaveAttribute('src', /./);
+  } finally {
+    await extension.close();
+  }
+});
+
+test('Full answers starts over when a panel divider is dragged mid-capture', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const columns = [BLOCK_COLORS.slice(0, 6), BLOCK_COLORS.slice(6, 8)];
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: columns[0] },
+      { provider: 'deepseek', blocks: columns[1] },
+    ], '1x2');
+    const restarts = [];
+    page.on('console', message => {
+      if (message.text().includes('Layout changed during the snapshot')) restarts.push(message.text());
+    });
+    // Hold the second screen (after the grant probe and the first screen)
+    // until the divider has been dragged.
+    await page.evaluate(() => {
+      const capture = chrome.tabs.captureVisibleTab.bind(chrome.tabs);
+      let calls = 0;
+      chrome.tabs.captureVisibleTab = async (...args) => {
+        calls += 1;
+        if (calls === 3) {
+          window.heldFrame = true;
+          await new Promise(resolve => { window.releaseFrame = resolve; });
+        }
+        return capture(...args);
+      };
+    });
+
+    await clickToolbarIcon(extension, page);
+    await page.waitForFunction(() => window.heldFrame);
+    const widthsBefore = await page.locator('.panel-item').evaluateAll(items => items.map(item => item.offsetWidth));
+    const handle = await page.locator('.panel-resize-handle').first().boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 + 180, handle.y + 200, { steps: 5 });
+    await page.mouse.up();
+    const widthsAfter = await page.locator('.panel-item').evaluateAll(items => items.map(item => item.offsetWidth));
+    expect(widthsAfter[0]).toBeGreaterThan(widthsBefore[0] + 100);
+    await page.evaluate(() => window.releaseFrame());
+
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    expect(restarts.length).toBeGreaterThan(0);
+
+    // Each column holds its own panel's answer, cropped from the new layout.
+    const full = await inspectPreview(page);
+    for (const [index, blocks] of columns.entries()) {
+      const runs = await readConversationRuns(page, full, index, { hasNote: false });
+      expect(runs.filter(run => run.name === 'header'), `panel ${index}`).toHaveLength(1);
+      expect(runs.filter(run => run.name.startsWith('block')).map(run => run.name), `panel ${index}`)
+        .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
+    }
   } finally {
     await extension.close();
   }

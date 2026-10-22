@@ -208,7 +208,8 @@ describe('captureCurrentView', () => {
         }, contentWindow)));
       })
     };
-    return { panel: { id: name, name, iframe: { contentWindow }, element }, messages };
+    const iframe = { contentWindow, getBoundingClientRect: () => rect(left, 40, 400, 560) };
+    return { panel: { id: name, name, iframe, element }, messages };
   }
 
   it('hides floating controls, and the pointer when asked, and reports where each panel started', async () => {
@@ -341,6 +342,33 @@ describe('a window resized during a capture', () => {
     expect(chat.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
     expect(deep.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
     expect(source.frames.every((frame) => frame.close.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('stops full answers when a panel was resized in a window of the same size', async () => {
+    globalThis.createImageBitmap = vi.fn(async () => ({ width: 10, height: 10, close: vi.fn() }));
+    const chat = createScrollingPanel('ChatGPT', 0);
+    const deep = createScrollingPanel('DeepSeek', 400);
+    // The divider between the panels is dragged after the first screen.
+    const source = createSource((count) => {
+      if (count === 3) {
+        chat.panel.element.getBoundingClientRect = () => rect(0, 0, 580, 600);
+        chat.panel.iframe.getBoundingClientRect = () => rect(0, 40, 580, 560);
+        deep.panel.element.getBoundingClientRect = () => rect(580, 0, 220, 600);
+        deep.panel.iframe.getBoundingClientRect = () => rect(580, 40, 220, 560);
+      }
+    });
+
+    await expect(captureFullAnswers({
+      source,
+      grid: createGrid(),
+      panels: [chat.panel, deep.panel],
+      prompt: 'Explain HTTPS',
+      getChromeHeight: () => 100
+    })).rejects.toBeInstanceOf(SnapshotLayoutChangedError);
+
+    expect(source.grab).toHaveBeenCalledTimes(3);
+    expect(chat.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
+    expect(deep.messages.at(-1).type).toBe(SNAPSHOT_MESSAGES.RESTORE);
   });
 
   it('stops the current view when the window changed before the frame', async () => {

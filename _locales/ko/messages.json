@@ -880,7 +880,7 @@
     "message": "비교 화면을 캡처할 수 없습니다"
   },
   "shareCaptureLayoutChanged": {
-    "message": "창 크기가 계속 바뀌어 비교 화면을 캡처할 수 없습니다. 다시 시도해 주세요"
+    "message": "창이나 패널 크기가 계속 바뀌어 비교 화면을 캡처할 수 없습니다. 다시 시도해 주세요"
   },
   "shareModeLabel": {
     "message": "캡처 범위"

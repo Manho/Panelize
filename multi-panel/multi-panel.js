@@ -2450,8 +2450,8 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
         if (!(error instanceof SnapshotLayoutChangedError) || attempt >= SNAPSHOT_LAYOUT_ATTEMPTS) {
           throw error;
         }
-        // The panels moved under the capture: measure them again.
-        console.info('[Multi-Panel] Window changed size during the snapshot, starting over');
+        // The panels moved or changed size under the capture: measure them again.
+        console.info('[Multi-Panel] Layout changed during the snapshot, starting over');
       }
     }
     console.info('[Multi-Panel] Snapshot alignment:', JSON.stringify(result.alignment));
