@@ -1037,7 +1037,10 @@ test('Full answers over one tab-sharing stream truncates long answers with a not
 
     // Cancel a new run halfway: the dialog keeps the current view.
     await page.locator('.share-mode-btn[data-mode="full"]').click();
-    await expect(page.locator('#snapshot-progress-text')).toHaveText(/Capturing screen [3-9] of/);
+    // The pointer rests on the dialog, over the panels, so the run first waits
+    // for it to keep still; poll often enough to catch the early screens.
+    await expect.poll(() => page.locator('#snapshot-progress-text').textContent(), { intervals: [50] })
+      .toMatch(/Capturing screen [3-9] of/);
     await page.locator('#snapshot-cancel-btn').click();
     await expect(page.getByText('Snapshot cancelled')).toBeVisible();
     await expect(page.locator('#snapshot-progress')).toBeHidden();
