@@ -936,6 +936,9 @@
   "shareStreamStop": {
     "message": "Arrêter"
   },
+  "shareProgressHoldPointer": {
+    "message": "Ne bougez pas la souris un instant…"
+  },
   "shareProgressCancel": {
     "message": "Annuler"
   },

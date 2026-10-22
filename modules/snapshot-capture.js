@@ -435,16 +435,21 @@ function orderByGrid(panels) {
  * @param {SnapshotPanel[]} options.panels
  * @param {string} options.prompt - Shared prompt to align on; '' leaves panels as they are.
  * @param {boolean} [options.hideCursor]
+ * @param {(signal?: AbortSignal) => Promise<void>} [options.beforeGrab] - Runs
+ *   before each frame, e.g. to wait for the pointer to keep still.
  * @param {AbortSignal} [options.signal]
  * @returns {Promise<SnapshotCaptureResult>}
  */
-export async function captureCurrentView({ source, grid, panels, prompt, hideCursor = false, signal }) {
+export async function captureCurrentView({
+  source, grid, panels, prompt, hideCursor = false, beforeGrab = async () => {}, signal
+}) {
   const bridge = createSnapshotBridge();
   const checkLayout = watchLayout(grid);
   const { captured, area, outOfView } = readPanels(panels, grid);
   const visiblePanels = orderByGrid(captured);
   try {
     const states = await prepareAll(bridge, visiblePanels, { prompt, hideCursor }, signal);
+    await beforeGrab(signal);
     const frame = await source.grab();
     try {
       throwIfAborted(signal);
@@ -482,12 +487,15 @@ export async function captureCurrentView({ source, grid, panels, prompt, hideCur
  * @param {string} options.prompt
  * @param {(scale: number) => number} options.getChromeHeight - See getStitchBudget.
  * @param {boolean} [options.hideCursor]
+ * @param {(signal?: AbortSignal) => Promise<void>} [options.beforeGrab] - Runs
+ *   before each frame, e.g. to wait for the pointer to keep still.
  * @param {AbortSignal} [options.signal]
  * @param {(progress: {step: number, total: number}) => void} [options.onProgress]
  * @returns {Promise<SnapshotCaptureResult>}
  */
 export async function captureFullAnswers({
-  source, grid, panels, prompt, getChromeHeight, hideCursor = false, signal, onProgress = () => {}
+  source, grid, panels, prompt, getChromeHeight, hideCursor = false, beforeGrab = async () => {}, signal,
+  onProgress = () => {}
 }) {
   const bridge = createSnapshotBridge();
   const checkLayout = watchLayout(grid);
@@ -495,6 +503,7 @@ export async function captureFullAnswers({
   const bitmaps = [];
   try {
     const states = await prepareAll(bridge, visiblePanels, { prompt, stitch: true, hideCursor }, signal);
+    await beforeGrab(signal);
     let frame = await source.grab();
     let screens = 1;
     try {
@@ -630,6 +639,7 @@ export async function captureFullAnswers({
           break;
         }
         frame.close?.();
+        await beforeGrab(signal);
         frame = await source.grab();
         throwIfAborted(signal);
         checkLayout();

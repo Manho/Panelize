@@ -219,12 +219,19 @@ describe('captureCurrentView', () => {
     const quiet = createPanel('DeepSeek', 400, { alignedBy: null, scrollTop: 300, originalScrollTop: 300, maxScrollTop: 1000 });
     const frame = { width: window.innerWidth, height: window.innerHeight, close: vi.fn() };
 
+    const beforeGrab = vi.fn(async () => {});
     const result = await captureCurrentView({
-      source: { grab: async () => frame },
+      source: {
+        grab: async () => {
+          expect(beforeGrab).toHaveBeenCalledTimes(1);
+          return frame;
+        }
+      },
       grid,
       panels: [chat.panel, quiet.panel],
       prompt: 'Explain HTTPS',
-      hideCursor: true
+      hideCursor: true,
+      beforeGrab
     });
 
     expect(chat.messages[0]).toMatchObject({
@@ -355,7 +362,12 @@ describe('a window resized during a capture', () => {
     });
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
     const chat = createScrollingPanel('ChatGPT', 0);
-    const source = createSource(() => {});
+    const steps = [];
+    const source = createSource(() => steps.push('grab'));
+    const controller = new AbortController();
+    const beforeGrab = vi.fn(async () => {
+      steps.push('wait');
+    });
 
     try {
       const result = await captureFullAnswers({
@@ -363,8 +375,13 @@ describe('a window resized during a capture', () => {
         grid: createGrid(),
         panels: [chat.panel],
         prompt: 'Explain HTTPS',
-        getChromeHeight: () => 100
+        getChromeHeight: () => 100,
+        beforeGrab,
+        signal: controller.signal
       });
+      // Every frame waits first, e.g. for the pointer to keep still.
+      expect(steps).toEqual(Array.from({ length: result.screens }, () => ['wait', 'grab']).flat());
+      expect(beforeGrab).toHaveBeenCalledWith(controller.signal);
       expect(result.currentViewOnly).toEqual([]);
       expect(result.truncated).toEqual([]);
       expect(result.screens).toBe(source.grab.mock.calls.length);

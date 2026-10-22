@@ -2094,6 +2094,14 @@ html.snapshot-hide-cursor *::after {
   cursor: none !important;
 }
 
+/* Laid over the panels while tab sharing captures them; see pointer-guard.js. */
+.snapshot-pointer-shield {
+  position: fixed;
+  z-index: 1000;
+  background: transparent;
+  cursor: none;
+}
+
 [data-theme="dark"] .share-mode-switch {
   background: #2d2d2d;
 }

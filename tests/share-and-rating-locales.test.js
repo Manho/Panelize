@@ -40,6 +40,7 @@ const FEATURE_KEYS = [
   'shareToolbarHint',
   'shareProgressPreparing',
   'shareProgressStep',
+  'shareProgressHoldPointer',
   'shareProgressCancel',
   'shareStreamStatus',
   'shareStreamStop',

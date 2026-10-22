@@ -93,6 +93,7 @@ import {
   updatePanelFitState
 } from '../modules/panel-fit.js';
 import { setupPanelResize } from '../modules/panel-resize.js';
+import { createPointerGuard, createPointerTracker } from '../modules/pointer-guard.js';
 
 
 // ===== State Management =====
@@ -1973,6 +1974,10 @@ const SNAPSHOT_LAYOUT_ATTEMPTS = 3;
 // Tab sharing from an earlier snapshot, kept so Chrome asks only once.
 let keptSnapshotSource = null;
 let snapshotAbortController = null;
+// Where the pointer was last seen, so a tab-sharing capture knows whether
+// Chrome may draw it into the frames.
+const pointerTracker = createPointerTracker();
+let lastSnapshotProgress = null;
 let snapshotRenderTimer = null;
 let snapshotRenderSequence = 0;
 let snapshotIconPromise = null;
@@ -2165,6 +2170,7 @@ function updateSnapshotProgress(progress) {
   const text = document.getElementById('snapshot-progress-text');
   const bar = document.getElementById('snapshot-progress-bar');
   if (!text || !bar) return;
+  lastSnapshotProgress = progress;
   if (!progress) {
     text.textContent = t('shareProgressPreparing');
     bar.removeAttribute('value');
@@ -2174,6 +2180,17 @@ function updateSnapshotProgress(progress) {
   text.textContent = t('shareProgressStep', [String(progress.step), String(total)]);
   bar.max = total;
   bar.value = progress.step;
+}
+
+/** Asks the user to keep the pointer still while a frame waits for it. */
+function showSnapshotPointerWait(waiting) {
+  const text = document.getElementById('snapshot-progress-text');
+  if (!text) return;
+  if (waiting) {
+    text.textContent = t('shareProgressHoldPointer');
+  } else {
+    updateSnapshotProgress(lastSnapshotProgress);
+  }
 }
 
 function setSnapshotBusy(busy) {
@@ -2372,22 +2389,29 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
   const wasOpen = isShareModalOpen();
   setSnapshotBusy(true);
   let source = null;
+  let pointerGuard = null;
   try {
     const opened = await startSnapshotSource();
     source = opened.source;
     await updateSnapshotHint(opened);
     const hideCursor = source.kind === TAB_CAPTURE_KINDS.DISPLAY_MEDIA;
     document.documentElement.classList.toggle('snapshot-hide-cursor', hideCursor);
+    const grid = document.getElementById('panel-grid');
+    // CSS cannot hide the pointer from tab sharing: shield the panels and
+    // take each frame once Chrome has stopped drawing it.
+    pointerGuard = hideCursor
+      ? createPointerGuard({ area: grid, tracker: pointerTracker, onWaitChange: showSnapshotPointerWait })
+      : null;
 
     const theme = getSnapshotTheme();
     const showWatermark = (await getSetting('shareWatermarkEnabled')) !== false;
-    const grid = document.getElementById('panel-grid');
     const options = {
       source,
       grid,
       panels: getSnapshotPanels(),
       prompt: getSnapshotPrompt(),
       hideCursor,
+      beforeGrab: (signal) => pointerGuard?.waitUntilStill(signal),
       signal: controller.signal,
       onProgress: updateSnapshotProgress
     };
@@ -2438,6 +2462,7 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
     showToast(getCaptureErrorMessage(error));
   } finally {
     document.documentElement.classList.remove('snapshot-hide-cursor');
+    pointerGuard?.dispose();
     if (source && source === keptSnapshotSource) {
       // Paused until the next snapshot.
       source.stop().catch(error => console.warn('[Multi-Panel] Failed to pause tab sharing:', error));

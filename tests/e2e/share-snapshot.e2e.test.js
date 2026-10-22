@@ -1050,6 +1050,75 @@ test('Full answers over one tab-sharing stream truncates long answers with a not
   }
 });
 
+test('tab sharing shields the panels and waits for a moving pointer to keep still', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [ACCEPT_TAB_CAPTURE],
+  });
+  try {
+    const blocks = Array.from({ length: 8 }, (_, index) => BLOCK_COLORS[index % BLOCK_COLORS.length]);
+    const page = await openConversationPanels(extension, [{ provider: 'chatgpt', blocks }]);
+    await countDisplayMedia(page);
+    // Every text the progress shows, however briefly.
+    await page.evaluate(() => {
+      window.__progressTexts = [];
+      const text = document.getElementById('snapshot-progress-text');
+      new MutationObserver(() => window.__progressTexts.push(text.textContent))
+        .observe(text, { childList: true, characterData: true, subtree: true });
+    });
+    const progressTexts = () => page.evaluate(() => window.__progressTexts.splice(0));
+    const holdText = 'Keep the mouse still for a moment…';
+
+    // The first run needs a click for Chrome; later ones reuse the stream.
+    await page.locator('#share-snapshot-btn').click();
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('#snapshot-progress')).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#share-modal')).toBeHidden();
+    const share = () => page.evaluate(() => document.getElementById('share-snapshot-btn').click());
+
+    // A pointer resting away from the panels is not waited for.
+    const grid = await page.locator('#panel-grid').boundingBox();
+    await page.mouse.move(grid.x + grid.width / 2, grid.y + grid.height + 40);
+    await progressTexts();
+    await share();
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('#snapshot-progress')).toBeHidden();
+    const texts = await progressTexts();
+    expect(texts.some(text => text.startsWith('Capturing screen 2 of'))).toBe(true);
+    expect(texts).not.toContain(holdText);
+    await expect(page.locator('.snapshot-pointer-shield')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#share-modal')).toBeHidden();
+
+    // The pointer keeps moving over the panels while the next run starts.
+    await share();
+    await expect(page.locator('#snapshot-progress')).toBeVisible();
+    const shield = page.locator('.snapshot-pointer-shield');
+    for (let step = 0; step < 12; step += 1) {
+      await page.mouse.move(grid.x + grid.width / 2 + (step % 2) * 40, grid.y + grid.height / 2);
+      await page.waitForTimeout(250);
+    }
+    await expect(page.locator('#snapshot-progress-text')).toHaveText(holdText);
+    // The shield covers the panels, so the provider pages get no hover.
+    const box = await shield.boundingBox();
+    expect(box).toEqual(grid);
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, {
+      x: grid.x + grid.width / 2,
+      y: grid.y + grid.height / 2,
+    })).toBe('snapshot-pointer-shield');
+
+    // Once it keeps still the capture goes on and finishes.
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 30_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(shield).toHaveCount(0);
+    expect(await getDisplayMediaCalls(page)).toBe(1);
+  } finally {
+    await extension.close();
+  }
+});
+
 /**
  * Replaces the browser's screen capture with a stream that passes as this
  * tab, so tests can follow its life. window.__fakeTracks lists the tracks.

@@ -932,6 +932,9 @@
   "shareStreamStop": {
     "message": "停止"
   },
+  "shareProgressHoldPointer": {
+    "message": "請讓滑鼠保持不動片刻…"
+  },
   "shareProgressCancel": {
     "message": "取消"
   },
