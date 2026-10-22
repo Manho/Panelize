@@ -5,6 +5,7 @@ import {
   captureCurrentView,
   captureFullAnswers,
   createSnapshotBridge,
+  getCaptureArea,
   getPanelCellGeometry,
   getStitchBudget,
   intersectRects,
@@ -90,14 +91,62 @@ describe('panel geometry', () => {
     expect(intersectRects(rect(0, 0, 10, 10), rect(50, 50, 10, 10))).toMatchObject({ width: 0, height: 0 });
   });
 
-  it('skips hidden panels and panels scrolled out of the grid', () => {
+  const ids = ({ captured, outOfView }) => ({
+    captured: captured.map((panel) => panel.id),
+    outOfView: outOfView.map((panel) => panel.id)
+  });
+
+  it('takes only panels fully on screen and lists the cut ones as left out', () => {
+    // Six 400px columns in a 1200px grid, scrolled to the start.
+    const panels = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) => ({
+      id, rect: rect(4 + index * 404, 54, 400, 690)
+    }));
+    expect(ids(selectVisiblePanels(panels, visibleGrid))).toEqual({
+      captured: ['a', 'b'],
+      outOfView: ['c', 'd', 'e', 'f']
+    });
+  });
+
+  it('skips hidden panels without listing them', () => {
     const panels = [
       { id: 'a', rect: rect(4, 54, 590, 690) },
       { id: 'b', rect: rect(598, 54, 590, 690), hidden: true },
-      { id: 'c', rect: rect(1180, 54, 590, 690) },
-      { id: 'd', rect: rect(1100, 54, 590, 690) }
+      { id: 'c', rect: rect(1180, 54, 590, 690) }
     ];
-    expect(selectVisiblePanels(panels, visibleGrid).map((panel) => panel.id)).toEqual(['a', 'd']);
+    expect(ids(selectVisiblePanels(panels, visibleGrid))).toEqual({ captured: ['a'], outOfView: ['c'] });
+  });
+
+  it('counts a panel cut by a subpixel as fully on screen', () => {
+    const panels = [{ id: 'a', rect: rect(-0.5, 54, 400, 690) }, { id: 'b', rect: rect(798.4, 54, 403, 690) }];
+    expect(ids(selectVisiblePanels(panels, visibleGrid))).toEqual({ captured: ['a', 'b'], outOfView: [] });
+  });
+
+  it('falls back to the most visible panel when none fits', () => {
+    // A window narrower than one column.
+    const narrow = rect(0, 50, 300, 700);
+    const panels = [
+      { id: 'a', rect: rect(-280, 54, 400, 690) },
+      { id: 'b', rect: rect(124, 54, 400, 690) },
+      { id: 'c', rect: rect(528, 54, 400, 690) }
+    ];
+    expect(ids(selectVisiblePanels(panels, narrow))).toEqual({ captured: ['b'], outOfView: ['a', 'c'] });
+    expect(ids(selectVisiblePanels([{ id: 'a', rect: rect(270, 54, 400, 690) }], narrow)))
+      .toEqual({ captured: [], outOfView: ['a'] });
+  });
+
+  it('captures the panels plus the grid padding, within the visible grid', () => {
+    const panels = [{ rect: rect(408, 54, 400, 690) }, { rect: rect(812, 54, 400, 340) }, { rect: rect(812, 398, 400, 346) }];
+    expect(getCaptureArea(panels, rect(0, 50, 1300, 700))).toMatchObject({ left: 404, top: 50, right: 1216, bottom: 748 });
+    expect(getCaptureArea([], visibleGrid)).toBe(visibleGrid);
+  });
+
+  it('keeps the side padding even when the grid is scrolled flush to a panel', () => {
+    // Snapped to the start: the grid padding scrolled out on the left.
+    const panels = [{ rect: rect(0, 54, 400, 690) }, { rect: rect(404, 54, 400, 690) }];
+    expect(getCaptureArea(panels, visibleGrid)).toMatchObject({ left: 0, right: 804 });
+    // The most visible panel of a narrow window, cut on the left.
+    expect(getCaptureArea([{ rect: rect(-100, 54, 400, 690) }], rect(0, 50, 250, 700)))
+      .toMatchObject({ left: 0, right: 250 });
   });
 
   it('maps the conversation clip of a frame onto the page', () => {

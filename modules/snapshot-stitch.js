@@ -12,8 +12,14 @@ export const STITCH_STEP_RATIO = 0.75;
 export const STITCH_GRID_GAP = 4;
 export const STITCH_GRID_PADDING = 4;
 
-/** Panels narrower than this on screen are left out. */
+/**
+ * When no panel is fully on screen, the most visible one is captured if it
+ * shows at least this much.
+ */
 export const STITCH_MIN_VISIBLE_WIDTH = 40;
+
+/** Panels cut by at most this much still count as fully on screen. */
+export const STITCH_FULL_PANEL_TOLERANCE = 2;
 
 const ROW_TOLERANCE_PX = 2;
 

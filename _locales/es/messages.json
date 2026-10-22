@@ -912,6 +912,9 @@
   "shareCurrentViewOnly": {
     "message": "Solo vista actual: $1"
   },
+  "shareOutOfViewNote": {
+    "message": "No se ven enteros, omitidos: $1 — desplázate a los lados y vuelve a compartir para incluirlos"
+  },
   "shareShortcutHint": {
     "message": "Consejo: pulsa $1 en esta página para omitir la confirmación de Chrome"
   },

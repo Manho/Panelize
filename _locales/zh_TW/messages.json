@@ -908,6 +908,9 @@
   "shareCurrentViewOnly": {
     "message": "僅目前檢視：$1"
   },
+  "shareOutOfViewNote": {
+    "message": "未完整顯示，未截入：$1 — 左右捲動後重新截圖即可包含"
+  },
   "shareShortcutHint": {
     "message": "提示：在此頁面按 $1 即可略過 Chrome 的確認"
   },

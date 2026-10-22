@@ -34,6 +34,7 @@ const FEATURE_KEYS = [
   'shareSnapshotSubline',
   'shareTruncatedNote',
   'shareCurrentViewOnly',
+  'shareOutOfViewNote',
   'shareShortcutHint',
   'shareToolbarHint',
   'shareProgressPreparing',
@@ -75,6 +76,7 @@ describe('share and rating strings', () => {
       shareSnapshotSubline: ['$1'],
       shareTruncatedNote: ['$1'],
       shareCurrentViewOnly: ['$1'],
+      shareOutOfViewNote: ['$1'],
       shareShortcutHint: ['$1'],
       shareProgressStep: ['$1', '$2']
     };

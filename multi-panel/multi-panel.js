@@ -2184,13 +2184,16 @@ function updateShareNotes() {
   const capture = snapshotCaptures.get(snapshotMode);
   if (!notes) return;
   const lines = [];
+  if (capture?.outOfView.length) {
+    lines.push(t('shareOutOfViewNote', [formatProviderList(capture.outOfView, getSnapshotLocale())]));
+  }
   if (capture?.currentViewOnly.length) {
     lines.push(t('shareCurrentViewOnly', [formatProviderList(capture.currentViewOnly, getSnapshotLocale())]));
   }
   if (capture?.truncated) {
     lines.push(t('shareTruncatedNote', [String(capture.screens)]));
   }
-  notes.textContent = lines.join(' ');
+  notes.textContent = lines.join('\n');
   notes.hidden = lines.length === 0;
 }
 

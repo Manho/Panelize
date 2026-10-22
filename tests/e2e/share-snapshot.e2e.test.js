@@ -71,6 +71,9 @@ async function openChatgptPanel(extension) {
 const PROVIDER_ORIGINS = {
   chatgpt: 'https://chatgpt.com',
   deepseek: 'https://chat.deepseek.com',
+  gemini: 'https://gemini.google.com',
+  grok: 'https://grok.com',
+  kimi: 'https://www.kimi.com',
 };
 
 /**
@@ -824,6 +827,127 @@ test('Full answers keeps a panel whose page does not answer as on screen and say
     await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#share-capture-notes')).toBeVisible();
     await expect(page.locator('#share-capture-notes')).toHaveText('Current view only: DeepSeek');
+  } finally {
+    await extension.close();
+  }
+});
+
+/** Scrolls the grid sideways and waits until it settles. */
+async function scrollGridTo(page, left) {
+  await page.evaluate((left) => {
+    document.getElementById('panel-grid').scrollTo({ left, behavior: 'instant' });
+  }, left);
+  let last = null;
+  await expect.poll(async () => {
+    const now = await page.evaluate(() => document.getElementById('panel-grid').scrollLeft);
+    const settled = now === last;
+    last = now;
+    return settled;
+  }, { intervals: [250] }).toBe(true);
+}
+
+/**
+ * Checks the preview holds the 400px panels of `blocksByColumn`, in order,
+ * with `paddingX` CSS pixels of grid on either side and nothing more.
+ */
+async function expectPreviewColumns(page, preview, blocksByColumn, paddingX) {
+  const scale = await page.evaluate(() => window.devicePixelRatio);
+  const frameX = Math.round(SNAPSHOT_FRAME_STYLES.light.paddingX * scale);
+  const columns = blocksByColumn.length;
+  const contentWidth = Math.round((columns * 400 + (columns - 1) * 4 + paddingX * 2) * scale);
+  expect(Math.abs(preview.width - (contentWidth + frameX * 2))).toBeLessThanOrEqual(2);
+  for (const [index, blocks] of blocksByColumn.entries()) {
+    const x = frameX + (paddingX + index * 404 + FIXTURE_COLUMN_X) * scale;
+    const runs = getColorRuns(await readPreviewColumn(page, x), CONVERSATION_PALETTE)
+      .filter(run => run.length > 3 * scale && run.name.startsWith('block'));
+    expect(runs.map(run => run.name), `column ${index}`)
+      .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
+  }
+  if (paddingX > 0) {
+    const [left, right] = await readPreviewPixels(page, [
+      { x: frameX + scale, y: preview.height / 2 },
+      { x: frameX + contentWidth - 2 * scale, y: preview.height / 2 },
+    ]);
+    expectColorNear(left, [224, 224, 224]);
+    expectColorNear(right, [224, 224, 224]);
+  }
+}
+
+test('panels not fully on screen are left out of the snapshot and named in a note', async ({}, testInfo) => {
+  test.setTimeout(150_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    // Five 400px columns: three fit, the fourth shows a sliver.
+    const blocks = [0, 1, 2, 3, 4].map(index => BLOCK_COLORS.slice(index * 2 % 8, index * 2 % 8 + 2));
+    const page = await openConversationPanels(extension, ['chatgpt', 'deepseek', 'gemini', 'grok', 'kimi'].map(
+      (provider, index) => ({ provider, blocks: blocks[index] })
+    ), '1x5');
+    const notes = page.locator('#share-capture-notes');
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const full = await showFullAnswers(page);
+    await expect(notes).toHaveText(
+      'Not fully on screen, left out: Grok and Kimi — scroll sideways and share again to include them'
+    );
+    await expectPreviewColumns(page, full, blocks.slice(0, 3), 0);
+    await page.locator('#share-preview').screenshot({ path: testInfo.outputPath('share-preview-start-full.png') });
+
+    await page.locator('.share-mode-btn[data-mode="current"]').click();
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    const current = await waitForNewPreview(page, full.src);
+    await expect(notes).toHaveText(
+      'Not fully on screen, left out: Grok and Kimi — scroll sideways and share again to include them'
+    );
+    await expectPreviewColumns(page, current, blocks.slice(0, 3), 0);
+
+    // Scrolled to the end: what is fully on screen now.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#share-modal')).toBeHidden();
+    await scrollGridTo(page, 10_000);
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    const scrolled = await waitForNewPreview(page, current.src);
+    await expect(notes).toHaveText(
+      'Not fully on screen, left out: ChatGPT and DeepSeek — scroll sideways and share again to include them'
+    );
+    await expectPreviewColumns(page, scrolled, blocks.slice(2), 4);
+    await page.screenshot({ path: testInfo.outputPath('share-modal-end-current.png') });
+    await page.locator('#share-preview').screenshot({ path: testInfo.outputPath('share-preview-end-current.png') });
+  } finally {
+    await extension.close();
+  }
+});
+
+test('a window narrower than one column captures the most visible panel', async ({}, testInfo) => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: BLOCK_COLORS.slice(0, 2) },
+      { provider: 'deepseek', blocks: BLOCK_COLORS.slice(2, 4) },
+    ], '1x2');
+    await page.setViewportSize({ width: 360, height: 800 });
+    await scrollGridTo(page, 0);
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const full = await showFullAnswers(page);
+    await expect(page.locator('#share-capture-notes')).toHaveText(
+      'Not fully on screen, left out: DeepSeek — scroll sideways and share again to include them'
+    );
+    // The visible part of ChatGPT, up to the window edge.
+    const scale = await page.evaluate(() => window.devicePixelRatio);
+    const paddingX = Math.round(SNAPSHOT_FRAME_STYLES.light.paddingX * scale);
+    expect(Math.abs(full.width - (Math.round(360 * scale) + paddingX * 2))).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: testInfo.outputPath('share-modal-narrow.png') });
   } finally {
     await extension.close();
   }

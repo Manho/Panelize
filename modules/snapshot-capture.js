@@ -13,6 +13,7 @@ import {
 } from './share-snapshot.js';
 import {
   STITCH_GRID_GAP,
+  STITCH_FULL_PANEL_TOLERANCE,
   STITCH_GRID_PADDING,
   STITCH_MIN_VISIBLE_WIDTH,
   addStitchScreen,
@@ -79,14 +80,17 @@ function throwIfAborted(signal) {
 
 /**
  * Returns a check that throws SnapshotLayoutChangedError once the window
- * size, device scale or grid box differs from now, e.g. after a tiling
- * window manager re-tiles the window mid-capture.
+ * size, device scale, grid box or grid scroll differs from now, e.g. after a
+ * tiling window manager re-tiles the window mid-capture.
  * @param {HTMLElement} grid
  */
 function watchLayout(grid) {
   const read = () => {
     const box = grid.getBoundingClientRect();
-    return [window.innerWidth, window.innerHeight, window.devicePixelRatio, box.left, box.top, box.width, box.height]
+    return [
+      window.innerWidth, window.innerHeight, window.devicePixelRatio,
+      box.left, box.top, box.width, box.height, grid.scrollLeft, grid.scrollTop
+    ]
       .map((value) => Math.round(value * 100))
       .join(',');
   };
@@ -177,19 +181,52 @@ export function intersectRects(a, b) {
 }
 
 /**
- * Panels worth capturing: rendered and at least STITCH_MIN_VISIBLE_WIDTH
- * wide inside the visible part of the grid.
+ * Panels worth capturing: rendered and fully inside the visible part of the
+ * grid, so a scrolled grid never yields half panels. When none fits, as in a
+ * window narrower than one column, the most visible panel is taken instead.
  * @param {{rect: DOMRectReadOnly, hidden?: boolean}[]} panels
  * @param {ReturnType<typeof toRect>} visibleGrid
+ * @returns {{captured: object[], outOfView: object[]}} Panels to capture,
+ *   and the rendered ones left out.
  */
 export function selectVisiblePanels(panels, visibleGrid) {
-  return panels.filter((panel) => {
-    if (panel.hidden) {
-      return false;
-    }
-    const visible = intersectRects(panel.rect, visibleGrid);
-    return visible.width >= STITCH_MIN_VISIBLE_WIDTH && visible.height > 0;
+  const shown = panels.filter((panel) => !panel.hidden);
+  const visibleOf = new Map(shown.map((panel) => [panel, intersectRects(panel.rect, visibleGrid)]));
+  let captured = shown.filter((panel) => {
+    const visible = visibleOf.get(panel);
+    // The grid only scrolls sideways, so columns are what get cut.
+    return visible.height > 0 && visible.width >= panel.rect.width - STITCH_FULL_PANEL_TOLERANCE;
   });
+  if (captured.length === 0) {
+    const area = (panel) => visibleOf.get(panel).width * visibleOf.get(panel).height;
+    const best = shown
+      .filter((panel) => visibleOf.get(panel).width >= STITCH_MIN_VISIBLE_WIDTH && visibleOf.get(panel).height > 0)
+      .reduce((most, panel) => (!most || area(panel) > area(most) ? panel : most), null);
+    captured = best ? [best] : [];
+  }
+  return { captured, outOfView: shown.filter((panel) => !captured.includes(panel)) };
+}
+
+/**
+ * Part of the grid to capture: the captured panels plus the grid padding
+ * around them, within the visible grid. Sideways, the padding is as wide on
+ * both sides: a scrolled grid snaps a panel flush to its edge.
+ * @param {{rect: DOMRectReadOnly}[]} panels
+ * @param {ReturnType<typeof toRect>} visibleGrid
+ */
+export function getCaptureArea(panels, visibleGrid) {
+  if (panels.length === 0) {
+    return visibleGrid;
+  }
+  const left = Math.min(...panels.map((panel) => panel.rect.left));
+  const right = Math.max(...panels.map((panel) => panel.rect.right));
+  const paddingX = Math.max(0, Math.min(STITCH_GRID_PADDING, left - visibleGrid.left, visibleGrid.right - right));
+  return intersectRects(toRect({
+    left: left - paddingX,
+    top: Math.min(...panels.map((panel) => panel.rect.top)) - STITCH_GRID_PADDING,
+    right: right + paddingX,
+    bottom: Math.max(...panels.map((panel) => panel.rect.bottom)) + STITCH_GRID_PADDING
+  }), visibleGrid);
 }
 
 /**
@@ -337,6 +374,8 @@ function isUsableState(state) {
  * @property {number} scale - Output pixels per CSS pixel.
  * @property {string[]} names - Providers in the image, in grid order.
  * @property {string[]} currentViewOnly - Providers shown as on screen in full mode.
+ * @property {string[]} outOfView - Open providers left out because they were
+ *   not fully on screen, in grid order.
  * @property {boolean} truncated
  * @property {number} screens - Captures taken.
  * @property {SnapshotAlignment[]} alignment - Where each panel started and ended.
@@ -365,18 +404,21 @@ function describeAlignment(name, firstState, lastState = firstState) {
   };
 }
 
-function readPanels(panels, visibleGrid) {
-  return selectVisiblePanels(panels.map((panel) => ({
+/** Panels to capture, the area around them and the names left out. */
+function readPanels(panels, grid) {
+  const visibleGrid = intersectRects(grid.getBoundingClientRect(), toRect({
+    left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight
+  }));
+  const { captured, outOfView } = selectVisiblePanels(panels.map((panel) => ({
     ...panel,
     rect: panel.element.getBoundingClientRect(),
     hidden: !panel.element.isConnected || panel.element.checkVisibility?.() === false
   })), visibleGrid);
-}
-
-function getVisibleGrid(grid) {
-  return intersectRects(grid.getBoundingClientRect(), toRect({
-    left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight
-  }));
+  return {
+    captured,
+    area: getCaptureArea(captured, visibleGrid),
+    outOfView: orderByGrid(outOfView).map((panel) => panel.name)
+  };
 }
 
 function orderByGrid(panels) {
@@ -398,15 +440,15 @@ function orderByGrid(panels) {
 export async function captureCurrentView({ source, grid, panels, prompt, hideCursor = false, signal }) {
   const bridge = createSnapshotBridge();
   const checkLayout = watchLayout(grid);
-  const visibleGrid = getVisibleGrid(grid);
-  const visiblePanels = orderByGrid(readPanels(panels, visibleGrid));
+  const { captured, area, outOfView } = readPanels(panels, grid);
+  const visiblePanels = orderByGrid(captured);
   try {
     const states = await prepareAll(bridge, visiblePanels, { prompt, hideCursor }, signal);
     const frame = await source.grab();
     try {
       throwIfAborted(signal);
       checkLayout();
-      const { bitmap, scale } = await cropCapturedFrame(frame, getVisibleGrid(grid), {
+      const { bitmap, scale } = await cropCapturedFrame(frame, area, {
         maxWidth: SNAPSHOT_MAX_CAPTURE_WIDTH
       });
       return {
@@ -414,6 +456,7 @@ export async function captureCurrentView({ source, grid, panels, prompt, hideCur
         scale,
         names: visiblePanels.map((panel) => panel.name),
         currentViewOnly: [],
+        outOfView,
         truncated: false,
         screens: 1,
         alignment: visiblePanels.map((panel, index) => describeAlignment(panel.name, states[index]))
@@ -447,8 +490,7 @@ export async function captureFullAnswers({
 }) {
   const bridge = createSnapshotBridge();
   const checkLayout = watchLayout(grid);
-  const visibleGrid = getVisibleGrid(grid);
-  const visiblePanels = readPanels(panels, visibleGrid);
+  const { captured: visiblePanels, area, outOfView } = readPanels(panels, grid);
   const bitmaps = [];
   try {
     const states = await prepareAll(bridge, visiblePanels, { prompt, stitch: true, hideCursor }, signal);
@@ -460,7 +502,7 @@ export async function captureFullAnswers({
       const frameScale = frame.width / window.innerWidth;
       const { scale, contentHeight: budget } = getStitchBudget({
         frameScale,
-        gridWidth: visibleGrid.width,
+        gridWidth: area.width,
         getChromeHeight
       });
 
@@ -471,7 +513,7 @@ export async function captureFullAnswers({
         const iframeRect = panel.iframe.getBoundingClientRect();
         const panelRect = panel.rect;
         if (!isUsableState(state)) {
-          const rect = intersectRects(panelRect, visibleGrid);
+          const rect = intersectRects(panelRect, area);
           const head = await cropPageRect(frame, rect, scale);
           bitmaps.push(head);
           return {
@@ -479,7 +521,7 @@ export async function captureFullAnswers({
             fallback: true, headHeight: rect.height, head, track: null, segments: []
           };
         }
-        const geometry = getPanelCellGeometry({ panelRect, iframeRect, state, visibleGrid });
+        const geometry = getPanelCellGeometry({ panelRect, iframeRect, state, visibleGrid: area });
         const headHeight = Math.max(0, geometry.headBottom - geometry.top);
         const head = headHeight > 0
           ? await cropPageRect(frame, toRect({
@@ -596,12 +638,13 @@ export async function captureFullAnswers({
       }
 
       const capped = cells.some((cell) => cell.track && (cell.track.truncated || !cell.track.done));
-      const content = drawStitchedGrid({ cells, rows, visibleGrid, scale, budget, grid });
+      const content = drawStitchedGrid({ cells, rows, area, scale, budget, grid });
       return {
         content: content.canvas,
         scale,
         names: orderByGrid(cells).map((cell) => cell.panel.name),
         currentViewOnly: orderByGrid(cells).filter((cell) => cell.fallback).map((cell) => cell.panel.name),
+        outOfView,
         truncated: capped || content.truncated,
         screens,
         alignment: orderByGrid(cells).map((cell) => describeAlignment(
@@ -628,7 +671,7 @@ function getStitchedCellHeight(cell) {
   return cell.headHeight + content;
 }
 
-function drawStitchedGrid({ cells, rows, visibleGrid, scale, budget, grid }) {
+function drawStitchedGrid({ cells, rows, area, scale, budget, grid }) {
   // Fit what was actually captured, which can differ from the estimate.
   const rowBudget = budget - STITCH_GRID_PADDING * 2 - STITCH_GRID_GAP * Math.max(0, rows.length - 1);
   const fitted = allocateRowContentHeights(rows.map((row) => {
@@ -644,8 +687,8 @@ function drawStitchedGrid({ cells, rows, visibleGrid, scale, budget, grid }) {
         height: Math.min(getStitchedCellHeight(cell), fixed + fitted.caps[rowIndex])
       }));
     }),
-    gridLeft: visibleGrid.left,
-    gridWidth: visibleGrid.width
+    gridLeft: area.left,
+    gridWidth: area.width
   });
 
   const canvas = createCanvas(layout.width * scale, layout.height * scale);

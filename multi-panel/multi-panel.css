@@ -1904,6 +1904,11 @@ body {
   color: #455a64;
 }
 
+/* One note per line. */
+.share-notes {
+  white-space: pre-line;
+}
+
 .share-hint[hidden],
 .share-notes[hidden] {
   display: none;

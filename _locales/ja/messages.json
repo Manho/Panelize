@@ -912,6 +912,9 @@
   "shareCurrentViewOnly": {
     "message": "現在の表示のみ：$1"
   },
+  "shareOutOfViewNote": {
+    "message": "全体が表示されていないため除外：$1 — 横にスクロールしてもう一度共有すると含められます"
+  },
   "shareShortcutHint": {
     "message": "ヒント：このページで $1 を押すと Chrome の確認を省略できます"
   },
