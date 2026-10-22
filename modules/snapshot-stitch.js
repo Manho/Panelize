@@ -23,9 +23,13 @@ export const STITCH_FULL_PANEL_TOLERANCE = 2;
 
 const ROW_TOLERANCE_PX = 2;
 
+/** Rounding a page may add to where it was asked to scroll. */
+const SCROLL_TOLERANCE_PX = 1;
+
 /**
- * Times a page may answer without scrolling further before it is given up
- * on, e.g. once while it puts back its own scroll position.
+ * Times a page may answer without scrolling on, or by jumping past what is
+ * covered, before it is given up on, e.g. once while it puts back its own
+ * scroll position.
  */
 export const STITCH_STALL_RETRIES = 1;
 
@@ -91,13 +95,15 @@ export function addStitchScreen(track, { scrollTop, maxScrollTop }, frameIndex) 
   const visibleTop = scrollTop + clip.top;
   const visibleBottom = scrollTop + clip.bottom;
   const limit = track.start + track.cap;
+  // A page that jumped past what is covered would leave a hole.
+  const skipped = visibleTop > track.coveredUntil + SCROLL_TOLERANCE_PX;
 
   const from = Math.max(track.coveredUntil, visibleTop);
   let to = atEnd ? visibleBottom : Math.min(visibleBottom, visibleTop + track.step);
   to = Math.min(to, limit);
 
   let segment = null;
-  if (to > from) {
+  if (!skipped && to > from) {
     segment = {
       frameIndex,
       top: from - scrollTop,
@@ -115,12 +121,12 @@ export function addStitchScreen(track, { scrollTop, maxScrollTop }, frameIndex) 
     track.stalls = 0;
     // The bottom of a page at its end is the end, even if the page got shorter.
     track.done = track.coveredUntil >= track.end || (atEnd && to >= visibleBottom);
-  } else if (atEnd) {
+  } else if (atEnd && !skipped) {
     // Nothing below what is covered, e.g. the page got shorter.
     track.done = true;
   } else {
-    // The page did not scroll any further than last time: ask again, then
-    // keep what there is.
+    // The page did not scroll on, or jumped past what is covered: ask
+    // again, then keep what joins up.
     track.stalls += 1;
     if (track.stalls > STITCH_STALL_RETRIES) {
       track.stalled = true;

@@ -615,4 +615,39 @@ describe('stitched screens', () => {
       getContext.mockRestore();
     }
   });
+
+  it('name the panels whose page keeps jumping to its bottom, after asking again', async () => {
+    globalThis.createImageBitmap = vi.fn(async (frame, sx, sy, sw, sh, options) => ({
+      width: options.resizeWidth, height: options.resizeHeight, close: vi.fn()
+    }));
+    // jsdom has no canvas: a 2D context that draws nothing.
+    const context = new Proxy({}, {
+      get: (target, key) => (key in target ? target[key] : key === 'getImageData'
+        ? () => ({ data: new Uint8ClampedArray(4) })
+        : () => {}),
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    // One page goes back to its bottom on every scroll; the other does it once.
+    const jumpy = createScrollingPanel('ChatGPT', 0, undefined, 2000, { scrollTo: () => 2000 });
+    let jumps = 0;
+    const late = createScrollingPanel('DeepSeek', 400, undefined, 2000, {
+      scrollTo: (scrollTop) => (scrollTop > 0 && jumps++ === 0 ? 2000 : scrollTop)
+    });
+
+    try {
+      const result = await captureFullAnswers({
+        source: createSource(() => {}),
+        grid: createGrid(),
+        panels: [jumpy.panel, late.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.interrupted).toEqual(['ChatGPT']);
+      expect(result.truncated).toEqual([]);
+      expect(result.alignment[1].endScrollTop).toBe(2000);
+    } finally {
+      getContext.mockRestore();
+    }
+  });
 });

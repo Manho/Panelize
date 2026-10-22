@@ -1474,3 +1474,50 @@ test('Full answers names a page that keeps putting back its scroll position', as
     await extension.close();
   }
 });
+
+test('Full answers keeps only what joins up when a page jumps to its bottom', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const columns = [BLOCK_COLORS.slice(0, 8), BLOCK_COLORS.slice(0, 8)];
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: columns[0] },
+      { provider: 'deepseek', blocks: columns[1] },
+    ], '1x2');
+    // ChatGPT jumps to its bottom on every scroll; DeepSeek only once.
+    for (const [origin, jumps] of [[PROVIDER_ORIGINS.chatgpt, Infinity], [PROVIDER_ORIGINS.deepseek, 1]]) {
+      const frame = page.frames().find(candidate => candidate.url().startsWith(origin));
+      await frame.evaluate((jumps) => {
+        const thread = document.getElementById('thread');
+        let left = jumps;
+        window.addEventListener('message', (event) => {
+          if (event.data?.type === 'PANELIZE_SNAPSHOT_SCROLL' && event.data.scrollTop > 0 && left > 0) {
+            left -= 1;
+            thread.scrollTop = thread.scrollHeight;
+          }
+        });
+      }, jumps);
+    }
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('#share-capture-notes'))
+      .toHaveText('Could not be captured to the end, only the start is shown: ChatGPT');
+
+    const full = await inspectPreview(page);
+    const blockNames = (runs) => runs.filter(run => run.name.startsWith('block')).map(run => run.name);
+    const expected = columns[0].map(color => `block${BLOCK_COLORS.indexOf(color)}`);
+    // No hole: ChatGPT shows its first blocks, in order, and stops.
+    const chatgpt = blockNames(await readConversationRuns(page, full, 0));
+    expect(chatgpt.length).toBeGreaterThan(0);
+    expect(chatgpt.length).toBeLessThan(expected.length);
+    expect(chatgpt).toEqual(expected.slice(0, chatgpt.length));
+    expect(blockNames(await readConversationRuns(page, full, 1))).toEqual(expected);
+  } finally {
+    await extension.close();
+  }
+});

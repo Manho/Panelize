@@ -96,6 +96,34 @@ describe('stitch planning', () => {
     expect(track.coveredUntil).toBe(1200);
   });
 
+  it('keeps only what joins up when the page keeps jumping past where it was asked to go', () => {
+    const clip = { top: 0, bottom: 600 };
+    const track = createStitchTrack({ clip, scrollTop: 0, maxScrollTop: 3000 });
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 3000 }, 0);
+    // Asked for 450, the page puts itself back at its bottom.
+    expect(addStitchScreen(track, { scrollTop: 3000, maxScrollTop: 3000 }, 1)).toBeNull();
+    expect(track.done).toBe(false);
+    expect(getNextStitchScrollTop(track, { maxScrollTop: 3000 })).toBe(450);
+    expect(addStitchScreen(track, { scrollTop: 3000, maxScrollTop: 3000 }, 2)).toBeNull();
+    expect(track.done).toBe(true);
+    expect(track.stalled).toBe(true);
+    expect(track.coveredUntil).toBe(450);
+    expect(track.segments).toHaveLength(1);
+  });
+
+  it('carries on when a page that jumped ahead goes where it is asked the next time', () => {
+    const clip = { top: 0, bottom: 600 };
+    const track = createStitchTrack({ clip, scrollTop: 0, maxScrollTop: 600 });
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 600 }, 0);
+    addStitchScreen(track, { scrollTop: 600, maxScrollTop: 600 }, 1);
+    addStitchScreen(track, { scrollTop: 450, maxScrollTop: 600 }, 2);
+    addStitchScreen(track, { scrollTop: 600, maxScrollTop: 600 }, 3);
+    expect(track.done).toBe(true);
+    expect(track.stalled).toBe(false);
+    expect(track.segments.map(({ contentTop, height }) => [contentTop, height]))
+      .toEqual([[0, 450], [450, 450], [900, 300]]);
+  });
+
   it('finishes a page that shrank back to where it already was covered', () => {
     const clip = { top: 0, bottom: 600 };
     const track = createStitchTrack({ clip, scrollTop: 0, maxScrollTop: 450 });
