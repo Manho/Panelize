@@ -44,6 +44,8 @@
   // of the visible conversation high; taller layers are backgrounds.
   const SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO = 0.5;
   const SNAPSHOT_HIDDEN_MASK_PROPERTIES = ['mask-image', '-webkit-mask-image'];
+  // Ancestors with these cut off what lies outside them.
+  const SNAPSHOT_CLIPPING_OVERFLOW = /^(hidden|clip|auto|scroll|overlay)$/;
   const SNAPSHOT_SKIPPED_TEXT_PARENTS = [
     'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select',
     '[contenteditable=""]', '[contenteditable="true"]', '[aria-hidden="true"]'
@@ -3706,12 +3708,28 @@
     const rect = container.getBoundingClientRect();
     const left = rect.left + container.clientLeft;
     const top = rect.top + container.clientTop;
-    return {
+    const box = {
       left: Math.max(0, left),
       top: Math.max(0, top),
       right: Math.min(viewport.width, left + container.clientWidth),
       bottom: Math.min(viewport.height, top + container.clientHeight)
     };
+    // Only what clipping ancestors show, e.g. not the part of a box scrolled
+    // sideways that is hidden under the side rail beside it.
+    for (let node = container.parentElement; node && !isSnapshotDocumentScroller(node); node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (!SNAPSHOT_CLIPPING_OVERFLOW.test(style.overflowX) && !SNAPSHOT_CLIPPING_OVERFLOW.test(style.overflowY)) {
+        continue;
+      }
+      const nodeRect = node.getBoundingClientRect();
+      const nodeLeft = nodeRect.left + node.clientLeft;
+      const nodeTop = nodeRect.top + node.clientTop;
+      box.left = Math.max(box.left, nodeLeft);
+      box.top = Math.max(box.top, nodeTop);
+      box.right = Math.min(box.right, nodeLeft + node.clientWidth);
+      box.bottom = Math.min(box.bottom, nodeTop + node.clientHeight);
+    }
+    return box;
   }
 
   function isLargeSnapshotContainer(element) {

@@ -132,6 +132,35 @@ describe('snapshot scroll protocol in provider frames', () => {
     expect(state.maxScrollTop).toBe(CONTAINER.scrollHeight - CONTAINER.height);
   });
 
+  it('keeps a side rail out of the clip when the box beside it is scrolled sideways', async () => {
+    const { container } = createConversation([
+      { text: 'Explain how HTTPS works in detail', offset: 300 },
+      { text: 'The newest answer', offset: 400 }
+    ]);
+    // Like signed-in Qwen in a narrow panel: the content box beside a 60px
+    // rail is scrolled 30px sideways, so the conversation starts under it.
+    const rail = document.createElement('nav');
+    setStaticRect(rail, { top: 0, left: 0, width: 60, height: 800 });
+    const content = document.createElement('div');
+    content.style.overflowX = 'auto';
+    content.style.overflowY = 'auto';
+    Object.defineProperties(content, {
+      clientWidth: { configurable: true, get: () => 740 },
+      clientHeight: { configurable: true, get: () => 800 },
+      clientTop: { configurable: true, get: () => 0 },
+      clientLeft: { configurable: true, get: () => 0 }
+    });
+    setStaticRect(content, { top: 0, left: 60, width: 740, height: 800 });
+    setStaticRect(container, { ...CONTAINER, left: 30 });
+    document.body.append(rail, content);
+    content.appendChild(container);
+
+    const state = await prepare('Explain how HTTPS works in detail');
+
+    expect(state.clip.left).toBe(60);
+    expect(state.clip.right).toBe(800);
+  });
+
   it('cuts the fading backdrop of a header laid over the conversation from the clip', async () => {
     createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }], { stickyHeader: false });
     // Claude: an absolute title row next to the conversation, whose backdrop
