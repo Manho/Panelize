@@ -53,6 +53,8 @@ export const MAX_STITCH_SCREENS = 60;
 
 /** Height of the strip sampled for the fill color under shorter answers. */
 const FILL_SAMPLE_HEIGHT = 24;
+/** Frame pixels an edge may be off by float error and still count as on a row. */
+const EDGE_EPSILON = 0.01;
 
 export class SnapshotCancelledError extends Error {
   constructor() {
@@ -298,19 +300,28 @@ function createCanvas(width, height) {
  * Crops page CSS rectangle `rect` from a whole-tab frame at `scale`.
  * `height` overrides the output height, e.g. to end a segment exactly where
  * the next one starts.
+ * @param {object} [options]
+ * @param {boolean} [options.inside] - Keep the top and bottom edges to rows
+ *   wholly inside `rect`. A stitched screen of a page scaled to fit its
+ *   panel starts and ends between rows, and the row it shares with the page's
+ *   header or composer would show as a line at every seam.
  */
-function cropPageRect(frame, rect, scale, height = Math.max(1, Math.round(rect.height * scale))) {
+function cropPageRect(frame, rect, scale, height = Math.max(1, Math.round(rect.height * scale)), { inside = false } = {}) {
   const frameScaleX = frame.width / window.innerWidth;
   const frameScaleY = frame.height / window.innerHeight;
   // Round edges rather than sizes, so adjacent rectangles share their edge.
   const left = Math.round(rect.left * frameScaleX);
-  const top = Math.round(rect.top * frameScaleY);
+  const frameTop = rect.top * frameScaleY;
+  const frameBottom = (rect.top + rect.height) * frameScaleY;
+  // The margin keeps float error from dropping a whole row.
+  const top = inside ? Math.ceil(frameTop - EDGE_EPSILON) : Math.round(frameTop);
+  const bottom = inside ? Math.floor(frameBottom + EDGE_EPSILON) : Math.round(frameBottom);
   return createImageBitmap(
     frame,
     left,
     top,
     Math.max(1, Math.round((rect.left + rect.width) * frameScaleX) - left),
-    Math.max(1, Math.round((rect.top + rect.height) * frameScaleY) - top),
+    Math.max(1, bottom - top),
     { resizeWidth: Math.max(1, Math.round(rect.width * scale)), resizeHeight: height, resizeQuality: 'high' }
   );
 }
@@ -555,13 +566,17 @@ export async function captureFullAnswers({
         };
       }));
 
+      // Pages scaled to fit their panel are measured in their own CSS pixels;
+      // the image is planned in this page's.
+      const zoomOf = (cell) => cell.geometry.zoom;
+
       // Caps per row so capturing stops once the image is full.
       const rows = groupCellsIntoRows(cells);
       const rowBudget = budget - STITCH_GRID_PADDING * 2 - STITCH_GRID_GAP * Math.max(0, rows.length - 1);
       const estimates = rows.map((row) => {
         const fixed = Math.max(...row.map((cell) => cell.headHeight));
         const content = Math.max(0, ...row.map((cell) => (
-          cell.track ? cell.headHeight + getRemainingStitchHeight(cell.track) - fixed : 0
+          cell.track ? cell.headHeight + getRemainingStitchHeight(cell.track) * zoomOf(cell) - fixed : 0
         )));
         return { fixed, content };
       });
@@ -573,12 +588,12 @@ export async function captureFullAnswers({
         row.forEach((cell) => {
           if (cell.track) {
             // Cells with a taller head get less room for the conversation.
-            cell.track.cap = Math.max(0, planned.caps[rowIndex] + slack + estimates[rowIndex].fixed - cell.headHeight);
+            const cap = Math.max(0, planned.caps[rowIndex] + slack + estimates[rowIndex].fixed - cell.headHeight);
+            cell.track.cap = cap / zoomOf(cell);
           }
         });
       });
 
-      const zoomOf = (cell) => cell.geometry.zoom;
       const takeSegments = async (currentFrame, frameIndex, statesByCell) => {
         for (const cell of cells) {
           const state = statesByCell.get(cell);
@@ -599,7 +614,7 @@ export async function captureFullAnswers({
             right: geometry.contentRight,
             top,
             bottom: top + height
-          }), scale, Math.max(1, Math.round((contentTop + height) * scale) - Math.round(contentTop * scale)));
+          }), scale, Math.max(1, Math.round((contentTop + height) * scale) - Math.round(contentTop * scale)), { inside: true });
           bitmaps.push(bitmap);
           cell.segments.push({ bitmap, contentTop, height });
         }

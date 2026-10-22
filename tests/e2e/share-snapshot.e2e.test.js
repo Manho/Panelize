@@ -1274,6 +1274,34 @@ test('a stream that is not this tab is refused instead of cropped', async () => 
   }
 });
 
+test('Full answers of a long page scaled to fit its panel fits it by its size on screen', async () => {
+  test.setTimeout(150_000);
+  const extension = await launchExtension({
+    viewport: { width: 600, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    // 10000px laid out at 1000px wide and drawn at about 0.6: room to spare under the height cap.
+    const blocks = Array.from({ length: 25 }, (_, index) => BLOCK_COLORS[index % BLOCK_COLORS.length]);
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks, blockHeight: 400, minWidth: 1000 },
+    ]);
+    await expect(page.locator('#panel-grid iframe')).toHaveClass(/panel-fitted/);
+    const fittedFrame = page.frames().find(frame => frame.url().startsWith(PROVIDER_ORIGINS.chatgpt));
+    await expect.poll(() => fittedFrame.evaluate(() => window.innerWidth)).toBe(1000);
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 90_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const full = await showFullAnswers(page);
+    await expect(page.locator('#share-capture-notes')).toBeHidden();
+    const runs = await readConversationRuns(page, full, 0, { hasNote: false });
+    expect(runs.filter(run => run.name.startsWith('block'))).toHaveLength(blocks.length);
+  } finally {
+    await extension.close();
+  }
+});
+
 test('switching tabs during a silent capture stops it instead of taking the other tab', async () => {
   test.setTimeout(120_000);
   const extension = await launchExtension({

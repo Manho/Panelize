@@ -248,8 +248,13 @@ describe('captureCurrentView', () => {
   });
 });
 
-/** A panel whose page scrolls to wherever it is asked, in a 2000px conversation. */
-function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400, bottom: 500 }, maxScrollTop = 2000) {
+/**
+ * A panel whose page scrolls to wherever it is asked, in a 2000px conversation.
+ * `viewport` wider than the 400px iframe scales the page down to fit;
+ * `answers(message)` returning false makes the page stop answering.
+ */
+function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400, bottom: 500 }, maxScrollTop = 2000,
+  { viewport = { width: 400, height: 560 }, answers = () => true } = {}) {
   const element = document.createElement('div');
   element.getBoundingClientRect = () => rect(left, 0, 400, 600);
   document.body.appendChild(element);
@@ -257,16 +262,22 @@ function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400,
   const contentWindow = {
     postMessage: vi.fn((message) => {
       messages.push(message);
-      queueMicrotask(() => window.dispatchEvent(messageEvent({
+      const answered = answers(message);
+      queueMicrotask(() => window.dispatchEvent(messageEvent(answered ? {
         type: SNAPSHOT_MESSAGES.STATE,
         context: 'multi-panel-snapshot',
         requestId: message.requestId,
         clip: { left: 0, top: 50, right: 400, bottom: 500 },
-        viewport: { width: 400, height: 560 },
+        viewport,
         alignedBy: 'prompt',
         scrollTop: message.scrollTop ?? 0,
         originalScrollTop: 0,
         maxScrollTop
+      } : {
+        type: SNAPSHOT_MESSAGES.STATE,
+        context: 'multi-panel-snapshot',
+        requestId: message.requestId,
+        error: 'no-session'
       }, contentWindow)));
     })
   };
@@ -468,6 +479,39 @@ describe('stitched screens', () => {
       });
       expect(result.names).toEqual(['Kimi', 'DeepSeek']);
       expect(result.truncated).toEqual(['Kimi']);
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+
+  it('fit pages scaled down to their panel by their size on screen', async () => {
+    globalThis.createImageBitmap = vi.fn(async (frame, sx, sy, sw, sh, options) => ({
+      width: options.resizeWidth, height: options.resizeHeight, close: vi.fn()
+    }));
+    // jsdom has no canvas: a 2D context that draws nothing.
+    const context = new Proxy({}, {
+      get: (target, key) => (key in target ? target[key] : key === 'getImageData'
+        ? () => ({ data: new Uint8ClampedArray(4) })
+        : () => {}),
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    const clip = { left: 0, top: 50, right: 400, bottom: 500 };
+    // 12000px laid out at 800px wide and drawn at half size: 6000px on screen,
+    // within the image, next to a page shown at full size.
+    const scaled = createScrollingPanel('Kimi', 0, clip, 11550, { viewport: { width: 800, height: 1120 } });
+    const plain = createScrollingPanel('DeepSeek', 400, clip, 3000);
+
+    try {
+      const result = await captureFullAnswers({
+        source: createSource(() => {}),
+        grid: createGrid(),
+        panels: [scaled.panel, plain.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.truncated).toEqual([]);
+      expect(result.alignment.map(({ endScrollTop }) => endScrollTop)).toEqual([11550, 3000]);
     } finally {
       getContext.mockRestore();
     }
