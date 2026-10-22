@@ -89,11 +89,21 @@ test('a page wider than its panel is laid out at its width and scaled to fit', a
     // Two panels in 320px columns, like a full 1x12 grid.
     const page = await openMultiPanel(extension, { providers: ['kimi', 'chatgpt'], layout: '1x12' });
     const [kimi, chatgpt] = [0, 1].map(index => page.locator('#panel-grid iframe').nth(index));
+    await kimi.evaluate((frame) => {
+      window.panelFitChanges = [];
+      new MutationObserver(() => window.panelFitChanges.push(frame.classList.contains('panel-fitted')))
+        .observe(frame, { attributes: true, attributeFilter: ['class'] });
+    });
 
     await expect(kimi).toHaveClass(/panel-fitted/);
     const kimiFrame = providerFrame(page, 'https://www.kimi.com');
     // The cross-process frame takes its new viewport a moment after the iframe resizes.
     await expect.poll(() => kimiFrame.evaluate(() => window.innerWidth)).toBe(600);
+    // Laid out at its width, the page still needs it: the fit holds, it does not flicker.
+    await kimiFrame.evaluate(() => document.body.classList.add('relaid'));
+    // Two report periods (PAGE_WIDTH_REPORT_THROTTLE_MS) for the page to measure again.
+    await page.waitForTimeout(1000);
+    expect(await page.evaluate(() => window.panelFitChanges)).not.toContain(false);
     const fit = await kimi.evaluate(frame => ({
       frame: frame.getBoundingClientRect().width,
       panel: frame.parentElement.clientWidth,

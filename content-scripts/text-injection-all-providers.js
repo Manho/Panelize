@@ -719,8 +719,9 @@
    * Width the page's layout needs, in CSS pixels: the furthest an element
    * held open by a pixel min-width reaches from where it starts. Only the app
    * shell is scanned: floating layers (menus, popovers) and content of
-   * scrolling boxes (chat lists, code blocks, tables) are left out. Returns 0
-   * when nothing needs more room than the viewport.
+   * scrolling boxes (chat lists, code blocks, tables) are left out. It does
+   * not depend on the viewport width, so a page laid out at the width it
+   * needs keeps asking for it. Returns 0 when nothing is held open.
    */
   function measurePageNeededWidth() {
     const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
@@ -746,10 +747,7 @@
       const minWidth = style.minWidth.endsWith('px') ? parseFloat(style.minWidth) : 0;
       const startsOnScreen = rect.left >= -1 && rect.left < viewportWidth - 1;
       if (minWidth > 0 && rect.height > 0 && startsOnScreen && style.visibility !== 'hidden') {
-        const reach = rect.left + window.scrollX + minWidth;
-        if (reach > viewportWidth + 1) {
-          needed = Math.max(needed, Math.ceil(reach));
-        }
+        needed = Math.max(needed, Math.ceil(rect.left + window.scrollX + minWidth));
       }
       const scrolls = PAGE_WIDTH_SCROLLING_OVERFLOW.test(style.overflowX)
         || PAGE_WIDTH_SCROLLING_OVERFLOW.test(style.overflowY);
