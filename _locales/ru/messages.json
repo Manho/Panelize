@@ -912,6 +912,9 @@
   "shareTruncatedNote": {
     "message": "Слишком длинный ответ, на изображении показано только начало: $1"
   },
+  "shareInterruptedNote": {
+    "message": "Перестал отвечать во время захвата, показано только начало: $1"
+  },
   "shareCurrentViewOnly": {
     "message": "Только текущий вид: $1"
   },

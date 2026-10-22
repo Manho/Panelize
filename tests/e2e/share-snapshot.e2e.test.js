@@ -1302,6 +1302,33 @@ test('Full answers of a long page scaled to fit its panel fits it by its size on
   }
 });
 
+test('Full answers says which page stopped answering partway', async () => {
+  test.setTimeout(150_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const blocks = Array.from({ length: 30 }, (_, index) => BLOCK_COLORS[index % BLOCK_COLORS.length]);
+    const page = await openConversationPanels(extension, [{ provider: 'chatgpt', blocks }]);
+    // The session expires mid-capture and the page goes to a sign-in page.
+    await extension.context.route('https://auth.openai.com/**', route => route.fulfill({
+      contentType: 'text/html', body: '<!doctype html><title>Sign in</title><p>Please sign in</p>',
+    }));
+
+    await clickToolbarIcon(extension, page);
+    await expect.poll(() => page.locator('#snapshot-progress-text').textContent(), { intervals: [50] })
+      .toMatch(/Capturing screen [2-9] of/);
+    await page.locator('#panel-grid iframe').evaluate((frame) => { frame.src = 'https://auth.openai.com/log-in'; });
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#share-capture-notes'))
+      .toHaveText('Stopped responding during the capture, only the start is shown: ChatGPT');
+  } finally {
+    await extension.close();
+  }
+});
+
 test('switching tabs during a silent capture stops it instead of taking the other tab', async () => {
   test.setTimeout(120_000);
   const extension = await launchExtension({

@@ -516,4 +516,39 @@ describe('stitched screens', () => {
       getContext.mockRestore();
     }
   });
+
+  it('name the panels whose page stopped answering partway', async () => {
+    globalThis.createImageBitmap = vi.fn(async (frame, sx, sy, sw, sh, options) => ({
+      width: options.resizeWidth, height: options.resizeHeight, close: vi.fn()
+    }));
+    // jsdom has no canvas: a 2D context that draws nothing.
+    const context = new Proxy({}, {
+      get: (target, key) => (key in target ? target[key] : key === 'getImageData'
+        ? () => ({ data: new Uint8ClampedArray(4) })
+        : () => {}),
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    // The page navigates away (e.g. to a sign-in page) after its first screen.
+    const lost = createScrollingPanel('ChatGPT', 0, undefined, 2000, {
+      answers: (message) => message.type !== SNAPSHOT_MESSAGES.SCROLL
+    });
+    const whole = createScrollingPanel('DeepSeek', 400);
+
+    try {
+      const result = await captureFullAnswers({
+        source: createSource(() => {}),
+        grid: createGrid(),
+        panels: [lost.panel, whole.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.names).toEqual(['ChatGPT', 'DeepSeek']);
+      expect(result.interrupted).toEqual(['ChatGPT']);
+      expect(result.truncated).toEqual([]);
+      expect(result.alignment[1].endScrollTop).toBe(2000);
+    } finally {
+      getContext.mockRestore();
+    }
+  });
 });

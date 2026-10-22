@@ -2236,9 +2236,17 @@ async function updateSnapshotHint({ source, fallbackReason }) {
   snapshotHint = shortcut ? t('shareShortcutHint', [shortcut]) : t('shareToolbarHint');
 }
 
-// Names the panels whose answer was cut short, both in the dialog and in the image.
-function getSnapshotTruncatedNote(capture) {
-  return t('shareTruncatedNote', [formatProviderList(capture.truncated, getSnapshotLocale())]);
+// Names the panels whose answer is not shown whole, both in the dialog and in the image.
+function getSnapshotCutNotes(capture) {
+  const locale = getSnapshotLocale();
+  const notes = [];
+  if (capture.truncated.length) {
+    notes.push(t('shareTruncatedNote', [formatProviderList(capture.truncated, locale)]));
+  }
+  if (capture.interrupted.length) {
+    notes.push(t('shareInterruptedNote', [formatProviderList(capture.interrupted, locale)]));
+  }
+  return notes;
 }
 
 function updateShareNotes() {
@@ -2259,8 +2267,8 @@ function updateShareNotes() {
   if (capture?.currentViewOnly.length) {
     lines.push(t('shareCurrentViewOnly', [formatProviderList(capture.currentViewOnly, getSnapshotLocale())]));
   }
-  if (capture?.truncated.length) {
-    lines.push(getSnapshotTruncatedNote(capture));
+  if (capture) {
+    lines.push(...getSnapshotCutNotes(capture));
   }
   notes.textContent = lines.join('\n');
   notes.hidden = lines.length === 0;
@@ -2300,7 +2308,8 @@ async function renderSnapshot() {
       date: capture.date,
       locale
     }),
-    noteText: capture.truncated.length ? getSnapshotTruncatedNote(capture) : ''
+    // The image has room for one line.
+    noteText: getSnapshotCutNotes(capture).join(' · ')
   });
   const blob = await canvasToPngBlob(canvas);
   canvas.width = 0;

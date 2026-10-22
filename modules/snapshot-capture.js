@@ -389,6 +389,8 @@ function isUsableState(state) {
  *   not fully on screen, in grid order.
  * @property {string[]} truncated - Providers whose answer was cut short to
  *   fit the image, in grid order.
+ * @property {string[]} interrupted - Providers whose page stopped answering
+ *   partway, so only the start of their answer is shown, in grid order.
  * @property {number} screens - Captures taken.
  * @property {SnapshotAlignment[]} alignment - Where each panel started and ended.
  */
@@ -475,6 +477,7 @@ export async function captureCurrentView({
         currentViewOnly: [],
         outOfView,
         truncated: [],
+        interrupted: [],
         screens: 1,
         alignment: visiblePanels.map((panel, index) => describeAlignment(panel.name, states[index]))
       };
@@ -643,8 +646,10 @@ export async function captureFullAnswers({
         active.forEach((cell, index) => {
           const state = nextStates[index];
           if (!isUsableState(state)) {
-            // The page stopped answering (e.g. it navigated): keep what we have.
+            // The page stopped answering (e.g. it navigated): keep what we
+            // have and say it is not the whole answer.
             cell.track.done = true;
+            cell.interrupted = true;
             return;
           }
           cell.state = state;
@@ -672,7 +677,8 @@ export async function captureFullAnswers({
         names: orderByGrid(cells).map((cell) => cell.panel.name),
         currentViewOnly: orderByGrid(cells).filter((cell) => cell.fallback).map((cell) => cell.panel.name),
         outOfView,
-        truncated: orderByGrid(cells).filter(isCut).map((cell) => cell.panel.name),
+        truncated: orderByGrid(cells).filter((cell) => !cell.interrupted && isCut(cell)).map((cell) => cell.panel.name),
+        interrupted: orderByGrid(cells).filter((cell) => cell.interrupted).map((cell) => cell.panel.name),
         screens,
         alignment: orderByGrid(cells).map((cell) => describeAlignment(
           cell.panel.name,

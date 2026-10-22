@@ -912,6 +912,9 @@
   "shareTruncatedNote": {
     "message": "답변이 너무 길어 이미지에 앞부분만 표시됨: $1"
   },
+  "shareInterruptedNote": {
+    "message": "캡처 중 응답이 멈춰 앞부분만 표시됨: $1"
+  },
   "shareCurrentViewOnly": {
     "message": "현재 화면만: $1"
   },

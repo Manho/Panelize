@@ -908,6 +908,9 @@
   "shareTruncatedNote": {
     "message": "回答太長，圖片中只顯示了開頭部分：$1"
   },
+  "shareInterruptedNote": {
+    "message": "截圖過程中頁面停止回應，只顯示了開頭部分：$1"
+  },
   "shareCurrentViewOnly": {
     "message": "僅目前檢視：$1"
   },

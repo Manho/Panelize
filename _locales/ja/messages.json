@@ -912,6 +912,9 @@
   "shareTruncatedNote": {
     "message": "回答が長すぎるため、画像には冒頭のみ表示：$1"
   },
+  "shareInterruptedNote": {
+    "message": "キャプチャ中に応答が止まったため、冒頭のみ表示：$1"
+  },
   "shareCurrentViewOnly": {
     "message": "現在の表示のみ：$1"
   },

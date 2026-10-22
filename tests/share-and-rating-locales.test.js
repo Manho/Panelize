@@ -34,6 +34,7 @@ const FEATURE_KEYS = [
   'shareSnapshotCaption',
   'shareSnapshotSubline',
   'shareTruncatedNote',
+  'shareInterruptedNote',
   'shareCaptureTabHidden',
   'shareCurrentViewOnly',
   'shareOutOfViewNote',
@@ -79,6 +80,7 @@ describe('share and rating strings', () => {
     const substitutions = {
       shareSnapshotSubline: ['$1'],
       shareTruncatedNote: ['$1'],
+      shareInterruptedNote: ['$1'],
       shareCurrentViewOnly: ['$1'],
       shareOutOfViewNote: ['$1'],
       shareShortcutHint: ['$1'],
