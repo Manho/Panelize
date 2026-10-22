@@ -23,6 +23,24 @@ function renderShellPage(minWidth) {
 }
 
 /**
+ * App shell like Qwen's when signed in: a narrow rail of icons beside a
+ * scrolling content box that holds the app, held open by a min-width, with a
+ * colored strip at its far right edge.
+ */
+function renderRailShellPage(railWidth, minWidth) {
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  .layout { display: flex; height: 100%; }
+  .rail { width: ${railWidth}px; flex-shrink: 0; background: #ddd; }
+  .content { flex: 1; min-width: 0; overflow: auto; }
+  .panel { display: flex; height: 100%; min-width: ${minWidth}px; }
+  #edge { width: 20px; margin-left: auto; background: rgb(${EDGE_COLOR.join(',')}); }
+</style></head>
+<body><div class="layout"><div class="rail"></div><div class="content"><div class="panel">chat<div id="edge"></div></div></div></div></body></html>`;
+}
+
+/**
  * Responsive page with things wider than the panel that are meant to be:
  * a table scrolling sideways, an open menu and hidden or off-screen layers.
  */
@@ -123,6 +141,27 @@ test('a page wider than its panel is laid out at its width and scaled to fit', a
     await kimiFrame.evaluate(() => { document.querySelector('main').style.minWidth = '0px'; });
     await expect(kimi).not.toHaveClass(/panel-fitted/);
     await expect.poll(() => kimiFrame.evaluate(() => window.innerWidth)).toBe(fit.panel);
+  } finally {
+    await extension.close();
+  }
+});
+
+test('a page whose app sits beside a side rail is scaled to fit too', async () => {
+  test.setTimeout(90_000);
+  const extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+  try {
+    await extension.context.route('https://www.kimi.com/**', route => route.fulfill({
+      contentType: 'text/html', body: renderRailShellPage(60, 440),
+    }));
+    const page = await openMultiPanel(extension, { providers: ['kimi'], layout: '1x12' });
+    const kimi = page.locator('#panel-grid iframe').first();
+
+    await expect(kimi).toHaveClass(/panel-fitted/);
+    const kimiFrame = providerFrame(page, 'https://www.kimi.com');
+    await expect.poll(() => kimiFrame.evaluate(() => window.innerWidth)).toBe(500);
+    const kimiBox = await kimi.boundingBox();
+    const edgePixel = await readScreenPixel(page, kimiBox.x + kimiBox.width - 4, kimiBox.y + 100);
+    edgePixel.forEach((channel, index) => expect(Math.abs(channel - EDGE_COLOR[index])).toBeLessThanOrEqual(12));
   } finally {
     await extension.close();
   }

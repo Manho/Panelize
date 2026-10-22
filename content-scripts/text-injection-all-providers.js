@@ -710,9 +710,14 @@
     return embedder === undefined || /^(chrome|moz)-extension:/.test(embedder);
   }
 
-  /** Boxes filling the viewport hold the app itself, even when they scroll or float. */
+  /**
+   * Boxes filling the viewport hold the app itself, even when they scroll or
+   * float; so do those filling most of it beside a side rail, e.g. Qwen's
+   * content box next to its rail of icons.
+   */
   function isPageShellBox(rect, viewportWidth, viewportHeight) {
-    return rect.left <= 1 && rect.right >= viewportWidth - 1 && rect.height >= viewportHeight / 2;
+    return rect.right >= viewportWidth - 1 && rect.width >= viewportWidth / 2
+      && rect.height >= viewportHeight / 2;
   }
 
   /**
