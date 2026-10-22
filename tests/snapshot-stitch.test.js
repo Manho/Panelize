@@ -70,14 +70,40 @@ describe('stitch planning', () => {
     expect(track.truncated).toBe(true);
   });
 
-  it('finishes when the page stops scrolling', () => {
+  it('asks again once, then gives up on a page that stops scrolling short of its end', () => {
     const clip = { top: 0, bottom: 600 };
     const track = createStitchTrack({ clip, scrollTop: 0, maxScrollTop: 3000 });
     addStitchScreen(track, { scrollTop: 0, maxScrollTop: 3000 }, 0);
-    // The page ignored the scroll request.
+    // The page ignored the scroll request, e.g. while restoring its own position.
     addStitchScreen(track, { scrollTop: 0, maxScrollTop: 3000 }, 1);
+    expect(track.done).toBe(false);
+    expect(getNextStitchScrollTop(track, { maxScrollTop: 3000 })).toBe(450);
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 3000 }, 2);
     expect(track.done).toBe(true);
+    expect(track.stalled).toBe(true);
     expect(track.segments).toHaveLength(1);
+  });
+
+  it('carries on when the page scrolls when asked again', () => {
+    const clip = { top: 0, bottom: 600 };
+    const track = createStitchTrack({ clip, scrollTop: 0, maxScrollTop: 600 });
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 600 }, 0);
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 600 }, 1);
+    addStitchScreen(track, { scrollTop: 450, maxScrollTop: 600 }, 2);
+    addStitchScreen(track, { scrollTop: 600, maxScrollTop: 600 }, 3);
+    expect(track.done).toBe(true);
+    expect(track.stalled).toBe(false);
+    expect(track.coveredUntil).toBe(1200);
+  });
+
+  it('finishes a page that shrank back to where it already was covered', () => {
+    const clip = { top: 0, bottom: 600 };
+    const track = createStitchTrack({ clip, scrollTop: 0, maxScrollTop: 450 });
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 450 }, 0);
+    // A section collapsed: the page now ends where the first screen did.
+    addStitchScreen(track, { scrollTop: 0, maxScrollTop: 0 }, 1);
+    expect(track.done).toBe(true);
+    expect(track.stalled).toBe(false);
   });
 
   it('follows content that grows while scrolling', () => {

@@ -930,7 +930,7 @@
     "message": "Too long for one image, only the start is shown: $1"
   },
   "shareInterruptedNote": {
-    "message": "Stopped responding during the capture, only the start is shown: $1"
+    "message": "Could not be captured to the end, only the start is shown: $1"
   },
   "shareCurrentViewOnly": {
     "message": "Current view only: $1"

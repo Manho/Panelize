@@ -913,7 +913,7 @@
     "message": "Zu lang für ein Bild, nur der Anfang wird gezeigt: $1"
   },
   "shareInterruptedNote": {
-    "message": "Hat während der Aufnahme nicht mehr reagiert, nur der Anfang wird gezeigt: $1"
+    "message": "Konnte nicht bis zum Ende aufgenommen werden, nur der Anfang wird gezeigt: $1"
   },
   "shareCurrentViewOnly": {
     "message": "Nur aktuelle Ansicht: $1"

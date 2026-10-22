@@ -252,10 +252,11 @@ describe('captureCurrentView', () => {
 /**
  * A panel whose page scrolls to wherever it is asked, in a 2000px conversation.
  * `viewport` wider than the 400px iframe scales the page down to fit;
- * `answers(message)` returning false makes the page stop answering.
+ * `answers(message)` returning false makes the page stop answering;
+ * `scrollTo(scrollTop)` is where the page ends up when asked to scroll there.
  */
 function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400, bottom: 500 }, maxScrollTop = 2000,
-  { viewport = { width: 400, height: 560 }, answers = () => true } = {}) {
+  { viewport = { width: 400, height: 560 }, answers = () => true, scrollTo = (scrollTop) => scrollTop } = {}) {
   const element = document.createElement('div');
   element.getBoundingClientRect = () => rect(left, 0, 400, 600);
   document.body.appendChild(element);
@@ -271,7 +272,7 @@ function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400,
         clip: { left: 0, top: 50, right: 400, bottom: 500 },
         viewport,
         alignedBy: 'prompt',
-        scrollTop: message.scrollTop ?? 0,
+        scrollTop: message.scrollTop === undefined ? 0 : scrollTo(message.scrollTop),
         originalScrollTop: 0,
         maxScrollTop
       } : {
@@ -575,6 +576,41 @@ describe('stitched screens', () => {
       expect(result.interrupted).toEqual(['ChatGPT']);
       expect(result.truncated).toEqual([]);
       expect(result.alignment[1].endScrollTop).toBe(2000);
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+
+  it('name the panels whose page would not scroll on, after asking again', async () => {
+    globalThis.createImageBitmap = vi.fn(async (frame, sx, sy, sw, sh, options) => ({
+      width: options.resizeWidth, height: options.resizeHeight, close: vi.fn()
+    }));
+    // jsdom has no canvas: a 2D context that draws nothing.
+    const context = new Proxy({}, {
+      get: (target, key) => (key in target ? target[key] : key === 'getImageData'
+        ? () => ({ data: new Uint8ClampedArray(4) })
+        : () => {}),
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    // One page keeps putting back its own position; the other does it once.
+    const stuck = createScrollingPanel('ChatGPT', 0, undefined, 2000, { scrollTo: () => 0 });
+    let resets = 0;
+    const late = createScrollingPanel('DeepSeek', 400, undefined, 2000, {
+      scrollTo: (scrollTop) => (scrollTop > 0 && resets++ === 0 ? 0 : scrollTop)
+    });
+
+    try {
+      const result = await captureFullAnswers({
+        source: createSource(() => {}),
+        grid: createGrid(),
+        panels: [stuck.panel, late.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.interrupted).toEqual(['ChatGPT']);
+      expect(result.truncated).toEqual([]);
+      expect(result.alignment.map(({ endScrollTop }) => endScrollTop)).toEqual([0, 2000]);
     } finally {
       getContext.mockRestore();
     }

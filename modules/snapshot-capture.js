@@ -394,7 +394,8 @@ function isUsableState(state) {
  * @property {string[]} truncated - Providers whose answer was cut short to
  *   fit the image, in grid order.
  * @property {string[]} interrupted - Providers whose page stopped answering
- *   partway, so only the start of their answer is shown, in grid order.
+ *   or scrolling partway, so only the start of their answer is shown, in
+ *   grid order.
  * @property {number} screens - Captures taken.
  * @property {SnapshotAlignment[]} alignment - Where each panel started and ended.
  */
@@ -673,6 +674,8 @@ export async function captureFullAnswers({
       }
 
       const content = drawStitchedGrid({ cells, rows, area, scale, budget, grid });
+      // Short of its end because the page stopped answering or scrolling.
+      const isInterrupted = (cell) => Boolean(cell.interrupted || cell.track?.stalled);
       const isCut = (cell) => Boolean(cell.track)
         && (cell.track.truncated || !cell.track.done || content.cut.has(cell));
       return {
@@ -681,8 +684,8 @@ export async function captureFullAnswers({
         names: orderByGrid(cells).map((cell) => cell.panel.name),
         currentViewOnly: orderByGrid(cells).filter((cell) => cell.fallback).map((cell) => cell.panel.name),
         outOfView,
-        truncated: orderByGrid(cells).filter((cell) => !cell.interrupted && isCut(cell)).map((cell) => cell.panel.name),
-        interrupted: orderByGrid(cells).filter((cell) => cell.interrupted).map((cell) => cell.panel.name),
+        truncated: orderByGrid(cells).filter((cell) => !isInterrupted(cell) && isCut(cell)).map((cell) => cell.panel.name),
+        interrupted: orderByGrid(cells).filter(isInterrupted).map((cell) => cell.panel.name),
         screens,
         alignment: orderByGrid(cells).map((cell) => describeAlignment(
           cell.panel.name,

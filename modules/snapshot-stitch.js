@@ -24,6 +24,12 @@ export const STITCH_FULL_PANEL_TOLERANCE = 2;
 const ROW_TOLERANCE_PX = 2;
 
 /**
+ * Times a page may answer without scrolling further before it is given up
+ * on, e.g. once while it puts back its own scroll position.
+ */
+export const STITCH_STALL_RETRIES = 1;
+
+/**
  * Scroll distance between two captures.
  * @param {number} clipHeight - Visible conversation height.
  */
@@ -52,6 +58,9 @@ export function createStitchTrack({ clip, scrollTop, maxScrollTop }, cap = Infin
     cap,
     done: clipHeight === 0,
     truncated: false,
+    // Stopped short of its end because the page would not scroll on.
+    stalled: false,
+    stalls: 0,
     segments: []
   };
 }
@@ -102,9 +111,21 @@ export function addStitchScreen(track, { scrollTop, maxScrollTop }, frameIndex) 
   if (track.coveredUntil >= limit && track.end > limit) {
     track.truncated = true;
     track.done = true;
-  } else if (track.coveredUntil >= track.end || !segment) {
-    // Done, or the page did not scroll any further than last time.
+  } else if (segment) {
+    track.stalls = 0;
+    // The bottom of a page at its end is the end, even if the page got shorter.
+    track.done = track.coveredUntil >= track.end || (atEnd && to >= visibleBottom);
+  } else if (atEnd) {
+    // Nothing below what is covered, e.g. the page got shorter.
     track.done = true;
+  } else {
+    // The page did not scroll any further than last time: ask again, then
+    // keep what there is.
+    track.stalls += 1;
+    if (track.stalls > STITCH_STALL_RETRIES) {
+      track.stalled = true;
+      track.done = true;
+    }
   }
   return segment;
 }

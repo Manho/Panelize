@@ -913,7 +913,7 @@
     "message": "Troppo lungo per un'unica immagine, è mostrato solo l'inizio: $1"
   },
   "shareInterruptedNote": {
-    "message": "Ha smesso di rispondere durante l'acquisizione, è mostrato solo l'inizio: $1"
+    "message": "Non è stato possibile acquisire fino alla fine, è mostrato solo l'inizio: $1"
   },
   "shareCurrentViewOnly": {
     "message": "Solo vista attuale: $1"

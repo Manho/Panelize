@@ -1323,7 +1323,7 @@ test('Full answers says which page stopped answering partway', async () => {
     await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
     await expect(page.locator('.share-mode-btn[data-mode="full"]')).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#share-capture-notes'))
-      .toHaveText('Stopped responding during the capture, only the start is shown: ChatGPT');
+      .toHaveText('Could not be captured to the end, only the start is shown: ChatGPT');
   } finally {
     await extension.close();
   }
@@ -1425,6 +1425,51 @@ test('Full answers starts over when a panel divider is dragged mid-capture', asy
       expect(runs.filter(run => run.name.startsWith('block')).map(run => run.name), `panel ${index}`)
         .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
     }
+  } finally {
+    await extension.close();
+  }
+});
+
+test('Full answers names a page that keeps putting back its scroll position', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const columns = [BLOCK_COLORS.slice(0, 8), BLOCK_COLORS.slice(0, 8)];
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: columns[0] },
+      { provider: 'deepseek', blocks: columns[1] },
+    ], '1x2');
+    // ChatGPT puts its position back on every scroll; DeepSeek only once.
+    for (const [origin, resets] of [[PROVIDER_ORIGINS.chatgpt, Infinity], [PROVIDER_ORIGINS.deepseek, 1]]) {
+      const frame = page.frames().find(candidate => candidate.url().startsWith(origin));
+      await frame.evaluate((resets) => {
+        const thread = document.getElementById('thread');
+        let preparedTop = null;
+        let left = resets;
+        window.addEventListener('message', (event) => {
+          if (event.data?.type === 'PANELIZE_SNAPSHOT_PREPARE') {
+            preparedTop = thread.scrollTop;
+          } else if (event.data?.type === 'PANELIZE_SNAPSHOT_SCROLL' && left > 0) {
+            left -= 1;
+            thread.scrollTop = preparedTop;
+          }
+        });
+      }, resets);
+    }
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#share-modal')).toBeVisible();
+    await expect(page.locator('#share-capture-notes'))
+      .toHaveText('Could not be captured to the end, only the start is shown: ChatGPT');
+
+    const full = await inspectPreview(page);
+    const runs = await readConversationRuns(page, full, 1);
+    expect(runs.filter(run => run.name.startsWith('block')).map(run => run.name))
+      .toEqual(columns[1].map(color => `block${BLOCK_COLORS.indexOf(color)}`));
   } finally {
     await extension.close();
   }
