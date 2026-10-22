@@ -873,6 +873,9 @@
   "shareCaptureWrongSurface": {
     "message": "Per creare l'istantanea, condividi questa scheda di Panelize"
   },
+  "shareCaptureTabHidden": {
+    "message": "Acquisizione interrotta: tieni questa scheda di Panelize in primo piano fino al termine"
+  },
   "shareCaptureFailed": {
     "message": "Impossibile acquisire il confronto"
   },

@@ -34,6 +34,7 @@ const FEATURE_KEYS = [
   'shareSnapshotCaption',
   'shareSnapshotSubline',
   'shareTruncatedNote',
+  'shareCaptureTabHidden',
   'shareCurrentViewOnly',
   'shareOutOfViewNote',
   'shareShortcutHint',

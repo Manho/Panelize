@@ -873,6 +873,9 @@
   "shareCaptureWrongSurface": {
     "message": "스냅샷을 찍으려면 이 Panelize 탭을 공유하세요"
   },
+  "shareCaptureTabHidden": {
+    "message": "스냅샷이 중단됨: 완료될 때까지 이 Panelize 탭을 앞에 두세요"
+  },
   "shareCaptureFailed": {
     "message": "비교 화면을 캡처할 수 없습니다"
   },

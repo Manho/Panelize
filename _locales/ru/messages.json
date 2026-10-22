@@ -873,6 +873,9 @@
   "shareCaptureWrongSurface": {
     "message": "Чтобы сделать снимок, выберите эту вкладку Panelize"
   },
+  "shareCaptureTabHidden": {
+    "message": "Снимок прерван: не уходите с этой вкладки Panelize, пока он не будет готов"
+  },
   "shareCaptureFailed": {
     "message": "Не удалось сделать снимок сравнения"
   },

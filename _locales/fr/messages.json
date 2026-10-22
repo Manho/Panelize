@@ -873,6 +873,9 @@
   "shareCaptureWrongSurface": {
     "message": "Pour faire la capture, partagez cet onglet Panelize"
   },
+  "shareCaptureTabHidden": {
+    "message": "Capture interrompue : gardez cet onglet Panelize au premier plan jusqu'à la fin"
+  },
   "shareCaptureFailed": {
     "message": "Impossible de capturer la comparaison"
   },

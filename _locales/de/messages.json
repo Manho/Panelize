@@ -873,6 +873,9 @@
   "shareCaptureWrongSurface": {
     "message": "Teile diesen Panelize-Tab, um einen Schnappschuss zu erstellen"
   },
+  "shareCaptureTabHidden": {
+    "message": "Aufnahme abgebrochen: Lass diesen Panelize-Tab im Vordergrund, bis sie fertig ist"
+  },
   "shareCaptureFailed": {
     "message": "Der Vergleich konnte nicht aufgenommen werden"
   },

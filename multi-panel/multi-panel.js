@@ -2050,6 +2050,7 @@ function stopSnapshotSharing() {
  */
 async function openSnapshotSource() {
   const opened = await openTabCaptureSource({
+    tabId: await getCurrentTabId(),
     keptSource: keptSnapshotSource,
     onEnded: handleSnapshotSharingEnded
   });
@@ -2365,6 +2366,7 @@ function getCaptureErrorMessage(error) {
   if (error instanceof TabCaptureError) {
     if (error.code === TAB_CAPTURE_ERRORS.CANCELLED) return t('shareCaptureCancelled');
     if (error.code === TAB_CAPTURE_ERRORS.WRONG_SURFACE) return t('shareCaptureWrongSurface');
+    if (error.code === TAB_CAPTURE_ERRORS.TAB_HIDDEN) return t('shareCaptureTabHidden');
   }
   return t('shareCaptureFailed');
 }

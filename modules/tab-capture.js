@@ -15,7 +15,8 @@ export const TAB_CAPTURE_ERRORS = Object.freeze({
   UNSUPPORTED: 'capture-unsupported',
   WRONG_SURFACE: 'capture-wrong-surface',
   PERMISSION: 'capture-permission',
-  NO_FRAME: 'capture-no-frame'
+  NO_FRAME: 'capture-no-frame',
+  TAB_HIDDEN: 'capture-tab-hidden'
 });
 
 export const TAB_CAPTURE_KINDS = Object.freeze({
@@ -117,31 +118,69 @@ export function dataUrlToBlob(dataUrl) {
 }
 
 /**
- * Silent capture through chrome.tabs.captureVisibleTab.
+ * Silent capture through chrome.tabs.captureVisibleTab. That takes whatever
+ * tab is in front of the window, so each frame is only kept when this tab
+ * was in front from before it was taken until after: switching tabs midway
+ * would put another tab's pixels under this comparison's title.
  * @param {object} options
- * @param {number} [options.windowId] - Window showing this page.
+ * @param {number} [options.windowId] - Window showing this page, when tabId is unknown.
+ * @param {number | null} [options.tabId] - This page's tab.
  * @param {typeof chrome.tabs} [options.tabs]
  * @param {ReturnType<typeof createCallThrottle>} [options.throttle]
  * @param {(blob: Blob) => Promise<ImageBitmap>} [options.decode]
+ * @param {Document} [options.doc] - This page, which is hidden while another tab is in front.
  */
 export function createVisibleTabSource({
   windowId,
+  tabId = null,
   tabs = globalThis.chrome?.tabs,
   throttle = visibleTabThrottle,
-  decode = (blob) => createImageBitmap(blob)
+  decode = (blob) => createImageBitmap(blob),
+  doc = globalThis.document
 } = {}) {
   if (typeof tabs?.captureVisibleTab !== 'function') {
     throw new TabCaptureError(TAB_CAPTURE_ERRORS.UNSUPPORTED, 'Tab capture is not available');
   }
+  // Counts the times the page was hidden, so a switch away and back is seen too.
+  let hidings = 0;
+  const onVisibilityChange = () => {
+    if (doc.visibilityState === 'hidden') {
+      hidings += 1;
+    }
+  };
+  doc?.addEventListener?.('visibilitychange', onVisibilityChange);
+  const tabHidden = () => new TabCaptureError(TAB_CAPTURE_ERRORS.TAB_HIDDEN, 'This tab is not in front');
+  /** Window to capture: the one this tab is in front of. */
+  const findShowingWindow = async () => {
+    if (doc?.visibilityState === 'hidden') {
+      throw tabHidden();
+    }
+    if (tabId === null || typeof tabs.get !== 'function') {
+      return windowId ?? null;
+    }
+    const tab = await tabs.get(tabId);
+    if (!tab?.active) {
+      throw tabHidden();
+    }
+    return tab.windowId;
+  };
   return {
     kind: TAB_CAPTURE_KINDS.VISIBLE_TAB,
     async grab() {
       for (let attempt = 0; ; attempt += 1) {
         await throttle.wait();
         try {
-          const dataUrl = await tabs.captureVisibleTab(windowId ?? null, { format: 'png' });
+          const hidingsBefore = hidings;
+          const showingWindow = await findShowingWindow();
+          const dataUrl = await tabs.captureVisibleTab(showingWindow, { format: 'png' });
+          if (hidings !== hidingsBefore || await findShowingWindow() !== showingWindow) {
+            throw tabHidden();
+          }
           return await decode(dataUrlToBlob(dataUrl));
         } catch (error) {
+          if (error instanceof TabCaptureError) {
+            throw error;
+          }
           if (isCapturePermissionError(error)) {
             throw new TabCaptureError(TAB_CAPTURE_ERRORS.PERMISSION, 'This tab has no capture grant', { cause: error });
           }
@@ -152,7 +191,9 @@ export function createVisibleTabSource({
         }
       }
     },
-    close() {}
+    close() {
+      doc?.removeEventListener?.('visibilitychange', onVisibilityChange);
+    }
   };
 }
 
@@ -407,30 +448,36 @@ export async function createDisplayMediaSource({ onEnded = () => {} } = {}) {
  * user activation to show Chrome's share dialog.
  * @param {object} [options]
  * @param {number} [options.windowId]
+ * @param {number | null} [options.tabId] - This page's tab, which silent capture is bound to.
  * @param {boolean} [options.preferVisibleTab]
  * @param {object | null} [options.keptSource] - A display media source from
  *   an earlier snapshot, used instead of asking again while it is active.
  * @param {() => void} [options.onEnded] - For a new display media source.
  * @returns {Promise<{source: object, fallbackReason: string | null, reused: boolean}>}
  *   fallbackReason is TAB_CAPTURE_ERRORS.PERMISSION when this tab has no
- *   activeTab grant, or UNSUPPORTED without the tabs API.
+ *   activeTab grant, or UNSUPPORTED without the tabs API. Rejects with
+ *   TAB_HIDDEN when another tab is in front.
  */
 export async function openTabCaptureSource({
   windowId,
+  tabId = null,
   preferVisibleTab = true,
   keptSource = null,
   onEnded
 } = {}) {
   let fallbackReason = null;
   if (preferVisibleTab) {
+    let source = null;
     try {
-      const source = createVisibleTabSource({ windowId });
+      source = createVisibleTabSource({ windowId, tabId });
       // Probe once: the grant can only be learned by trying.
       const probe = await source.grab();
       probe.close?.();
       return { source, fallbackReason, reused: false };
     } catch (error) {
-      if (!(error instanceof TabCaptureError)) {
+      source?.close();
+      // Sharing would not help while another tab is in front.
+      if (!(error instanceof TabCaptureError) || error.code === TAB_CAPTURE_ERRORS.TAB_HIDDEN) {
         throw error;
       }
       fallbackReason = error.code;

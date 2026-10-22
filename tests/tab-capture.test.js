@@ -128,6 +128,55 @@ describe('createVisibleTabSource', () => {
     await expect(failing.grab()).rejects.toThrow('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND');
   });
 
+  describe('bound to the tab it was opened from', () => {
+    const TAB = { id: 3, windowId: 7, active: true };
+
+    it('captures the window showing the tab', async () => {
+      const tabs = { get: vi.fn(async () => TAB), captureVisibleTab: vi.fn(async () => PNG) };
+      const source = createVisibleTabSource({ tabId: 3, tabs, throttle: immediateThrottle(), decode: async () => 'frame' });
+      expect(await source.grab()).toBe('frame');
+      expect(tabs.get).toHaveBeenCalledWith(3);
+      expect(tabs.captureVisibleTab).toHaveBeenCalledWith(7, { format: 'png' });
+    });
+
+    it('takes nothing while another tab is in front', async () => {
+      const tabs = { get: vi.fn(async () => ({ ...TAB, active: false })), captureVisibleTab: vi.fn(async () => PNG) };
+      const source = createVisibleTabSource({ tabId: 3, tabs, throttle: immediateThrottle(), decode: vi.fn() });
+      await expect(source.grab()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.TAB_HIDDEN });
+      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+    });
+
+    it('drops a frame taken while the user switched tabs', async () => {
+      const tabs = {
+        get: vi.fn().mockResolvedValueOnce(TAB).mockResolvedValueOnce({ ...TAB, active: false }),
+        captureVisibleTab: vi.fn(async () => PNG)
+      };
+      const decode = vi.fn();
+      const source = createVisibleTabSource({ tabId: 3, tabs, throttle: immediateThrottle(), decode });
+      await expect(source.grab()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.TAB_HIDDEN });
+      expect(decode).not.toHaveBeenCalled();
+    });
+
+    it('drops a frame when the page was hidden meanwhile, even if it is back', async () => {
+      const doc = new EventTarget();
+      doc.visibilityState = 'visible';
+      const tabs = {
+        get: vi.fn(async () => TAB),
+        captureVisibleTab: vi.fn(async () => {
+          doc.visibilityState = 'hidden';
+          doc.dispatchEvent(new Event('visibilitychange'));
+          doc.visibilityState = 'visible';
+          doc.dispatchEvent(new Event('visibilitychange'));
+          return PNG;
+        })
+      };
+      const decode = vi.fn();
+      const source = createVisibleTabSource({ tabId: 3, tabs, throttle: immediateThrottle(), decode, doc });
+      await expect(source.grab()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.TAB_HIDDEN });
+      expect(decode).not.toHaveBeenCalled();
+    });
+  });
+
   it('is unsupported without the tabs API', () => {
     expect(() => createVisibleTabSource({ tabs: {} })).toThrow(TabCaptureError);
   });
@@ -377,6 +426,17 @@ describe('tab sharing kept between snapshots', () => {
     await expect(source.start()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.WRONG_SURFACE });
     await expect(source.grab()).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.WRONG_SURFACE });
     source.close();
+  });
+
+  it('does not fall back to tab sharing when this tab is not in front', async () => {
+    const previousTabs = chrome.tabs;
+    chrome.tabs = { get: vi.fn(async () => ({ id: 3, windowId: 7, active: false })), captureVisibleTab: vi.fn() };
+    try {
+      await expect(openTabCaptureSource({ tabId: 3 })).rejects.toMatchObject({ code: TAB_CAPTURE_ERRORS.TAB_HIDDEN });
+      expect(navigator.mediaDevices.getDisplayMedia).not.toHaveBeenCalled();
+    } finally {
+      chrome.tabs = previousTabs;
+    }
   });
 
   it('still tries the silent capture first while a stream is kept', async () => {

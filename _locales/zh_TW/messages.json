@@ -869,6 +869,9 @@
   "shareCaptureWrongSurface": {
     "message": "要截圖，請選擇分享目前的 Panelize 分頁"
   },
+  "shareCaptureTabHidden": {
+    "message": "截圖已停止：完成前請保持在此 Panelize 分頁"
+  },
   "shareCaptureFailed": {
     "message": "無法擷取比較畫面"
   },

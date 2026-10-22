@@ -890,6 +890,9 @@
   "shareCaptureWrongSurface": {
     "message": "To take a snapshot, share this Panelize tab"
   },
+  "shareCaptureTabHidden": {
+    "message": "Snapshot stopped: keep this Panelize tab in front until it is done"
+  },
   "shareCaptureFailed": {
     "message": "Couldn't capture the comparison"
   },

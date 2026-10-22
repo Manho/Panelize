@@ -873,6 +873,9 @@
   "shareCaptureWrongSurface": {
     "message": "Para hacer la captura, comparte esta pestaña de Panelize"
   },
+  "shareCaptureTabHidden": {
+    "message": "Captura detenida: mantén esta pestaña de Panelize al frente hasta que termine"
+  },
   "shareCaptureFailed": {
     "message": "No se pudo capturar la comparación"
   },

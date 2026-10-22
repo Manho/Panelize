@@ -1273,3 +1273,44 @@ test('a stream that is not this tab is refused instead of cropped', async () => 
     await extension.close();
   }
 });
+
+test('switching tabs during a silent capture stops it instead of taking the other tab', async () => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const page = await openConversationPanels(extension, [{ provider: 'chatgpt', blocks: BLOCK_COLORS.slice(0, 2) }]);
+    // Another tab the extension may capture too.
+    const other = await extension.context.newPage();
+    await other.goto(extension.extensionUrl('multi-panel/multi-panel.html#other'));
+    await clickToolbarIcon(extension, other);
+    await expect(other.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
+    await expect(other.locator('#share-modal')).toBeVisible();
+
+    // Hold the first frame after the grant probe, until the user switched tabs.
+    await page.evaluate(() => {
+      const capture = chrome.tabs.captureVisibleTab.bind(chrome.tabs);
+      let calls = 0;
+      chrome.tabs.captureVisibleTab = async (...args) => {
+        calls += 1;
+        if (calls === 2) {
+          window.heldFrame = true;
+          await new Promise(resolve => { window.releaseFrame = resolve; });
+        }
+        return capture(...args);
+      };
+    });
+    await page.bringToFront();
+    await clickToolbarIcon(extension, page);
+    await page.waitForFunction(() => window.heldFrame);
+    await other.bringToFront();
+    await page.evaluate(() => window.releaseFrame());
+
+    await expect(page.getByText('Snapshot stopped: keep this Panelize tab in front until it is done')).toBeVisible();
+    await expect(page.locator('#share-preview')).not.toHaveAttribute('src', /./);
+  } finally {
+    await extension.close();
+  }
+});
