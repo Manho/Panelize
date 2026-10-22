@@ -454,6 +454,50 @@ test('editing the title re-renders the headline, and an empty title removes it',
   }
 });
 
+test('downloading or copying right after editing the title exports the edited title', async ({}, testInfo) => {
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [ACCEPT_TAB_CAPTURE],
+  });
+  try {
+    const page = await openChatgptPanel(extension);
+    await sendAll(page, 'Private title to remove before sharing');
+    await page.locator('#share-snapshot-btn').click();
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const title = page.locator('#share-title-input');
+    await expect(title).toHaveValue('Private title to remove before sharing');
+
+    const oneLine = await inspectPreview(page);
+    const scale = getPreviewScale(oneLine);
+    const layoutFor = (titleLineCount) => getSnapshotFrameLayout({
+      contentWidth: oneLine.width - Math.round(SNAPSHOT_FRAME_STYLES.light.paddingX * scale) * 2,
+      contentHeight: Math.round(oneLine.grid.height * scale),
+      scale,
+      titleLineCount,
+      hasSubline: true,
+    }).height;
+    const pngSize = (png) => [png.readUInt32BE(16), png.readUInt32BE(20)];
+
+    // Cleared, then exported before the preview had time to catch up.
+    await title.fill('');
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#share-download-btn').click();
+    const download = await downloadPromise;
+    const downloadPath = testInfo.outputPath(download.suggestedFilename());
+    await download.saveAs(downloadPath);
+    expect(pngSize(await readFile(downloadPath)))
+      .toEqual([oneLine.width, oneLine.height - layoutFor(1) + layoutFor(0)]);
+
+    await title.fill('A new headline');
+    await page.locator('#share-copy-btn').click();
+    await expect(page.getByText('Image copied to clipboard')).toBeVisible();
+    expect(await readClipboardImage(extension.context))
+      .toEqual({ types: ['image/png'], width: oneLine.width, height: oneLine.height });
+  } finally {
+    await extension.close();
+  }
+});
+
 test('the options toggle removes the brand row and the dark theme uses layout B', async ({}, testInfo) => {
   const extension = await launchExtension({
     viewport: { width: 1280, height: 800 },

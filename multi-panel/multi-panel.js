@@ -1980,6 +1980,8 @@ const pointerTracker = createPointerTracker();
 let lastSnapshotProgress = null;
 let snapshotRenderTimer = null;
 let snapshotRenderSequence = 0;
+// Latest render of the share image, which exports wait for.
+let snapshotRender = Promise.resolve();
 let snapshotIconPromise = null;
 let snapshotHint = '';
 let currentTabIdPromise = null;
@@ -2320,14 +2322,42 @@ async function renderSnapshot() {
   updateShareNotes();
 }
 
+/** Renders the share image now, instead of any render still scheduled. */
+function startSnapshotRender() {
+  clearTimeout(snapshotRenderTimer);
+  snapshotRenderTimer = null;
+  snapshotRender = renderSnapshot();
+  return snapshotRender;
+}
+
 function scheduleSnapshotRender() {
   clearTimeout(snapshotRenderTimer);
   snapshotRenderTimer = setTimeout(() => {
-    renderSnapshot().catch(error => {
+    startSnapshotRender().catch(error => {
       console.warn('[Multi-Panel] Failed to update the snapshot:', error);
       showToast(t('shareCaptureFailed'));
     });
   }, SNAPSHOT_TITLE_RENDER_DELAY_MS);
+}
+
+/**
+ * The share image as the dialog stands, e.g. with a title edit still waiting
+ * for its render; null when the dialog was closed meanwhile. Rejects when
+ * the latest render failed, rather than giving an older image.
+ */
+async function getUpToDateSnapshot() {
+  if (snapshotRenderTimer !== null) {
+    startSnapshotRender();
+  }
+  for (;;) {
+    const render = snapshotRender;
+    try {
+      await render;
+    } catch (error) {
+      if (render === snapshotRender) throw error;
+    }
+    if (render === snapshotRender) return currentSnapshot;
+  }
 }
 
 function releaseCurrentSnapshot() {
@@ -2361,6 +2391,7 @@ function closeShareModal() {
   if (isCapturingSnapshot) return;
   modal.style.display = 'none';
   clearTimeout(snapshotRenderTimer);
+  snapshotRenderTimer = null;
   snapshotRenderSequence += 1;
   document.getElementById('share-preview').removeAttribute('src');
   releaseCurrentSnapshot();
@@ -2462,7 +2493,7 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
     if (!wasOpen) {
       document.getElementById('share-title-input').value = normalizePromptText(getSnapshotPrompt());
     }
-    await renderSnapshot();
+    await startSnapshotRender();
     openShareModal();
   } catch (error) {
     if (isSnapshotCancellation(error)) {
@@ -2504,7 +2535,7 @@ function selectSnapshotMode(mode) {
       snapshotMode = mode;
       savePreferredSnapshotMode(mode);
       updateShareModeButtons();
-      renderSnapshot().catch(error => console.warn('[Multi-Panel] Failed to show the snapshot:', error));
+      startSnapshotRender().catch(error => console.warn('[Multi-Panel] Failed to show the snapshot:', error));
     }
     return;
   }
@@ -2519,20 +2550,33 @@ async function handleShareSnapshotRequest(payload = {}) {
   captureSnapshot(isShareModalOpen() ? snapshotMode : await loadPreferredSnapshotMode(), { refresh: true });
 }
 
-function downloadCurrentSnapshot() {
+async function downloadCurrentSnapshot() {
   if (!currentSnapshot) return;
+  let snapshot;
+  try {
+    snapshot = await getUpToDateSnapshot();
+  } catch (error) {
+    console.warn('[Multi-Panel] Failed to update the snapshot:', error);
+    showToast(t('shareCaptureFailed'));
+    return;
+  }
+  if (!snapshot) return;
   const link = document.createElement('a');
-  link.href = currentSnapshot.url;
-  link.download = currentSnapshot.fileName;
+  link.href = snapshot.url;
+  link.download = snapshot.fileName;
   link.click();
 }
 
 async function copyCurrentSnapshot() {
   if (!currentSnapshot) return;
   try {
-    await navigator.clipboard.write([
-      new ClipboardItem({ [currentSnapshot.blob.type]: currentSnapshot.blob })
-    ]);
+    // Written right away, while the click still allows it; the image follows
+    // once a pending title edit is drawn.
+    const blob = getUpToDateSnapshot().then((snapshot) => {
+      if (!snapshot) throw new Error('The share dialog was closed');
+      return snapshot.blob;
+    });
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
     showToast(t('shareCopied'));
   } catch (error) {
     console.warn('[Multi-Panel] Failed to copy snapshot:', error);
