@@ -3816,10 +3816,11 @@
   }
 
   /**
-   * Rendered messages that start like the prompt, best first: a match at the
-   * start of a text node (a message bubble) beats one in the middle of a
-   * paragraph, e.g. an answer quoting the question; then a match in the
-   * main conversation beats one elsewhere; then the latest wins.
+   * Rendered messages that start like the prompt, best first: a match in a
+   * known user message beats any other, e.g. an answer heading repeating the
+   * question; then a match at the start of a text node (a message bubble)
+   * beats one in the middle of a paragraph, e.g. an answer quoting it; then
+   * a match in the main conversation beats one elsewhere; then the latest wins.
    * @returns {{element: Element, container: Element}[]}
    */
   function findSnapshotPromptMatches(prompt, main) {
@@ -3836,7 +3837,8 @@
       if (element && isSnapshotConversationElement(element)) {
         const container = findSnapshotScrollContainer(element, main);
         if (container) {
-          const rank = (segment.start === offset ? 0 : 2) + (container === main ? 0 : 1);
+          const rank = (element.closest(SNAPSHOT_USER_TURN_SELECTORS) ? 0 : 4)
+            + (segment.start === offset ? 0 : 2) + (container === main ? 0 : 1);
           candidates.push({ element, container, rank });
         }
       }

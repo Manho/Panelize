@@ -180,6 +180,19 @@ describe('snapshot scroll protocol in provider frames', () => {
     expect(getScrollTop()).toBe(1000 - 56 - 16);
   });
 
+  it('prefers a marked user message over a later answer heading repeating the prompt', async () => {
+    const { getScrollTop } = createConversation([
+      { text: 'Why is the sky blue?', offset: 1000, attributes: { 'data-message-author-role': 'user' } },
+      { text: 'Rayleigh scattering…', offset: 1100 },
+      { text: 'Why is the sky blue?', offset: 1800, tag: 'h2' }
+    ]);
+
+    const state = await prepare('Why is the sky blue?');
+
+    expect(state).toMatchObject({ matched: true, alignedBy: 'prompt' });
+    expect(getScrollTop()).toBe(1000 - 56 - 16);
+  });
+
   it('ignores the prompt still sitting in the composer', async () => {
     const { container, getScrollTop } = createConversation([{ text: 'Unrelated message', offset: 400 }]);
     container.querySelector('textarea').value = 'Summarize this thread';
