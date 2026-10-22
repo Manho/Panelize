@@ -92,7 +92,8 @@ test('a page wider than its panel is laid out at its width and scaled to fit', a
 
     await expect(kimi).toHaveClass(/panel-fitted/);
     const kimiFrame = providerFrame(page, 'https://www.kimi.com');
-    expect(await kimiFrame.evaluate(() => window.innerWidth)).toBe(600);
+    // The cross-process frame takes its new viewport a moment after the iframe resizes.
+    await expect.poll(() => kimiFrame.evaluate(() => window.innerWidth)).toBe(600);
     const fit = await kimi.evaluate(frame => ({
       frame: frame.getBoundingClientRect().width,
       panel: frame.parentElement.clientWidth,
