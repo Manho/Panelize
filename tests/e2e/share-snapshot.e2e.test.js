@@ -111,6 +111,15 @@ function getThreadScrollTops(page) {
     })));
 }
 
+function scrollThreadsToBottom(page) {
+  return Promise.all(page.frames()
+    .filter(frame => frame.url().startsWith('https://'))
+    .map(frame => frame.evaluate(() => {
+      const thread = document.getElementById('thread');
+      if (thread) thread.scrollTop = thread.scrollHeight;
+    })));
+}
+
 /** Scroll positions once the layout stops moving, e.g. after the input grew. */
 async function getSettledThreadScrollTops(page) {
   let last = null;
@@ -677,8 +686,9 @@ test('Full answers of a page scaled to fit its panel are captured as shown', asy
     await expect(fitted).toHaveClass(/panel-fitted/);
     const zoom = await fitted.evaluate(frame => frame.getBoundingClientRect().width / 1000);
     expect(zoom).toBeLessThan(0.7);
-    expect(await page.frames().find(frame => frame.url().startsWith(PROVIDER_ORIGINS.deepseek))
-      .evaluate(() => window.innerWidth)).toBe(1000);
+    const fittedFrame = page.frames().find(frame => frame.url().startsWith(PROVIDER_ORIGINS.deepseek));
+    // The cross-process frame takes its new viewport a moment after the iframe resizes.
+    await expect.poll(() => fittedFrame.evaluate(() => window.innerWidth)).toBe(1000);
 
     await clickToolbarIcon(extension, page);
     await expect(page.locator('#share-modal')).toBeVisible();
@@ -826,8 +836,12 @@ test('Full answers starts at the latest user message, or at the top, when the pr
     ], '1x2');
     // A prompt neither page shows, e.g. one typed into a provider directly.
     await page.locator('#unified-input').fill('A prompt that was never sent');
-    const before = await getSettledThreadScrollTops(page);
-    expect(before.every(({ top, max }) => top === max)).toBe(true);
+    // At the bottom, as chat apps are: the fixture scrolls there while loading,
+    // and the panels may change height after that.
+    await getSettledThreadScrollTops(page);
+    await scrollThreadsToBottom(page);
+    const before = await getThreadScrollTops(page);
+    expect(before, 'scrolled to the bottom').toEqual(before.map(({ max }) => ({ top: max, max })));
 
     await clickToolbarIcon(extension, page);
     await expect(page.locator('#share-modal')).toBeVisible();
