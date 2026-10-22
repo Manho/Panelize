@@ -924,7 +924,7 @@
     "message": "Same prompt · $1 · side by side"
   },
   "shareTruncatedNote": {
-    "message": "Long answers truncated — showing the first $1 screens"
+    "message": "Too long for one image, only the start is shown: $1"
   },
   "shareCurrentViewOnly": {
     "message": "Current view only: $1"

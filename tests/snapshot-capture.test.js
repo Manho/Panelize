@@ -242,7 +242,7 @@ describe('captureCurrentView', () => {
 });
 
 /** A panel whose page scrolls to wherever it is asked, in a 2000px conversation. */
-function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400, bottom: 500 }) {
+function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400, bottom: 500 }, maxScrollTop = 2000) {
   const element = document.createElement('div');
   element.getBoundingClientRect = () => rect(left, 0, 400, 600);
   document.body.appendChild(element);
@@ -259,7 +259,7 @@ function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400,
         alignedBy: 'prompt',
         scrollTop: message.scrollTop ?? 0,
         originalScrollTop: 0,
-        maxScrollTop: 2000
+        maxScrollTop
       }, contentWindow)));
     })
   };
@@ -366,6 +366,7 @@ describe('a window resized during a capture', () => {
         getChromeHeight: () => 100
       });
       expect(result.currentViewOnly).toEqual([]);
+      expect(result.truncated).toEqual([]);
       expect(result.screens).toBe(source.grab.mock.calls.length);
       expect(result.screens).toBeGreaterThan(1);
     } finally {
@@ -418,6 +419,38 @@ describe('stitched screens', () => {
       placed.slice(1).forEach((segment, index) => {
         expect(segment.y).toBe(placed[index].y + placed[index].height);
       });
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+
+  it('name only the panels whose answer was cut short to fit the image', async () => {
+    globalThis.createImageBitmap = vi.fn(async (frame, sx, sy, sw, sh, options) => ({
+      width: options.resizeWidth, height: options.resizeHeight, close: vi.fn()
+    }));
+    // jsdom has no canvas: a 2D context that draws nothing.
+    const context = new Proxy({}, {
+      get: (target, key) => (key in target ? target[key] : key === 'getImageData'
+        ? () => ({ data: new Uint8ClampedArray(4) })
+        : () => {}),
+      set: (target, key, value) => { target[key] = value; return true; }
+    });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    const clip = { left: 0, top: 50, right: 400, bottom: 500 };
+    // Far taller than the image allows, next to an answer that fits on one screen.
+    const long = createScrollingPanel('Kimi', 0, clip, 20000);
+    const short = createScrollingPanel('DeepSeek', 400, clip, 0);
+
+    try {
+      const result = await captureFullAnswers({
+        source: createSource(() => {}),
+        grid: createGrid(),
+        panels: [long.panel, short.panel],
+        prompt: 'Explain HTTPS',
+        getChromeHeight: () => 100
+      });
+      expect(result.names).toEqual(['Kimi', 'DeepSeek']);
+      expect(result.truncated).toEqual(['Kimi']);
     } finally {
       getContext.mockRestore();
     }

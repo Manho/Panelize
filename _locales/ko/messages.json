@@ -907,7 +907,7 @@
     "message": "같은 프롬프트 · $1 · 나란히 비교"
   },
   "shareTruncatedNote": {
-    "message": "긴 답변은 잘렸습니다 — 처음 $1개 화면만 표시"
+    "message": "답변이 너무 길어 이미지에 앞부분만 표시됨: $1"
   },
   "shareCurrentViewOnly": {
     "message": "현재 화면만: $1"

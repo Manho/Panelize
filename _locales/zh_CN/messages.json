@@ -903,7 +903,7 @@
     "message": "同一提示词 · $1 · 并排对比"
   },
   "shareTruncatedNote": {
-    "message": "回答过长已截断 — 仅显示前 $1 屏"
+    "message": "回答太长，图片中只显示了开头部分：$1"
   },
   "shareCurrentViewOnly": {
     "message": "仅当前视图：$1"

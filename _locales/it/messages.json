@@ -907,7 +907,7 @@
     "message": "Stesso prompt · $1 · fianco a fianco"
   },
   "shareTruncatedNote": {
-    "message": "Risposte lunghe troncate: vengono mostrate le prime $1 schermate"
+    "message": "Troppo lungo per un'unica immagine, è mostrato solo l'inizio: $1"
   },
   "shareCurrentViewOnly": {
     "message": "Solo vista attuale: $1"

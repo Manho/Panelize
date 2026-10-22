@@ -1017,7 +1017,7 @@ test('Full answers over one tab-sharing stream truncates long answers with a not
     expect(await getDisplayMediaCalls(page)).toBe(1);
     const notes = page.locator('#share-capture-notes');
     await expect(notes).toBeVisible();
-    await expect(notes).toHaveText(/^Long answers truncated — showing the first \d+ screens$/);
+    await expect(notes).toHaveText('Too long for one image, only the start is shown: ChatGPT');
     const full = await inspectPreview(page);
     expect(full.height).toBeLessThanOrEqual(SNAPSHOT_MAX_OUTPUT_HEIGHT);
     expect(full.height).toBeGreaterThan(SNAPSHOT_MAX_OUTPUT_HEIGHT - 400);

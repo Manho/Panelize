@@ -907,7 +907,7 @@
     "message": "Mismo prompt · $1 · en paralelo"
   },
   "shareTruncatedNote": {
-    "message": "Respuestas largas recortadas: se muestran las primeras $1 pantallas"
+    "message": "Demasiado largo para una imagen, solo se muestra el principio: $1"
   },
   "shareCurrentViewOnly": {
     "message": "Solo vista actual: $1"

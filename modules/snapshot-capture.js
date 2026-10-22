@@ -376,7 +376,8 @@ function isUsableState(state) {
  * @property {string[]} currentViewOnly - Providers shown as on screen in full mode.
  * @property {string[]} outOfView - Open providers left out because they were
  *   not fully on screen, in grid order.
- * @property {boolean} truncated
+ * @property {string[]} truncated - Providers whose answer was cut short to
+ *   fit the image, in grid order.
  * @property {number} screens - Captures taken.
  * @property {SnapshotAlignment[]} alignment - Where each panel started and ended.
  */
@@ -457,7 +458,7 @@ export async function captureCurrentView({ source, grid, panels, prompt, hideCur
         names: visiblePanels.map((panel) => panel.name),
         currentViewOnly: [],
         outOfView,
-        truncated: false,
+        truncated: [],
         screens: 1,
         alignment: visiblePanels.map((panel, index) => describeAlignment(panel.name, states[index]))
       };
@@ -637,15 +638,16 @@ export async function captureFullAnswers({
         onProgress({ step: screens, total: estimateTotal() });
       }
 
-      const capped = cells.some((cell) => cell.track && (cell.track.truncated || !cell.track.done));
       const content = drawStitchedGrid({ cells, rows, area, scale, budget, grid });
+      const isCut = (cell) => Boolean(cell.track)
+        && (cell.track.truncated || !cell.track.done || content.cut.has(cell));
       return {
         content: content.canvas,
         scale,
         names: orderByGrid(cells).map((cell) => cell.panel.name),
         currentViewOnly: orderByGrid(cells).filter((cell) => cell.fallback).map((cell) => cell.panel.name),
         outOfView,
-        truncated: capped || content.truncated,
+        truncated: orderByGrid(cells).filter(isCut).map((cell) => cell.panel.name),
         screens,
         alignment: orderByGrid(cells).map((cell) => describeAlignment(
           cell.panel.name,
@@ -679,13 +681,19 @@ function drawStitchedGrid({ cells, rows, area, scale, budget, grid }) {
     const content = Math.max(0, ...row.map((cell) => getStitchedCellHeight(cell) - fixed));
     return { fixed, content };
   }), rowBudget);
+  // Cells taller than their row's cap lose the end of their answer.
+  const cut = new Set();
   const layout = layoutStitchedGrid({
     rows: rows.map((row, rowIndex) => {
       const fixed = Math.max(...row.map((cell) => cell.headHeight));
-      return row.map((cell) => ({
-        rect: cell.rect,
-        height: Math.min(getStitchedCellHeight(cell), fixed + fitted.caps[rowIndex])
-      }));
+      return row.map((cell) => {
+        const full = getStitchedCellHeight(cell);
+        const height = Math.min(full, fixed + fitted.caps[rowIndex]);
+        if (height < full) {
+          cut.add(cell);
+        }
+        return { rect: cell.rect, height };
+      });
     }),
     gridLeft: area.left,
     gridWidth: area.width
@@ -726,5 +734,5 @@ function drawStitchedGrid({ cells, rows, area, scale, budget, grid }) {
       ctx.restore();
     });
   });
-  return { canvas, truncated: fitted.truncated };
+  return { canvas, cut };
 }

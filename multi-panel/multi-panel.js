@@ -2218,6 +2218,11 @@ async function updateSnapshotHint({ source, fallbackReason }) {
   snapshotHint = shortcut ? t('shareShortcutHint', [shortcut]) : t('shareToolbarHint');
 }
 
+// Names the panels whose answer was cut short, both in the dialog and in the image.
+function getSnapshotTruncatedNote(capture) {
+  return t('shareTruncatedNote', [formatProviderList(capture.truncated, getSnapshotLocale())]);
+}
+
 function updateShareNotes() {
   const hint = document.getElementById('share-capture-hint');
   const hintText = document.getElementById('share-capture-hint-text');
@@ -2236,8 +2241,8 @@ function updateShareNotes() {
   if (capture?.currentViewOnly.length) {
     lines.push(t('shareCurrentViewOnly', [formatProviderList(capture.currentViewOnly, getSnapshotLocale())]));
   }
-  if (capture?.truncated) {
-    lines.push(t('shareTruncatedNote', [String(capture.screens)]));
+  if (capture?.truncated.length) {
+    lines.push(getSnapshotTruncatedNote(capture));
   }
   notes.textContent = lines.join('\n');
   notes.hidden = lines.length === 0;
@@ -2277,7 +2282,7 @@ async function renderSnapshot() {
       date: capture.date,
       locale
     }),
-    noteText: capture.truncated ? t('shareTruncatedNote', [String(capture.screens)]) : ''
+    noteText: capture.truncated.length ? getSnapshotTruncatedNote(capture) : ''
   });
   const blob = await canvasToPngBlob(canvas);
   canvas.width = 0;
