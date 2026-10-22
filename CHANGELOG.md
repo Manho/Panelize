@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0 - 2026-10-22
+- Added Share: turn your comparison into an image to copy or download, with the prompt as an editable title. Choose Current view, or Full answers to stitch each answer from your latest prompt down.
+- Provider pages wider than their panel (such as Kimi, Qwen and Zhipu in narrow layouts) are now scaled down to fit instead of being cut off.
+- Resize panel columns by dragging their edges or with the arrow keys. Widths are remembered per layout, and a double-click resets them.
+- Added a one-time prompt asking engaged users to rate Panelize on the Chrome Web Store, with Later and Never options.
+
 ## 1.3.3 - 2026-10-16
 - Fixed Grok conversations failing to start in panels by forwarding your existing grok.com session to Grok inside the Multi-Panel page.
 - Fixed Grok cookie consent choices not being saved inside panels.
