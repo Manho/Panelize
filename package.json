@@ -24,7 +24,7 @@
     "test:live:login": "node tests/live/login.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.1",
+    "@playwright/test": "^1.62.1",
     "@vitest/ui": "^3.2.4",
     "happy-dom": "^20.14.5",
     "vitest": "^3.2.4",
