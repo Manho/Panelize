@@ -844,5 +844,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Enjoying Panelize? Rate it on the Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Rate"
+  },
+  "ratingPromptLater": {
+    "message": "Later"
+  },
+  "ratingPromptNever": {
+    "message": "Don't ask again"
+  },
+  "shareButtonText": {
+    "message": "Share"
+  },
+  "shareButtonTitle": {
+    "message": "Share a snapshot of this comparison. The image stays on your device."
+  },
+  "shareDialogTitle": {
+    "message": "Share comparison"
+  },
+  "shareDialogClose": {
+    "message": "Close"
+  },
+  "sharePrivacyWarning": {
+    "message": "Check the image before you share it: it may show chat history in sidebars, account names or avatars."
+  },
+  "shareCopyButton": {
+    "message": "Copy to clipboard"
+  },
+  "shareDownloadButton": {
+    "message": "Download PNG"
+  },
+  "shareCopied": {
+    "message": "Image copied to clipboard"
+  },
+  "shareCopyFailed": {
+    "message": "Couldn't copy the image. Use Download PNG instead."
+  },
+  "shareCaptureCancelled": {
+    "message": "Snapshot cancelled"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "To take a snapshot, share this Panelize tab"
+  },
+  "shareCaptureTabHidden": {
+    "message": "Snapshot stopped: keep this Panelize tab in front until it is done"
+  },
+  "shareCaptureFailed": {
+    "message": "Couldn't capture the comparison"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "The window or panels kept changing size, so the comparison couldn't be captured. Try again."
+  },
+  "shareModeLabel": {
+    "message": "Snapshot area"
+  },
+  "shareModeCurrent": {
+    "message": "Current view"
+  },
+  "shareModeFull": {
+    "message": "Full answers"
+  },
+  "shareTitleLabel": {
+    "message": "Title"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Add a headline (optional)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Compare AI side by side"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotCaption": {
+    "message": "Free Chrome extension"
+  },
+  "shareSnapshotSubline": {
+    "message": "Same prompt · $1 · side by side"
+  },
+  "shareTruncatedNote": {
+    "message": "Too long for one image, only the start is shown: $1"
+  },
+  "shareInterruptedNote": {
+    "message": "Could not be captured to the end, only the start is shown: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Current view only: $1"
+  },
+  "panelResizeHandle": {
+    "message": "Drag to resize panels. Double-click to reset."
+  },
+  "shareOutOfViewNote": {
+    "message": "Not fully on screen, left out: $1 — scroll sideways and share again to include them"
+  },
+  "shareShortcutHint": {
+    "message": "Tip: press $1 on this page to skip Chrome's confirmation"
+  },
+  "shareToolbarHint": {
+    "message": "Tip: click the Panelize toolbar icon on this page to skip Chrome's confirmation"
+  },
+  "shareProgressPreparing": {
+    "message": "Preparing snapshot…"
+  },
+  "shareProgressStep": {
+    "message": "Capturing screen $1 of $2…"
+  },
+  "shareStreamStatus": {
+    "message": "Sharing this tab for snapshots"
+  },
+  "shareStreamStop": {
+    "message": "Stop"
+  },
+  "shareProgressHoldPointer": {
+    "message": "Keep the mouse still for a moment…"
+  },
+  "shareProgressCancel": {
+    "message": "Cancel"
+  },
+  "labelShareWatermark": {
+    "message": "Show watermark on shared images"
+  },
+  "descShareWatermark": {
+    "message": "Show the Panelize name, panelize.dev and the date on snapshots taken with the Share button. The headline and frame stay either way."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Watermark on shared images enabled"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Watermark on shared images disabled"
   }
 }

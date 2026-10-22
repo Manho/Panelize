@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Gefällt dir Panelize? Bewerte es im Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Bewerten"
+  },
+  "ratingPromptLater": {
+    "message": "Später"
+  },
+  "ratingPromptNever": {
+    "message": "Nicht mehr fragen"
+  },
+  "shareButtonText": {
+    "message": "Teilen"
+  },
+  "shareButtonTitle": {
+    "message": "Teile einen Schnappschuss dieses Vergleichs. Das Bild bleibt auf deinem Gerät."
+  },
+  "shareDialogTitle": {
+    "message": "Vergleich teilen"
+  },
+  "shareDialogClose": {
+    "message": "Schließen"
+  },
+  "sharePrivacyWarning": {
+    "message": "Prüfe das Bild vor dem Teilen: Es kann Chatverläufe in Seitenleisten, Kontonamen oder Avatare zeigen."
+  },
+  "shareCopyButton": {
+    "message": "In die Zwischenablage kopieren"
+  },
+  "shareDownloadButton": {
+    "message": "PNG herunterladen"
+  },
+  "shareCopied": {
+    "message": "Bild in die Zwischenablage kopiert"
+  },
+  "shareCopyFailed": {
+    "message": "Das Bild konnte nicht kopiert werden. Nutze stattdessen PNG herunterladen."
+  },
+  "shareCaptureCancelled": {
+    "message": "Schnappschuss abgebrochen"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Teile diesen Panelize-Tab, um einen Schnappschuss zu erstellen"
+  },
+  "shareCaptureTabHidden": {
+    "message": "Aufnahme abgebrochen: Lass diesen Panelize-Tab im Vordergrund, bis sie fertig ist"
+  },
+  "shareCaptureFailed": {
+    "message": "Der Vergleich konnte nicht aufgenommen werden"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "Die Größe des Fensters oder der Panels hat sich ständig geändert, daher konnte der Vergleich nicht aufgenommen werden. Bitte erneut versuchen."
+  },
+  "shareModeLabel": {
+    "message": "Bildausschnitt"
+  },
+  "shareModeCurrent": {
+    "message": "Aktuelle Ansicht"
+  },
+  "shareModeFull": {
+    "message": "Vollständige Antworten"
+  },
+  "shareTitleLabel": {
+    "message": "Titel"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Überschrift hinzufügen (optional)"
+  },
+  "shareSnapshotTagline": {
+    "message": "KI im direkten Vergleich"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotCaption": {
+    "message": "Kostenlose Chrome-Erweiterung"
+  },
+  "shareSnapshotSubline": {
+    "message": "Gleicher Prompt · $1 · im direkten Vergleich"
+  },
+  "shareTruncatedNote": {
+    "message": "Zu lang für ein Bild, nur der Anfang wird gezeigt: $1"
+  },
+  "shareInterruptedNote": {
+    "message": "Konnte nicht bis zum Ende aufgenommen werden, nur der Anfang wird gezeigt: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Nur aktuelle Ansicht: $1"
+  },
+  "panelResizeHandle": {
+    "message": "Ziehen, um die Panelbreite zu ändern. Doppelklick zum Zurücksetzen."
+  },
+  "shareOutOfViewNote": {
+    "message": "Nicht vollständig sichtbar, ausgelassen: $1 — seitlich scrollen und erneut teilen, um sie einzuschließen"
+  },
+  "shareShortcutHint": {
+    "message": "Tipp: Drücke $1 auf dieser Seite, um die Bestätigung von Chrome zu überspringen"
+  },
+  "shareToolbarHint": {
+    "message": "Tipp: Klicke auf dieser Seite auf das Panelize-Symbol in der Symbolleiste, um die Bestätigung von Chrome zu überspringen"
+  },
+  "shareProgressPreparing": {
+    "message": "Schnappschuss wird vorbereitet…"
+  },
+  "shareProgressStep": {
+    "message": "Bildschirm $1 von $2 wird aufgenommen…"
+  },
+  "shareStreamStatus": {
+    "message": "Dieser Tab wird für Schnappschüsse geteilt"
+  },
+  "shareStreamStop": {
+    "message": "Beenden"
+  },
+  "shareProgressHoldPointer": {
+    "message": "Bitte die Maus kurz nicht bewegen…"
+  },
+  "shareProgressCancel": {
+    "message": "Abbrechen"
+  },
+  "labelShareWatermark": {
+    "message": "Wasserzeichen auf geteilten Bildern anzeigen"
+  },
+  "descShareWatermark": {
+    "message": "Zeigt den Namen Panelize, panelize.dev und das Datum auf Schnappschüssen über die Teilen-Schaltfläche. Überschrift und Rahmen bleiben immer erhalten."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Wasserzeichen auf geteilten Bildern aktiviert"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Wasserzeichen auf geteilten Bildern deaktiviert"
   }
 }

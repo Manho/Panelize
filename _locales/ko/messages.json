@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Panelize가 마음에 드시나요? Chrome 웹 스토어에서 평가해 주세요"
+  },
+  "ratingPromptRate": {
+    "message": "평가하기"
+  },
+  "ratingPromptLater": {
+    "message": "나중에"
+  },
+  "ratingPromptNever": {
+    "message": "다시 묻지 않기"
+  },
+  "shareButtonText": {
+    "message": "공유"
+  },
+  "shareButtonTitle": {
+    "message": "이 비교의 스냅샷을 공유합니다. 이미지는 기기에만 저장됩니다."
+  },
+  "shareDialogTitle": {
+    "message": "비교 공유"
+  },
+  "shareDialogClose": {
+    "message": "닫기"
+  },
+  "sharePrivacyWarning": {
+    "message": "공유하기 전에 이미지를 확인하세요. 사이드바의 채팅 기록, 계정 이름 또는 아바타가 포함될 수 있습니다."
+  },
+  "shareCopyButton": {
+    "message": "클립보드에 복사"
+  },
+  "shareDownloadButton": {
+    "message": "PNG 다운로드"
+  },
+  "shareCopied": {
+    "message": "이미지를 클립보드에 복사했습니다"
+  },
+  "shareCopyFailed": {
+    "message": "이미지를 복사할 수 없습니다. 대신 PNG 다운로드를 사용하세요."
+  },
+  "shareCaptureCancelled": {
+    "message": "스냅샷이 취소되었습니다"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "스냅샷을 찍으려면 이 Panelize 탭을 공유하세요"
+  },
+  "shareCaptureTabHidden": {
+    "message": "스냅샷이 중단됨: 완료될 때까지 이 Panelize 탭을 앞에 두세요"
+  },
+  "shareCaptureFailed": {
+    "message": "비교 화면을 캡처할 수 없습니다"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "창이나 패널 크기가 계속 바뀌어 비교 화면을 캡처할 수 없습니다. 다시 시도해 주세요"
+  },
+  "shareModeLabel": {
+    "message": "캡처 범위"
+  },
+  "shareModeCurrent": {
+    "message": "현재 화면"
+  },
+  "shareModeFull": {
+    "message": "전체 답변"
+  },
+  "shareTitleLabel": {
+    "message": "제목"
+  },
+  "shareTitlePlaceholder": {
+    "message": "헤드라인 추가(선택 사항)"
+  },
+  "shareSnapshotTagline": {
+    "message": "AI를 나란히 비교"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "프롬프트"
+  },
+  "shareSnapshotCaption": {
+    "message": "무료 Chrome 확장 프로그램"
+  },
+  "shareSnapshotSubline": {
+    "message": "같은 프롬프트 · $1 · 나란히 비교"
+  },
+  "shareTruncatedNote": {
+    "message": "답변이 너무 길어 이미지에 앞부분만 표시됨: $1"
+  },
+  "shareInterruptedNote": {
+    "message": "끝까지 캡처하지 못해 앞부분만 표시됨: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "현재 화면만: $1"
+  },
+  "panelResizeHandle": {
+    "message": "드래그하여 패널 너비 조정, 더블클릭하여 초기화"
+  },
+  "shareOutOfViewNote": {
+    "message": "화면에 다 보이지 않아 제외됨: $1 — 좌우로 스크롤한 뒤 다시 공유하면 포함됩니다"
+  },
+  "shareShortcutHint": {
+    "message": "팁: 이 페이지에서 $1 키를 누르면 Chrome 확인을 건너뛸 수 있습니다"
+  },
+  "shareToolbarHint": {
+    "message": "팁: 이 페이지에서 도구 모음의 Panelize 아이콘을 클릭하면 Chrome 확인을 건너뛸 수 있습니다"
+  },
+  "shareProgressPreparing": {
+    "message": "스냅샷 준비 중…"
+  },
+  "shareProgressStep": {
+    "message": "$2개 화면 중 $1번째 캡처 중…"
+  },
+  "shareStreamStatus": {
+    "message": "스냅샷용으로 이 탭을 공유하는 중"
+  },
+  "shareStreamStop": {
+    "message": "중지"
+  },
+  "shareProgressHoldPointer": {
+    "message": "잠시 마우스를 움직이지 마세요…"
+  },
+  "shareProgressCancel": {
+    "message": "취소"
+  },
+  "labelShareWatermark": {
+    "message": "공유 이미지에 워터마크 표시"
+  },
+  "descShareWatermark": {
+    "message": "공유 버튼으로 만든 스냅샷에 Panelize 이름, panelize.dev, 날짜를 표시합니다. 헤드라인과 프레임은 항상 유지됩니다."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "공유 이미지 워터마크가 켜졌습니다"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "공유 이미지 워터마크가 꺼졌습니다"
   }
 }

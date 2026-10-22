@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Vous aimez Panelize ? Notez-le sur le Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Noter"
+  },
+  "ratingPromptLater": {
+    "message": "Plus tard"
+  },
+  "ratingPromptNever": {
+    "message": "Ne plus demander"
+  },
+  "shareButtonText": {
+    "message": "Partager"
+  },
+  "shareButtonTitle": {
+    "message": "Partagez une capture de cette comparaison. L'image reste sur votre appareil."
+  },
+  "shareDialogTitle": {
+    "message": "Partager la comparaison"
+  },
+  "shareDialogClose": {
+    "message": "Fermer"
+  },
+  "sharePrivacyWarning": {
+    "message": "Vérifiez l'image avant de la partager : elle peut montrer l'historique des discussions dans les barres latérales, des noms de compte ou des avatars."
+  },
+  "shareCopyButton": {
+    "message": "Copier dans le presse-papiers"
+  },
+  "shareDownloadButton": {
+    "message": "Télécharger le PNG"
+  },
+  "shareCopied": {
+    "message": "Image copiée dans le presse-papiers"
+  },
+  "shareCopyFailed": {
+    "message": "Impossible de copier l'image. Utilisez plutôt Télécharger le PNG."
+  },
+  "shareCaptureCancelled": {
+    "message": "Capture annulée"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Pour faire la capture, partagez cet onglet Panelize"
+  },
+  "shareCaptureTabHidden": {
+    "message": "Capture interrompue : gardez cet onglet Panelize au premier plan jusqu'à la fin"
+  },
+  "shareCaptureFailed": {
+    "message": "Impossible de capturer la comparaison"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "La taille de la fenêtre ou des panneaux n'arrêtait pas de changer, la comparaison n'a donc pas pu être capturée. Réessayez."
+  },
+  "shareModeLabel": {
+    "message": "Zone de la capture"
+  },
+  "shareModeCurrent": {
+    "message": "Vue actuelle"
+  },
+  "shareModeFull": {
+    "message": "Réponses complètes"
+  },
+  "shareTitleLabel": {
+    "message": "Titre"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Ajouter un titre (facultatif)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Comparez les IA côte à côte"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotCaption": {
+    "message": "Extension Chrome gratuite"
+  },
+  "shareSnapshotSubline": {
+    "message": "Même prompt · $1 · côte à côte"
+  },
+  "shareTruncatedNote": {
+    "message": "Trop long pour une seule image, seul le début est affiché : $1"
+  },
+  "shareInterruptedNote": {
+    "message": "Capture impossible jusqu'à la fin, seul le début est affiché : $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Vue actuelle uniquement : $1"
+  },
+  "panelResizeHandle": {
+    "message": "Faites glisser pour redimensionner les panneaux. Double-cliquez pour réinitialiser."
+  },
+  "shareOutOfViewNote": {
+    "message": "Pas entièrement visibles, exclus : $1 — faites défiler latéralement et partagez à nouveau pour les inclure"
+  },
+  "shareShortcutHint": {
+    "message": "Astuce : appuyez sur $1 sur cette page pour éviter la confirmation de Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Astuce : cliquez sur l'icône Panelize de la barre d'outils sur cette page pour éviter la confirmation de Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Préparation de la capture…"
+  },
+  "shareProgressStep": {
+    "message": "Capture de l'écran $1 sur $2…"
+  },
+  "shareStreamStatus": {
+    "message": "Cet onglet est partagé pour les captures"
+  },
+  "shareStreamStop": {
+    "message": "Arrêter"
+  },
+  "shareProgressHoldPointer": {
+    "message": "Ne bougez pas la souris un instant…"
+  },
+  "shareProgressCancel": {
+    "message": "Annuler"
+  },
+  "labelShareWatermark": {
+    "message": "Afficher un filigrane sur les images partagées"
+  },
+  "descShareWatermark": {
+    "message": "Affiche le nom Panelize, panelize.dev et la date sur les captures prises avec le bouton Partager. Le titre et le cadre restent dans tous les cas."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Filigrane des images partagées activé"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Filigrane des images partagées désactivé"
   }
 }

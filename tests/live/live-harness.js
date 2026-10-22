@@ -54,15 +54,26 @@ export function getSelectedProviders() {
   return PROVIDERS.filter((provider) => requested.includes(provider.id));
 }
 
+/** Version parts are at most 65535; minutes since 2026 change every run. */
+function getCopyBuildNumber() {
+  return Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 60000) % 65535 + 1;
+}
+
 /**
  * Refreshes the fixed-path extension copy from the working tree. Optional
  * provider host permissions are granted in the manifest because granting them
  * at runtime needs a user gesture on the options page.
+ *
+ * The copy also gets a fresh fourth version part: Chrome keeps the registered
+ * service worker of an unpacked extension while its version stays the same,
+ * so the live profile would otherwise run an old background script.
  * @returns {Promise<string>} Extension path.
  */
 export async function prepareLiveExtension() {
   const { extensionPath } = await createPatchedExtensionCopy((manifest) => {
     manifest.host_permissions.push(...(manifest.optional_host_permissions || []));
+    const [major = 0, minor = 0, patch = 0] = manifest.version.split('.');
+    manifest.version = [major, minor, patch, getCopyBuildNumber()].join('.');
   }, { destination: LIVE_EXTENSION_PATH });
   return extensionPath;
 }

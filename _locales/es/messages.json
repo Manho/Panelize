@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "¿Te gusta Panelize? Valóralo en Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Valorar"
+  },
+  "ratingPromptLater": {
+    "message": "Más tarde"
+  },
+  "ratingPromptNever": {
+    "message": "No volver a preguntar"
+  },
+  "shareButtonText": {
+    "message": "Compartir"
+  },
+  "shareButtonTitle": {
+    "message": "Comparte una captura de esta comparación. La imagen se queda en tu dispositivo."
+  },
+  "shareDialogTitle": {
+    "message": "Compartir comparación"
+  },
+  "shareDialogClose": {
+    "message": "Cerrar"
+  },
+  "sharePrivacyWarning": {
+    "message": "Revisa la imagen antes de compartirla: puede mostrar historial de chats en barras laterales, nombres de cuenta o avatares."
+  },
+  "shareCopyButton": {
+    "message": "Copiar al portapapeles"
+  },
+  "shareDownloadButton": {
+    "message": "Descargar PNG"
+  },
+  "shareCopied": {
+    "message": "Imagen copiada al portapapeles"
+  },
+  "shareCopyFailed": {
+    "message": "No se pudo copiar la imagen. Usa Descargar PNG."
+  },
+  "shareCaptureCancelled": {
+    "message": "Captura cancelada"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Para hacer la captura, comparte esta pestaña de Panelize"
+  },
+  "shareCaptureTabHidden": {
+    "message": "Captura detenida: mantén esta pestaña de Panelize al frente hasta que termine"
+  },
+  "shareCaptureFailed": {
+    "message": "No se pudo capturar la comparación"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "El tamaño de la ventana o de los paneles no dejaba de cambiar, así que no se pudo capturar la comparación. Inténtalo de nuevo."
+  },
+  "shareModeLabel": {
+    "message": "Área de la captura"
+  },
+  "shareModeCurrent": {
+    "message": "Vista actual"
+  },
+  "shareModeFull": {
+    "message": "Respuestas completas"
+  },
+  "shareTitleLabel": {
+    "message": "Título"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Añade un titular (opcional)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Compara IA en paralelo"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotCaption": {
+    "message": "Extensión gratuita para Chrome"
+  },
+  "shareSnapshotSubline": {
+    "message": "Mismo prompt · $1 · en paralelo"
+  },
+  "shareTruncatedNote": {
+    "message": "Demasiado largo para una imagen, solo se muestra el principio: $1"
+  },
+  "shareInterruptedNote": {
+    "message": "No se pudo capturar hasta el final, solo se muestra el principio: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Solo vista actual: $1"
+  },
+  "panelResizeHandle": {
+    "message": "Arrastra para cambiar el ancho de los paneles. Doble clic para restablecer."
+  },
+  "shareOutOfViewNote": {
+    "message": "No se ven enteros, omitidos: $1 — desplázate a los lados y vuelve a compartir para incluirlos"
+  },
+  "shareShortcutHint": {
+    "message": "Consejo: pulsa $1 en esta página para omitir la confirmación de Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Consejo: haz clic en el icono de Panelize de la barra de herramientas en esta página para omitir la confirmación de Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Preparando la captura…"
+  },
+  "shareProgressStep": {
+    "message": "Capturando pantalla $1 de $2…"
+  },
+  "shareStreamStatus": {
+    "message": "Compartiendo esta pestaña para las capturas"
+  },
+  "shareStreamStop": {
+    "message": "Detener"
+  },
+  "shareProgressHoldPointer": {
+    "message": "No muevas el ratón un momento…"
+  },
+  "shareProgressCancel": {
+    "message": "Cancelar"
+  },
+  "labelShareWatermark": {
+    "message": "Mostrar marca de agua en las imágenes compartidas"
+  },
+  "descShareWatermark": {
+    "message": "Muestra el nombre Panelize, panelize.dev y la fecha en las capturas hechas con el botón Compartir. El titular y el marco se mantienen siempre."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Marca de agua en imágenes compartidas activada"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Marca de agua en imágenes compartidas desactivada"
   }
 }

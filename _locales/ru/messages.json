@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Нравится Panelize? Оцените его в Интернет-магазине Chrome"
+  },
+  "ratingPromptRate": {
+    "message": "Оценить"
+  },
+  "ratingPromptLater": {
+    "message": "Позже"
+  },
+  "ratingPromptNever": {
+    "message": "Больше не спрашивать"
+  },
+  "shareButtonText": {
+    "message": "Поделиться"
+  },
+  "shareButtonTitle": {
+    "message": "Поделитесь снимком этого сравнения. Изображение остаётся на вашем устройстве."
+  },
+  "shareDialogTitle": {
+    "message": "Поделиться сравнением"
+  },
+  "shareDialogClose": {
+    "message": "Закрыть"
+  },
+  "sharePrivacyWarning": {
+    "message": "Проверьте изображение перед отправкой: на нём может быть история чатов в боковых панелях, имена аккаунтов или аватары."
+  },
+  "shareCopyButton": {
+    "message": "Копировать в буфер обмена"
+  },
+  "shareDownloadButton": {
+    "message": "Скачать PNG"
+  },
+  "shareCopied": {
+    "message": "Изображение скопировано в буфер обмена"
+  },
+  "shareCopyFailed": {
+    "message": "Не удалось скопировать изображение. Используйте «Скачать PNG»."
+  },
+  "shareCaptureCancelled": {
+    "message": "Снимок отменён"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Чтобы сделать снимок, выберите эту вкладку Panelize"
+  },
+  "shareCaptureTabHidden": {
+    "message": "Снимок прерван: не уходите с этой вкладки Panelize, пока он не будет готов"
+  },
+  "shareCaptureFailed": {
+    "message": "Не удалось сделать снимок сравнения"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "Размер окна или панелей всё время менялся, поэтому снимок сравнения не удался. Попробуйте ещё раз."
+  },
+  "shareModeLabel": {
+    "message": "Область снимка"
+  },
+  "shareModeCurrent": {
+    "message": "Текущий вид"
+  },
+  "shareModeFull": {
+    "message": "Полные ответы"
+  },
+  "shareTitleLabel": {
+    "message": "Заголовок"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Добавьте заголовок (необязательно)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Сравнивайте ИИ бок о бок"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Промпт"
+  },
+  "shareSnapshotCaption": {
+    "message": "Бесплатное расширение для Chrome"
+  },
+  "shareSnapshotSubline": {
+    "message": "Один промпт · $1 · бок о бок"
+  },
+  "shareTruncatedNote": {
+    "message": "Слишком длинный ответ, на изображении показано только начало: $1"
+  },
+  "shareInterruptedNote": {
+    "message": "Не удалось захватить до конца, показано только начало: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Только текущий вид: $1"
+  },
+  "panelResizeHandle": {
+    "message": "Перетащите, чтобы изменить ширину панелей. Двойной щелчок — сброс."
+  },
+  "shareOutOfViewNote": {
+    "message": "Не видны целиком, пропущены: $1 — прокрутите вбок и поделитесь снова, чтобы их добавить"
+  },
+  "shareShortcutHint": {
+    "message": "Совет: нажмите $1 на этой странице, чтобы пропустить подтверждение Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Совет: нажмите на значок Panelize на панели инструментов на этой странице, чтобы пропустить подтверждение Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Подготовка снимка…"
+  },
+  "shareProgressStep": {
+    "message": "Снимаем экран $1 из $2…"
+  },
+  "shareStreamStatus": {
+    "message": "Эта вкладка транслируется для снимков"
+  },
+  "shareStreamStop": {
+    "message": "Остановить"
+  },
+  "shareProgressHoldPointer": {
+    "message": "Не двигайте мышь несколько секунд…"
+  },
+  "shareProgressCancel": {
+    "message": "Отмена"
+  },
+  "labelShareWatermark": {
+    "message": "Показывать водяной знак на изображениях"
+  },
+  "descShareWatermark": {
+    "message": "Показывать название Panelize, panelize.dev и дату на снимках, созданных кнопкой «Поделиться». Заголовок и рамка остаются всегда."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Водяной знак на изображениях включён"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Водяной знак на изображениях выключен"
   }
 }

@@ -158,9 +158,23 @@ body {
   white-space: nowrap;
 }
 
-#toggle-open-mode-btn .btn-text {
+#toggle-open-mode-btn .btn-text,
+#share-snapshot-btn .btn-text {
   font-size: 12px;
   font-weight: 500;
+}
+
+/* Share Snapshot Button */
+#share-snapshot-btn {
+  gap: 6px;
+  width: auto;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+#share-snapshot-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 /* Toolbar Collapsed State */
@@ -287,6 +301,7 @@ body {
   scroll-snap-type: x mandatory;
   scroll-behavior: smooth;
   scrollbar-width: thin;
+  position: relative;
 }
 
 /* Layout variations */
@@ -298,64 +313,75 @@ body {
 
 /* 1x2 最小宽度 */
 .layout-1x2 {
-  grid-template-columns: repeat(2, minmax(400px, 1fr));
+  grid-template-columns: repeat(2, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x3 最小宽度 */
 .layout-1x3 {
-  grid-template-columns: repeat(3, minmax(400px, 1fr));
+  grid-template-columns: repeat(3, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 确保 1x4 在窄屏幕也有最小宽度 */
 .layout-1x4 {
-  grid-template-columns: repeat(4, minmax(400px, 1fr));
+  grid-template-columns: repeat(4, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x5 五列 - 最小宽度 400px */
 .layout-1x5 {
-  grid-template-columns: repeat(5, minmax(400px, 1fr));
+  grid-template-columns: repeat(5, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x6 六列 - 最小宽度 400px */
 .layout-1x6 {
-  grid-template-columns: repeat(6, minmax(400px, 1fr));
+  grid-template-columns: repeat(6, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x7 七列 - 最小宽度 350px */
 .layout-1x7 {
-  grid-template-columns: repeat(7, minmax(350px, 1fr));
+  grid-template-columns: repeat(7, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 350px;
   grid-template-rows: 1fr;
 }
 
 /* 1x8 八列 - 最小宽度 320px */
 .layout-1x8 {
-  grid-template-columns: repeat(8, minmax(320px, 1fr));
+  grid-template-columns: repeat(8, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 /* Keep high-density row layouts horizontally scrollable and usable. */
 .layout-1x9 {
-  grid-template-columns: repeat(9, minmax(320px, 1fr));
+  grid-template-columns: repeat(9, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 .layout-1x10 {
-  grid-template-columns: repeat(10, minmax(320px, 1fr));
+  grid-template-columns: repeat(10, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 .layout-1x11 {
-  grid-template-columns: repeat(11, minmax(320px, 1fr));
+  grid-template-columns: repeat(11, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 .layout-1x12 {
-  grid-template-columns: repeat(12, minmax(320px, 1fr));
+  grid-template-columns: repeat(12, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
@@ -423,6 +449,61 @@ body {
 .layout-1x11 .panel-item,
 .layout-1x12 .panel-item {
   scroll-snap-align: start;
+}
+
+/* Column resize handles (modules/panel-resize.js), centered on the gaps. */
+.panel-resize-handles {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  z-index: 2;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 4px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+
+.panel-resize-handle:hover::after,
+.panel-resize-handle:focus-visible::after,
+.panel-resize-handle.active::after {
+  background: #1976d2;
+}
+
+.panel-resize-handle:focus-visible {
+  outline: none;
+}
+
+/* Frames would swallow the pointer while a column is dragged. */
+.panel-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.panel-resizing iframe {
+  pointer-events: none;
+}
+
+.panel-resizing #panel-grid {
+  scroll-snap-type: none;
 }
 
 /* Panel Item */
@@ -565,6 +646,18 @@ body {
   border: none;
 }
 
+/* A page wider than its panel is laid out at the width it needs and scaled
+   down to fit (modules/panel-fit.js). */
+.panel-iframe-container iframe.panel-fitted {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--panel-fit-scale));
+  height: calc(100% / var(--panel-fit-scale));
+  transform: scale(var(--panel-fit-scale));
+  transform-origin: 0 0;
+}
+
 .panel-loading {
   position: absolute;
   top: 0;
@@ -620,8 +713,97 @@ body {
   display: none;
 }
 
+/* ===== Store Rating Banner ===== */
+.rating-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: #e3f2fd;
+  border-top: 1px solid #bbdefb;
+  color: #333;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.rating-banner[hidden] {
+  display: none;
+}
+
+.rating-banner-icon {
+  color: #1976d2;
+  font-size: 18px;
+}
+
+.rating-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.rating-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.rating-banner-btn {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #1976d2;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.rating-banner-btn:hover {
+  background: rgba(25, 118, 210, 0.08);
+}
+
+.rating-banner-btn.primary {
+  background: #1976d2;
+  color: #fff;
+}
+
+.rating-banner-btn.primary:hover {
+  background: #1565c0;
+}
+
+[data-theme="dark"] .rating-banner {
+  background: #1a3a5a;
+  border-top-color: #444;
+  color: #e0e0e0;
+}
+
+[data-theme="dark"] .rating-banner-icon,
+[data-theme="dark"] .rating-banner-btn {
+  color: #64b5f6;
+}
+
+[data-theme="dark"] .rating-banner-btn:hover {
+  background: rgba(100, 181, 246, 0.12);
+}
+
+[data-theme="dark"] .rating-banner-btn.primary {
+  background: #64b5f6;
+  color: #1e1e1e;
+}
+
+@media (max-width: 640px) {
+  .rating-banner {
+    flex-wrap: wrap;
+  }
+
+  .rating-banner-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 /* ===== Input Bar ===== */
 #input-bar {
+  position: relative;
   background: #fff;
   border-top: 1px solid #e0e0e0;
   padding: 12px 16px;
@@ -1655,6 +1837,346 @@ body {
 
 .btn-secondary:hover {
   background: #f5f5f5;
+}
+
+/* ===== Share Snapshot Modal ===== */
+.share-modal-content {
+  max-height: 90vh;
+}
+
+.share-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.share-privacy-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #ffe0b2;
+  border-radius: 8px;
+  background: #fff8e1;
+  color: #5d4037;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.share-privacy-warning .material-symbols-outlined {
+  font-size: 18px;
+  color: #ef6c00;
+}
+
+.share-preview {
+  display: block;
+  max-width: 100%;
+  /* Keep the whole image visible next to the header, warning and buttons. */
+  max-height: calc(90vh - 280px);
+  min-height: 120px;
+  margin: 0 auto;
+  object-fit: contain;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+}
+
+.share-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-action-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+[data-theme="dark"] .share-privacy-warning {
+  border-color: #5d4037;
+  background: #3e2f1c;
+  color: #ffe0b2;
+}
+
+[data-theme="dark"] .share-privacy-warning .material-symbols-outlined {
+  color: #ffb74d;
+}
+
+[data-theme="dark"] .share-preview {
+  border-color: #444;
+}
+
+/* Mode switch and title */
+.share-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.share-mode-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 3px;
+  border-radius: 8px;
+  background: #eceff1;
+}
+
+.share-mode-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #546e7a;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.share-mode-btn[aria-checked="true"] {
+  background: #fff;
+  color: #1a1a1a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.share-mode-btn:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.share-title-field {
+  display: flex;
+  flex: 1 1 240px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  color: #546e7a;
+}
+
+.share-title-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #cfd8dc;
+  border-radius: 6px;
+  background: #fff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 14px;
+}
+
+.share-title-field input:focus {
+  outline: 2px solid #1976d2;
+  outline-offset: -1px;
+}
+
+.share-hint,
+.share-notes {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #455a64;
+}
+
+/* One note per line. */
+.share-notes {
+  white-space: pre-line;
+}
+
+.share-hint[hidden],
+.share-notes[hidden] {
+  display: none;
+}
+
+.share-hint {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #e3f2fd;
+  color: #0d47a1;
+}
+
+.share-hint .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.share-stream-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #455a64;
+}
+
+.share-stream-status[hidden] {
+  display: none;
+}
+
+.share-stream-status .material-symbols-outlined {
+  font-size: 18px;
+  color: #c62828;
+}
+
+.share-stream-stop {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #1565c0;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.share-stream-stop:focus-visible {
+  outline: 2px solid #1565c0;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Capture progress, laid over the input bar so the grid does not move. */
+.snapshot-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: inherit;
+  z-index: 5;
+}
+
+.snapshot-progress[hidden] {
+  display: none;
+}
+
+.snapshot-progress-icon {
+  color: #1976d2;
+}
+
+.snapshot-progress-text {
+  font-size: 14px;
+  color: #37474f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.snapshot-progress-bar {
+  flex: 0 1 240px;
+  min-width: 60px;
+  height: 6px;
+}
+
+.snapshot-cancel-btn {
+  padding: 6px 14px;
+}
+
+/* Keep the share dialog and toasts out of the captured frames. */
+body.snapshot-capturing #share-modal,
+body.snapshot-capturing .panelize-toast {
+  visibility: hidden;
+}
+
+/* Tab sharing can draw the pointer into the frames. */
+html.snapshot-hide-cursor,
+html.snapshot-hide-cursor *,
+html.snapshot-hide-cursor *::before,
+html.snapshot-hide-cursor *::after {
+  cursor: none !important;
+}
+
+/* Laid over the panels while tab sharing captures them; see pointer-guard.js. */
+.snapshot-pointer-shield {
+  position: fixed;
+  z-index: 1000;
+  background: transparent;
+  cursor: none;
+}
+
+[data-theme="dark"] .share-mode-switch {
+  background: #2d2d2d;
+}
+
+[data-theme="dark"] .share-mode-btn {
+  color: #b0bec5;
+}
+
+[data-theme="dark"] .share-mode-btn[aria-checked="true"] {
+  background: #424242;
+  color: #fff;
+}
+
+[data-theme="dark"] .share-title-field {
+  color: #b0bec5;
+}
+
+[data-theme="dark"] .share-title-field input {
+  border-color: #555;
+  background: #1e1e1e;
+  color: #e0e0e0;
+}
+
+[data-theme="dark"] .share-hint {
+  background: #0d2a45;
+  color: #bbdefb;
+}
+
+[data-theme="dark"] .share-stream-status {
+  color: #cfd8dc;
+}
+
+[data-theme="dark"] .share-stream-stop {
+  color: #90caf9;
+}
+
+[data-theme="dark"] .share-stream-stop:focus-visible {
+  outline-color: #90caf9;
+}
+
+[data-theme="dark"] .share-notes,
+[data-theme="dark"] .snapshot-progress-text {
+  color: #cfd8dc;
+}
+
+@media (max-width: 640px) {
+  .share-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .share-mode-switch {
+    display: flex;
+  }
+
+  .share-mode-btn {
+    flex: 1;
+  }
+
+  .share-title-field {
+    flex-basis: auto;
+  }
+
+  .snapshot-progress-bar {
+    display: none;
+  }
+
+  #share-snapshot-btn {
+    width: 36px;
+    padding: 0;
+  }
+
+  #share-snapshot-btn .btn-text {
+    display: none;
+  }
 }
 
 /* Dark theme for new elements */

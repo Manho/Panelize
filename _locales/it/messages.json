@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Ti piace Panelize? Valutalo sul Chrome Web Store"
+  },
+  "ratingPromptRate": {
+    "message": "Valuta"
+  },
+  "ratingPromptLater": {
+    "message": "Più tardi"
+  },
+  "ratingPromptNever": {
+    "message": "Non chiedere più"
+  },
+  "shareButtonText": {
+    "message": "Condividi"
+  },
+  "shareButtonTitle": {
+    "message": "Condividi un'istantanea di questo confronto. L'immagine resta sul tuo dispositivo."
+  },
+  "shareDialogTitle": {
+    "message": "Condividi confronto"
+  },
+  "shareDialogClose": {
+    "message": "Chiudi"
+  },
+  "sharePrivacyWarning": {
+    "message": "Controlla l'immagine prima di condividerla: potrebbe mostrare la cronologia delle chat nelle barre laterali, nomi account o avatar."
+  },
+  "shareCopyButton": {
+    "message": "Copia negli appunti"
+  },
+  "shareDownloadButton": {
+    "message": "Scarica PNG"
+  },
+  "shareCopied": {
+    "message": "Immagine copiata negli appunti"
+  },
+  "shareCopyFailed": {
+    "message": "Impossibile copiare l'immagine. Usa Scarica PNG."
+  },
+  "shareCaptureCancelled": {
+    "message": "Istantanea annullata"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "Per creare l'istantanea, condividi questa scheda di Panelize"
+  },
+  "shareCaptureTabHidden": {
+    "message": "Acquisizione interrotta: tieni questa scheda di Panelize in primo piano fino al termine"
+  },
+  "shareCaptureFailed": {
+    "message": "Impossibile acquisire il confronto"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "Le dimensioni della finestra o dei pannelli continuavano a cambiare, quindi non è stato possibile acquisire il confronto. Riprova."
+  },
+  "shareModeLabel": {
+    "message": "Area dell'istantanea"
+  },
+  "shareModeCurrent": {
+    "message": "Vista attuale"
+  },
+  "shareModeFull": {
+    "message": "Risposte complete"
+  },
+  "shareTitleLabel": {
+    "message": "Titolo"
+  },
+  "shareTitlePlaceholder": {
+    "message": "Aggiungi un titolo (facoltativo)"
+  },
+  "shareSnapshotTagline": {
+    "message": "Confronta le IA fianco a fianco"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "Prompt"
+  },
+  "shareSnapshotCaption": {
+    "message": "Estensione gratuita per Chrome"
+  },
+  "shareSnapshotSubline": {
+    "message": "Stesso prompt · $1 · fianco a fianco"
+  },
+  "shareTruncatedNote": {
+    "message": "Troppo lungo per un'unica immagine, è mostrato solo l'inizio: $1"
+  },
+  "shareInterruptedNote": {
+    "message": "Non è stato possibile acquisire fino alla fine, è mostrato solo l'inizio: $1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "Solo vista attuale: $1"
+  },
+  "panelResizeHandle": {
+    "message": "Trascina per ridimensionare i pannelli. Doppio clic per ripristinare."
+  },
+  "shareOutOfViewNote": {
+    "message": "Non del tutto visibili, esclusi: $1 — scorri lateralmente e condividi di nuovo per includerli"
+  },
+  "shareShortcutHint": {
+    "message": "Suggerimento: premi $1 in questa pagina per saltare la conferma di Chrome"
+  },
+  "shareToolbarHint": {
+    "message": "Suggerimento: fai clic sull'icona di Panelize nella barra degli strumenti in questa pagina per saltare la conferma di Chrome"
+  },
+  "shareProgressPreparing": {
+    "message": "Preparazione dell'istantanea…"
+  },
+  "shareProgressStep": {
+    "message": "Acquisizione della schermata $1 di $2…"
+  },
+  "shareStreamStatus": {
+    "message": "Questa scheda è condivisa per le istantanee"
+  },
+  "shareStreamStop": {
+    "message": "Interrompi"
+  },
+  "shareProgressHoldPointer": {
+    "message": "Non muovere il mouse per un attimo…"
+  },
+  "shareProgressCancel": {
+    "message": "Annulla"
+  },
+  "labelShareWatermark": {
+    "message": "Mostra filigrana sulle immagini condivise"
+  },
+  "descShareWatermark": {
+    "message": "Mostra il nome Panelize, panelize.dev e la data sulle istantanee create con il pulsante Condividi. Titolo e cornice restano in ogni caso."
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "Filigrana sulle immagini condivise attivata"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "Filigrana sulle immagini condivise disattivata"
   }
 }

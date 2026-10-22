@@ -183,6 +183,14 @@ export function getCurrentLanguage() {
 }
 
 /**
+ * Locale of the loaded translations, which follows the language setting.
+ * @returns {string} Locale code (e.g., 'en', 'zh_CN')
+ */
+export function getTranslationLocale() {
+  return currentLocale || 'en';
+}
+
+/**
  * Initialize i18n for a page
  * Call this on DOMContentLoaded
  */

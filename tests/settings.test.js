@@ -50,6 +50,14 @@ describe('settings module', () => {
       expect(chrome.storage.local.get).toHaveBeenCalled();
     });
 
+    it('should show the watermark on shared images by default', async () => {
+      chrome.storage.sync.get.mockImplementation(async (defaults) => defaults);
+
+      const result = await getSettings();
+
+      expect(result.shareWatermarkEnabled).toBe(true);
+    });
+
     it('should expose the default Google provider mode', async () => {
       chrome.storage.sync.get.mockImplementation(async (defaults) => defaults);
 
@@ -153,6 +161,13 @@ describe('settings module', () => {
       expect(result.success).toBe(true);
       expect(result.imported).toEqual(['theme', 'enabledProviders']);
       expect(result.skipped).toEqual([]);
+    });
+
+    it('should import the share watermark preference', async () => {
+      const result = await importSettings({ shareWatermarkEnabled: false });
+
+      expect(result.imported).toEqual(['shareWatermarkEnabled']);
+      expect(chrome.storage.sync.set).toHaveBeenCalledWith({ shareWatermarkEnabled: false });
     });
 
     it('should skip invalid setting keys', async () => {

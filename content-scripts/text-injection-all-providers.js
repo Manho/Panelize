@@ -15,6 +15,78 @@
   const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
   const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
   const PANELIZE_RESTORE_USER_FOCUS = 'PANELIZE_RESTORE_USER_FOCUS';
+  const PANELIZE_SNAPSHOT_PREPARE = 'PANELIZE_SNAPSHOT_PREPARE';
+  const PANELIZE_SNAPSHOT_SCROLL = 'PANELIZE_SNAPSHOT_SCROLL';
+  const PANELIZE_SNAPSHOT_RESTORE = 'PANELIZE_SNAPSHOT_RESTORE';
+  const PANELIZE_SNAPSHOT_STATE = 'PANELIZE_SNAPSHOT_STATE';
+  const MULTI_PANEL_SNAPSHOT_CONTEXT = 'multi-panel-snapshot';
+  const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
+  const PAGE_WIDTH_REPORT_THROTTLE_MS = 500;
+  // The app shell is near the top of the tree; deeper nodes are content.
+  const PAGE_WIDTH_MAX_DEPTH = 12;
+  const PAGE_WIDTH_MAX_ELEMENTS = 1000;
+  const PAGE_WIDTH_SCROLLING_OVERFLOW = /^(auto|scroll)$/;
+  // Normalized prompt prefix that identifies the user's message.
+  const SNAPSHOT_MATCH_KEY_LENGTH = 40;
+  const SNAPSHOT_MIN_MATCH_KEY_LENGTH = 2;
+  const SNAPSHOT_MAX_MATCH_CANDIDATES = 50;
+  const SNAPSHOT_ALIGN_MARGIN_PX = 16;
+  const SNAPSHOT_PAINT_SETTLE_MS = 100;
+  const SNAPSHOT_PAINT_TIMEOUT_MS = 400;
+  // A conversation list fills a good part of the frame; smaller scrolling
+  // boxes are code blocks or collapsed messages.
+  const SNAPSHOT_MIN_CONTAINER_HEIGHT_RATIO = 0.3;
+  // Pinned bars cover at most this share of the container at each edge.
+  const SNAPSHOT_MAX_EDGE_RATIO = 0.4;
+  const SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO = 0.5;
+  const SNAPSHOT_EDGE_TOLERANCE_PX = 24;
+  // Floating buttons and fades hidden while stitching are at most this share
+  // of the visible conversation high; taller layers are backgrounds.
+  const SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO = 0.5;
+  const SNAPSHOT_HIDDEN_MASK_PROPERTIES = ['mask-image', '-webkit-mask-image'];
+  // Ancestors with these cut off what lies outside them.
+  const SNAPSHOT_CLIPPING_OVERFLOW = /^(hidden|clip|auto|scroll|overlay)$/;
+  const SNAPSHOT_SKIPPED_TEXT_PARENTS = [
+    'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select',
+    '[contenteditable=""]', '[contenteditable="true"]', '[aria-hidden="true"]'
+  ].join(', ');
+  // Chat history lists and links repeat prompts as titles; they are not the
+  // conversation.
+  const SNAPSHOT_NAVIGATION_PARENTS = 'nav, aside, [role="navigation"], [role="complementary"], a[href]';
+  // User messages by role attribute or known bubble, for when the prompt is
+  // not on the page (e.g. typed into the provider directly).
+  const SNAPSHOT_USER_TURN_SELECTORS = [
+    '[data-message-author-role="user"]', // ChatGPT
+    '[data-testid="user-message"]', // Claude
+    'user-query', // Gemini
+    '[class*="items-end"] .message-bubble', // Grok
+    '[data-role="user"]',
+    '[data-author="user"]',
+    '[data-message-role="user"]',
+    '[data-sender="user"]',
+    '[data-content="user-message"]', // Copilot
+    '[data-testid="send_message"]', // Doubao
+    '.chat-content-item-user', // Kimi
+    '.chat-user-message' // Qwen
+  ].join(', ');
+  // How far an aligned message may be from where it was put.
+  const SNAPSHOT_ALIGN_TOLERANCE_PX = 2;
+  // Paints to wait for a virtual list to grow back to the position it had.
+  const SNAPSHOT_RESTORE_ATTEMPTS = 10;
+  // Inline properties set to take a sticky box out of sticking, keeping its
+  // place in the flow.
+  const SNAPSHOT_UNSTICK_PROPERTIES = ['position', 'top', 'right', 'bottom', 'left'];
+  // Marks pseudo-elements to hide (e.g. "before after") and the document
+  // whose pointer is hidden; styled by SNAPSHOT_STYLE_RULES.
+  const SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE = 'data-panelize-snapshot-hide';
+  const SNAPSHOT_HIDE_CURSOR_ATTRIBUTE = 'data-panelize-snapshot-cursor';
+  const SNAPSHOT_STYLE_RULES = `
+    [${SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE}~="before"]::before,
+    [${SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE}~="after"]::after { visibility: hidden !important; }
+    [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}], [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}] *,
+    [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}] *::before, [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}] *::after { cursor: none !important; }
+  `;
+  const SNAPSHOT_STYLE_ELEMENT_ID = 'panelize-snapshot-style';
   const USER_FOCUS_RESTORE_WINDOW_MS = 2000;
   const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
@@ -43,6 +115,10 @@
   let lastUserFocus = null;
   const pendingKimiImageUploads = new Map();
   const pendingProviderImageUploads = new Map();
+  // Scroll container and positions of the snapshot being taken.
+  let snapshotSession = null;
+  // Constructed sheet with SNAPSHOT_STYLE_RULES, adopted while a snapshot runs.
+  let snapshotStyleSheet = null;
 
   // Provider-specific selectors. ChatGPT's composer lookup lives in
   // chatgpt-composer.js, shared with the other ChatGPT content scripts.
@@ -626,6 +702,117 @@
     window.addEventListener('popstate', reportIfChanged);
     window.addEventListener('hashchange', reportIfChanged);
     reportIfChanged();
+  }
+
+  function isMultiPanelFrame() {
+    if (window.parent === window || window.parent !== window.top) {
+      return false;
+    }
+    const embedder = window.location.ancestorOrigins?.[0];
+    return embedder === undefined || /^(chrome|moz)-extension:/.test(embedder);
+  }
+
+  /**
+   * Boxes filling the viewport hold the app itself, even when they scroll or
+   * float; so do those filling most of it beside a side rail, e.g. Qwen's
+   * content box next to its rail of icons.
+   */
+  function isPageShellBox(rect, viewportWidth, viewportHeight) {
+    return rect.right >= viewportWidth - 1 && rect.width >= viewportWidth / 2
+      && rect.height >= viewportHeight / 2;
+  }
+
+  /**
+   * Width the page's layout needs, in CSS pixels: the furthest an element
+   * held open by a pixel min-width reaches from where it starts. Only the app
+   * shell is scanned: floating layers (menus, popovers) and content of
+   * scrolling boxes (chat lists, code blocks, tables) are left out. It does
+   * not depend on the viewport width, so a page laid out at the width it
+   * needs keeps asking for it. Returns 0 when nothing is held open.
+   */
+  function measurePageNeededWidth() {
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+    const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+    if (!document.body || !(viewportWidth > 0)) {
+      return 0;
+    }
+    let needed = 0;
+    let visited = 0;
+    const queue = Array.from(document.body.children, (element) => ({ element, depth: 1 }));
+    for (let index = 0; index < queue.length && visited < PAGE_WIDTH_MAX_ELEMENTS; index += 1) {
+      const { element, depth } = queue[index];
+      visited += 1;
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none') {
+        continue;
+      }
+      const rect = element.getBoundingClientRect();
+      const shell = isPageShellBox(rect, viewportWidth, viewportHeight);
+      if ((style.position === 'absolute' || style.position === 'fixed') && !shell) {
+        continue;
+      }
+      const minWidth = style.minWidth.endsWith('px') ? parseFloat(style.minWidth) : 0;
+      const startsOnScreen = rect.left >= -1 && rect.left < viewportWidth - 1;
+      if (minWidth > 0 && rect.height > 0 && startsOnScreen && style.visibility !== 'hidden') {
+        needed = Math.max(needed, Math.ceil(rect.left + window.scrollX + minWidth));
+      }
+      const scrolls = PAGE_WIDTH_SCROLLING_OVERFLOW.test(style.overflowX)
+        || PAGE_WIDTH_SCROLLING_OVERFLOW.test(style.overflowY);
+      if (depth < PAGE_WIDTH_MAX_DEPTH && (shell || !scrolls)) {
+        for (const child of element.children) {
+          queue.push({ element: child, depth: depth + 1 });
+        }
+      }
+    }
+    return needed;
+  }
+
+  /**
+   * Tells the multi-panel host how wide this page needs to be, so a panel
+   * narrower than that can scale the page down to fit instead of cutting it.
+   */
+  function setupPageWidthReporting() {
+    if (!isMultiPanelFrame() || typeof ResizeObserver !== 'function') {
+      return;
+    }
+    let lastReported = null;
+    let timer = null;
+
+    const report = () => {
+      timer = null;
+      // Snapshots move content around; measure once they are done.
+      if (snapshotSession) {
+        schedule();
+        return;
+      }
+      const provider = detectProvider();
+      const neededWidth = measurePageNeededWidth();
+      if (!provider || neededWidth === lastReported) {
+        return;
+      }
+      lastReported = neededWidth;
+      window.parent.postMessage({
+        type: PANELIZE_PAGE_WIDTH,
+        provider,
+        neededWidth,
+        context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
+      }, '*');
+    };
+
+    function schedule() {
+      if (timer === null) {
+        timer = setTimeout(report, PAGE_WIDTH_REPORT_THROTTLE_MS);
+      }
+    }
+
+    new ResizeObserver(schedule).observe(document.documentElement);
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    });
+    schedule();
   }
 
   function rememberUserFocus() {
@@ -3231,6 +3418,10 @@
       return;
     }
 
+    if (handleSnapshotMessage(event)) {
+      return;
+    }
+
     if (event.data.type === PANELIZE_RESTORE_USER_FOCUS && event.data.context === 'multi-panel') {
       restoreUserFocus();
       return;
@@ -3463,7 +3654,1022 @@
     }
   }
 
+  // ===== Share snapshot: align and scroll the conversation for a capture =====
+  // The multi-panel page captures the whole tab, so all it needs from a
+  // provider frame is where the conversation scrolls and which part of it is
+  // covered by the provider's own header and composer. Only geometry is sent
+  // back; no page text leaves the frame.
+
+  function normalizeSnapshotMatchText(text) {
+    return String(text || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[\s​-‍⁠﻿*_`]+/g, '');
+  }
+
+  function getSnapshotMatchKey(prompt) {
+    return Array.from(normalizeSnapshotMatchText(prompt)).slice(0, SNAPSHOT_MATCH_KEY_LENGTH).join('');
+  }
+
+  function getSnapshotViewport() {
+    return {
+      width: window.innerWidth || document.documentElement?.clientWidth || 0,
+      height: window.innerHeight || document.documentElement?.clientHeight || 0
+    };
+  }
+
+  function isSnapshotDocumentScroller(element) {
+    return !element || element === document.scrollingElement
+      || element === document.documentElement || element === document.body;
+  }
+
+  function isSnapshotScrollable(element) {
+    if (isSnapshotDocumentScroller(element)) {
+      const scroller = document.scrollingElement || document.documentElement;
+      return Boolean(scroller) && scroller.scrollHeight > scroller.clientHeight + 1;
+    }
+    const overflowY = window.getComputedStyle(element).overflowY;
+    return /(auto|scroll|overlay)/.test(overflowY) && element.scrollHeight > element.clientHeight + 1;
+  }
+
+  function isSnapshotElementRendered(element) {
+    if (typeof element.checkVisibility === 'function') {
+      return element.checkVisibility();
+    }
+    return true;
+  }
+
+  function getSnapshotContainerRect(container) {
+    const viewport = getSnapshotViewport();
+    if (isSnapshotDocumentScroller(container)) {
+      return { left: 0, top: 0, right: viewport.width, bottom: viewport.height };
+    }
+    // Client box: excludes borders and scrollbars.
+    const rect = container.getBoundingClientRect();
+    const left = rect.left + container.clientLeft;
+    const top = rect.top + container.clientTop;
+    const box = {
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      right: Math.min(viewport.width, left + container.clientWidth),
+      bottom: Math.min(viewport.height, top + container.clientHeight)
+    };
+    // Only what clipping ancestors show, e.g. not the part of a box scrolled
+    // sideways that is hidden under the side rail beside it.
+    for (let node = container.parentElement; node && !isSnapshotDocumentScroller(node); node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (!SNAPSHOT_CLIPPING_OVERFLOW.test(style.overflowX) && !SNAPSHOT_CLIPPING_OVERFLOW.test(style.overflowY)) {
+        continue;
+      }
+      const nodeRect = node.getBoundingClientRect();
+      const nodeLeft = nodeRect.left + node.clientLeft;
+      const nodeTop = nodeRect.top + node.clientTop;
+      box.left = Math.max(box.left, nodeLeft);
+      box.top = Math.max(box.top, nodeTop);
+      box.right = Math.min(box.right, nodeLeft + node.clientWidth);
+      box.bottom = Math.min(box.bottom, nodeTop + node.clientHeight);
+    }
+    return box;
+  }
+
+  function isLargeSnapshotContainer(element) {
+    const viewport = getSnapshotViewport();
+    if (isSnapshotDocumentScroller(element)) {
+      return true;
+    }
+    const rect = getSnapshotContainerRect(element);
+    return rect.bottom - rect.top >= viewport.height * SNAPSHOT_MIN_CONTAINER_HEIGHT_RATIO;
+  }
+
+  /**
+   * The scrolling ancestor that moves the element: the main conversation
+   * when it holds the element, otherwise the large ancestor that scrolls the
+   * furthest, so that a wrapper scrolling a few pixels is not taken for the
+   * conversation.
+   * @param {Element} element
+   * @param {Element} main - findMainSnapshotScrollContainer().
+   */
+  function findSnapshotScrollContainer(element, main) {
+    const ancestors = [];
+    for (let node = element; node && !isSnapshotDocumentScroller(node); node = node.parentElement) {
+      if (isSnapshotScrollable(node) && isLargeSnapshotContainer(node)) {
+        ancestors.push(node);
+      }
+    }
+    if (isSnapshotScrollable(null)) {
+      ancestors.push(document.scrollingElement || document.documentElement);
+    }
+    if (ancestors.includes(main)) {
+      return main;
+    }
+    return ancestors.reduce((best, node) => (
+      !best || getSnapshotMaxScrollTop(node) > getSnapshotMaxScrollTop(best) ? node : best
+    ), null);
+  }
+
+  /** Largest visible scrolling element; the document when nothing else scrolls. */
+  function findMainSnapshotScrollContainer() {
+    let best = null;
+    let bestArea = 0;
+    for (const element of document.body?.querySelectorAll('*') || []) {
+      if (!isSnapshotScrollable(element) || !isLargeSnapshotContainer(element)) {
+        continue;
+      }
+      const rect = getSnapshotContainerRect(element);
+      const area = Math.max(0, rect.right - rect.left) * Math.max(0, rect.bottom - rect.top);
+      if (area > bestArea) {
+        best = element;
+        bestArea = area;
+      }
+    }
+    return best || document.scrollingElement || document.documentElement;
+  }
+
+  /** Whether the element can be the start of a turn in the conversation. */
+  function isSnapshotConversationElement(element) {
+    if (!isSnapshotElementRendered(element) || element.closest(SNAPSHOT_NAVIGATION_PARENTS)) {
+      return false;
+    }
+    // Fixed boxes (dialogs, toasts) do not scroll with the conversation.
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      if (window.getComputedStyle(node).position === 'fixed') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function collectSnapshotTextIndex() {
+    const segments = [];
+    let text = '';
+    if (!document.body) {
+      return { segments, text };
+    }
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || parent.closest(SNAPSHOT_SKIPPED_TEXT_PARENTS)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const normalized = normalizeSnapshotMatchText(node.nodeValue);
+      if (normalized) {
+        segments.push({ node, start: text.length });
+        text += normalized;
+      }
+    }
+    return { segments, text };
+  }
+
+  function findSnapshotSegment(segments, offset) {
+    let low = 0;
+    let high = segments.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (segments[middle].start <= offset) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return segments[low];
+  }
+
+  /**
+   * Rendered messages that start like the prompt, best first: a match in a
+   * known user message beats any other, e.g. an answer heading repeating the
+   * question; then a match at the start of a text node (a message bubble)
+   * beats one in the middle of a paragraph, e.g. an answer quoting it; then
+   * a match in the main conversation beats one elsewhere; then the latest wins.
+   * @returns {{element: Element, container: Element}[]}
+   */
+  function findSnapshotPromptMatches(prompt, main) {
+    const key = getSnapshotMatchKey(prompt);
+    if (Array.from(key).length < SNAPSHOT_MIN_MATCH_KEY_LENGTH) {
+      return [];
+    }
+    const { segments, text } = collectSnapshotTextIndex();
+    const candidates = [];
+    let offset = text.lastIndexOf(key);
+    for (let checked = 0; offset !== -1 && checked < SNAPSHOT_MAX_MATCH_CANDIDATES; checked += 1) {
+      const segment = findSnapshotSegment(segments, offset);
+      const element = segment.node.parentElement;
+      if (element && isSnapshotConversationElement(element)) {
+        const container = findSnapshotScrollContainer(element, main);
+        if (container) {
+          const rank = (element.closest(SNAPSHOT_USER_TURN_SELECTORS) ? 0 : 4)
+            + (segment.start === offset ? 0 : 2) + (container === main ? 0 : 1);
+          candidates.push({ element, container, rank });
+        }
+      }
+      offset = offset > 0 ? text.lastIndexOf(key, offset - 1) : -1;
+    }
+    // Array sort is stable, so the latest stays first within a rank.
+    return candidates.sort((a, b) => a.rank - b.rank);
+  }
+
+  /** The latest user message found by role attributes or known bubbles. */
+  function findSnapshotUserTurn(main) {
+    const elements = Array.from(document.querySelectorAll(SNAPSHOT_USER_TURN_SELECTORS));
+    for (let index = elements.length - 1; index >= 0; index -= 1) {
+      const element = elements[index];
+      if (!isSnapshotConversationElement(element)) {
+        continue;
+      }
+      const container = findSnapshotScrollContainer(element, main);
+      if (container) {
+        return { element, container };
+      }
+    }
+    return null;
+  }
+
+  function getSnapshotScrollTop(container) {
+    return isSnapshotDocumentScroller(container) ? window.scrollY : container.scrollTop;
+  }
+
+  function getSnapshotMaxScrollTop(container) {
+    const scroller = isSnapshotDocumentScroller(container)
+      ? document.scrollingElement || document.documentElement
+      : container;
+    return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  }
+
+  function clampSnapshotScrollTop(container, top) {
+    return Math.max(0, Math.min(getSnapshotMaxScrollTop(container), Math.round(top)));
+  }
+
+  function scrollSnapshotContainer(container, top) {
+    const target = clampSnapshotScrollTop(container, top);
+    // "instant" overrides a smooth scroll-behavior set by the page.
+    if (isSnapshotDocumentScroller(container)) {
+      window.scrollTo({ top: target, behavior: 'instant' });
+    } else if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: target, behavior: 'instant' });
+    } else {
+      container.scrollTop = target;
+    }
+  }
+
+  function isSnapshotScrolledContent(element, container) {
+    // Absolute elements scroll with the content when their containing block
+    // is the scroll container or inside it.
+    const containingBlock = element.offsetParent;
+    if (!containingBlock) {
+      return false;
+    }
+    if (isSnapshotDocumentScroller(container)) {
+      return true;
+    }
+    return containingBlock === container || container.contains(containingBlock);
+  }
+
+  /**
+   * Visible part of the container minus bars pinned over its top or bottom:
+   * sticky or fixed headers, the composer and its fade. Narrow floating
+   * buttons are ignored.
+   */
+  function getSnapshotClip(container, provider) {
+    const rect = getSnapshotContainerRect(container);
+    const clip = { ...rect };
+    const height = rect.bottom - rect.top;
+    const width = rect.right - rect.left;
+    if (height <= 0 || width <= 0) {
+      return clip;
+    }
+    const maxEdge = height * SNAPSHOT_MAX_EDGE_RATIO;
+    const scope = isSnapshotDocumentScroller(container) ? document.body : container;
+    const candidates = Array.from(scope?.querySelectorAll('*') || []);
+    if (!isSnapshotDocumentScroller(container)) {
+      // Fixed bars elsewhere in the page can still cover the container.
+      candidates.push(...Array.from(document.body.querySelectorAll('*')).filter((element) => (
+        !container.contains(element) && !element.contains(container)
+      )));
+    }
+
+    const pinBar = (barRect) => {
+      if (barRect.width < width * SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO || barRect.height <= 0) {
+        return;
+      }
+      if (barRect.bottom <= rect.top || barRect.top >= rect.bottom
+        || barRect.right <= rect.left || barRect.left >= rect.right) {
+        return;
+      }
+      if (barRect.top <= rect.top + SNAPSHOT_EDGE_TOLERANCE_PX && barRect.bottom - rect.top <= maxEdge) {
+        clip.top = Math.max(clip.top, barRect.bottom);
+      } else if (barRect.bottom >= rect.bottom - SNAPSHOT_EDGE_TOLERANCE_PX && rect.bottom - barRect.top <= maxEdge) {
+        clip.bottom = Math.min(clip.bottom, barRect.top);
+      }
+    };
+
+    // Absolute bars outside the container that sit over it, so that their
+    // own layers count too, e.g. a header's fading backdrop.
+    const overlayingBars = new Set();
+    const isInOverlayingBar = (element) => {
+      for (let node = element.parentElement; node; node = node.parentElement) {
+        if (overlayingBars.has(node)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    for (const element of candidates) {
+      const style = window.getComputedStyle(element);
+      const position = style.position;
+      if (position !== 'sticky' && position !== 'fixed' && position !== 'absolute') {
+        continue;
+      }
+      if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
+        continue;
+      }
+      if (position === 'absolute' && container.contains(element) && isSnapshotScrolledContent(element, container)) {
+        continue;
+      }
+      if (position === 'absolute' && !container.contains(element)) {
+        // Absolute siblings only count when they sit over the container.
+        // Layers without pointer events are not hit, so they count through
+        // the bar they belong to.
+        const sample = document.elementFromPoint?.(
+          Math.round((rect.left + rect.right) / 2),
+          Math.round(element.getBoundingClientRect().top + 1)
+        );
+        if (sample && element.contains(sample)) {
+          overlayingBars.add(element);
+        } else if (!isInOverlayingBar(element)) {
+          continue;
+        }
+      }
+      pinBar(element.getBoundingClientRect());
+    }
+
+    // The composer, also when it is a plain block laid over the conversation.
+    const input = findSnapshotComposerInput(provider);
+    if (input) {
+      let box = null;
+      for (let node = input; node && node !== container && !node.contains(container); node = node.parentElement) {
+        const nodeRect = node.getBoundingClientRect();
+        if (nodeRect.height > maxEdge || nodeRect.width > width + 2) {
+          break;
+        }
+        box = nodeRect;
+      }
+      if (box && box.top < clip.bottom && box.bottom > rect.top + height - maxEdge
+        && box.right > rect.left && box.left < rect.right) {
+        clip.bottom = Math.min(clip.bottom, box.top);
+      }
+    }
+
+    if (clip.bottom - clip.top < height * (1 - SNAPSHOT_MAX_EDGE_RATIO * 2)) {
+      // Something went wrong (e.g. a full-height overlay); keep the container.
+      return { ...rect };
+    }
+    return {
+      left: Math.round(clip.left),
+      top: Math.round(clip.top),
+      right: Math.round(clip.right),
+      bottom: Math.round(clip.bottom)
+    };
+  }
+
+  function findSnapshotComposerInput(provider) {
+    if (provider === 'google') {
+      return findGoogleInput(GOOGLE_PROVIDER_MODE_AI);
+    }
+    return provider ? findProviderInput(provider) : null;
+  }
+
+  /**
+   * The outermost box that keeps the element put while the container
+   * scrolls: an ancestor inside the container that is fixed, stuck to an
+   * edge, or absolute against a box outside the scrolled content. For an
+   * element outside the container, its outermost ancestor that does not
+   * hold the container.
+   * @returns {Element|null} Null when the element scrolls with the content.
+   */
+  function getSnapshotPinningNode(element, container) {
+    const outside = !isSnapshotDocumentScroller(container) && !container.contains(element);
+    const containerRect = getSnapshotContainerRect(container);
+    let pinning = null;
+    for (let node = element; node && node !== container && node !== document.body && !node.contains(container);
+      node = node.parentElement) {
+      if (outside) {
+        pinning = node;
+        continue;
+      }
+      const position = window.getComputedStyle(node).position;
+      if (position === 'fixed') {
+        pinning = node;
+      } else if (position === 'sticky') {
+        // Sticky boxes in the middle of the content (e.g. code block
+        // headers) scroll like the rest until they reach an edge.
+        const rect = node.getBoundingClientRect();
+        if (Math.abs(rect.top - containerRect.top) <= SNAPSHOT_EDGE_TOLERANCE_PX
+          || Math.abs(rect.bottom - containerRect.bottom) <= SNAPSHOT_EDGE_TOLERANCE_PX) {
+          pinning = node;
+        }
+      } else if (position === 'absolute' && !isSnapshotDocumentScroller(container)
+        && !isSnapshotScrolledContent(node, container)) {
+        pinning = node;
+      }
+    }
+    return pinning;
+  }
+
+  function isSnapshotPinned(element, container) {
+    return Boolean(getSnapshotPinningNode(element, container));
+  }
+
+  function overlapsSnapshotClip(rect, clip) {
+    return rect.width > 0 && rect.height > 0
+      && rect.bottom > clip.top && rect.top < clip.bottom && rect.right > clip.left && rect.left < clip.right;
+  }
+
+  function hasSnapshotReadableText(element) {
+    // Icon fonts use private-use characters, which are not letters.
+    return /[\p{L}\p{N}]/u.test(element.textContent || '');
+  }
+
+  function saveSnapshotInlineStyle(element, property) {
+    return {
+      element,
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property)
+    };
+  }
+
+  function restoreSnapshotInlineStyles(savedStyles) {
+    // Newest first, so a property saved twice ends up as it started.
+    for (const { element, property, value, priority } of [...savedStyles].reverse()) {
+      if (value) {
+        element.style.setProperty(property, value, priority);
+      } else {
+        element.style.removeProperty(property);
+      }
+    }
+  }
+
+  /**
+   * Adds SNAPSHOT_STYLE_RULES to the page. A constructed sheet is not
+   * subject to the page's style-src policy; a style element is the fallback.
+   */
+  function installSnapshotStyles() {
+    try {
+      if (typeof CSSStyleSheet === 'function' && Array.isArray(document.adoptedStyleSheets)) {
+        if (!snapshotStyleSheet) {
+          snapshotStyleSheet = new CSSStyleSheet();
+          snapshotStyleSheet.replaceSync(SNAPSHOT_STYLE_RULES);
+        }
+        if (!document.adoptedStyleSheets.includes(snapshotStyleSheet)) {
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, snapshotStyleSheet];
+        }
+        return;
+      }
+    } catch (error) {
+      console.warn('[Snapshot] Constructed stylesheet unavailable, using a style element:', error);
+    }
+    if (!document.getElementById(SNAPSHOT_STYLE_ELEMENT_ID)) {
+      const style = document.createElement('style');
+      style.id = SNAPSHOT_STYLE_ELEMENT_ID;
+      style.textContent = SNAPSHOT_STYLE_RULES;
+      (document.head || document.documentElement).appendChild(style);
+    }
+  }
+
+  function removeSnapshotStyles() {
+    if (snapshotStyleSheet && Array.isArray(document.adoptedStyleSheets)) {
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter((sheet) => sheet !== snapshotStyleSheet);
+    }
+    document.getElementById(SNAPSHOT_STYLE_ELEMENT_ID)?.remove();
+  }
+
+  /**
+   * Whether a pseudo-element is a fade or shadow laid over the page, e.g.
+   * Gemini's gradient drawn by the composer's ::before over the bottom of
+   * the conversation.
+   */
+  function isSnapshotFadePseudo(element, pseudo) {
+    const style = window.getComputedStyle(element, `::${pseudo}`);
+    if (!style?.content || style.content === 'none' || style.content === 'normal' || style.display === 'none') {
+      return false;
+    }
+    if (!/^(absolute|fixed|sticky)$/.test(style.position)) {
+      return false;
+    }
+    return (style.backgroundImage || '').includes('gradient')
+      || (Boolean(style.boxShadow) && style.boxShadow !== 'none');
+  }
+
+  /** Hides the element's fading pseudo-elements. @returns {boolean} Whether anything new was hidden. */
+  function hideSnapshotFadePseudos(session, element) {
+    const marked = (element.getAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE) || '').split(/\s+/).filter(Boolean);
+    const missing = ['before', 'after'].filter((pseudo) => !marked.includes(pseudo) && isSnapshotFadePseudo(element, pseudo));
+    if (missing.length === 0) {
+      return false;
+    }
+    if (!session.hiddenPseudos.has(element)) {
+      session.hiddenPseudos.set(element, element.getAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE));
+    }
+    installSnapshotStyles();
+    element.setAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE, [...marked, ...missing].join(' '));
+    return true;
+  }
+
+  /**
+   * Takes sticky boxes in the middle of the conversation out of sticking,
+   * e.g. section headings and table headers, which would otherwise be pinned
+   * over every stitched screen. Boxes at the very start or end of the
+   * conversation are page chrome (a header, the composer dock) that the clip
+   * leaves out, so they keep sticking. An un-stuck box keeps its place in
+   * the flow, so nothing else moves and the scroll height stays the same.
+   * Runs after every scroll, because pages render parts as they show up.
+   * @returns {boolean} Whether anything new was un-stuck.
+   */
+  function unstickSnapshotContent(session) {
+    const { container } = session;
+    const isDocument = isSnapshotDocumentScroller(container);
+    const scope = isDocument ? document.body : container;
+    const scroller = isDocument ? document.scrollingElement || document.documentElement : container;
+    // Top of the scrolled content, in viewport pixels.
+    const contentTop = getSnapshotContainerRect(container).top - getSnapshotScrollTop(container);
+    const input = findSnapshotComposerInput(session.provider);
+    let changed = false;
+    for (const element of scope?.querySelectorAll('*') || []) {
+      if (session.unstuckElements.has(element) || session.keptStickyElements.has(element) || !element.style) {
+        continue;
+      }
+      const style = window.getComputedStyle(element);
+      if (style.position !== 'sticky') {
+        continue;
+      }
+      if (input && element.contains(input)) {
+        session.keptStickyElements.add(element);
+        continue;
+      }
+      const saved = SNAPSHOT_UNSTICK_PROPERTIES.map((property) => saveSnapshotInlineStyle(element, property));
+      element.style.setProperty('position', 'relative', 'important');
+      SNAPSHOT_UNSTICK_PROPERTIES.slice(1).forEach((property) => element.style.setProperty(property, 'auto', 'important'));
+      // Where it sits in the flow, now that it no longer sticks.
+      const rect = element.getBoundingClientRect();
+      const top = rect.top - contentTop;
+      if (top <= SNAPSHOT_EDGE_TOLERANCE_PX || top + rect.height >= scroller.scrollHeight - SNAPSHOT_EDGE_TOLERANCE_PX) {
+        restoreSnapshotInlineStyles(saved);
+        session.keptStickyElements.add(element);
+        continue;
+      }
+      session.savedStyles.push(...saved);
+      session.unstuckElements.add(element);
+      // Shadows and fades only made sense while it was stuck over the text.
+      if (style.boxShadow && style.boxShadow !== 'none') {
+        session.savedStyles.push(saveSnapshotInlineStyle(element, 'box-shadow'));
+        element.style.setProperty('box-shadow', 'none', 'important');
+      }
+      hideSnapshotFadePseudos(session, element);
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Hides what would repeat on every stitched screen or clutter a current
+   * view: buttons and fades pinned over the visible conversation (e.g.
+   * "Scroll to bottom"), shadows of bars around it, fades drawn by
+   * pseudo-elements of the composer or of the conversation's boxes, notices
+   * stacked on a composer laid over it (e.g. "You've used 90% of your
+   * limit"), overlay scrollbars, and masks that fade the edges of the
+   * conversation. While stitching, pinned text goes too (e.g. a heading
+   * kept on screen); a current view keeps it. The composer itself stays and
+   * layout is kept. Runs after every scroll, because some buttons only show
+   * up once the conversation is no longer at the bottom.
+   * @returns {boolean} Whether anything new was hidden.
+   */
+  function hideSnapshotFloatingElements(session) {
+    const { container, clip } = session;
+    const clipHeight = clip.bottom - clip.top;
+    if (!container || clipHeight <= 0 || clip.right <= clip.left) {
+      return false;
+    }
+    const hidden = session.hiddenElements;
+    let changed = false;
+    const hide = (element) => {
+      hidden.add(element);
+      session.savedStyles.push(saveSnapshotInlineStyle(element, 'visibility'));
+      element.style.setProperty('visibility', 'hidden', 'important');
+      changed = true;
+    };
+
+    // Overlay scrollbars show up after every scroll; they take no room, so
+    // hiding them does not move the content.
+    const scroller = isSnapshotDocumentScroller(container)
+      ? document.scrollingElement || document.documentElement
+      : container;
+    if (!session.hidesScrollbar) {
+      const style = window.getComputedStyle(scroller);
+      const borders = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+      if (scroller.offsetWidth > 0 && scroller.offsetWidth - scroller.clientWidth <= borders) {
+        session.hidesScrollbar = true;
+        session.savedStyles.push(saveSnapshotInlineStyle(scroller, 'scrollbar-width'));
+        scroller.style.setProperty('scrollbar-width', 'none', 'important');
+        changed = true;
+      }
+    }
+
+    // Boxes whose pseudo-elements may be fades over the conversation: the
+    // conversation and its ancestors, the composer and its ancestors, and
+    // whatever is pinned or was un-stuck.
+    const input = findSnapshotComposerInput(session.provider);
+    const fadeHosts = new Set(session.unstuckElements);
+    for (let node = container; node && node.style; node = node.parentElement) {
+      fadeHosts.add(node);
+      if (session.unmaskedElements.has(node)) {
+        continue;
+      }
+      const style = window.getComputedStyle(node);
+      const masked = SNAPSHOT_HIDDEN_MASK_PROPERTIES.some((property) => {
+        const value = style.getPropertyValue(property);
+        return value && value !== 'none';
+      });
+      if (masked) {
+        session.unmaskedElements.add(node);
+        SNAPSHOT_HIDDEN_MASK_PROPERTIES.forEach((property) => {
+          session.savedStyles.push(saveSnapshotInlineStyle(node, property));
+          node.style.setProperty(property, 'none', 'important');
+        });
+        changed = true;
+      }
+    }
+    for (let node = input?.parentElement; node && node !== document.body; node = node.parentElement) {
+      fadeHosts.add(node);
+    }
+
+    // Shadows cast by bars next to the clip, e.g. under a header, fall on
+    // the edge of every screen.
+    const containerRect = getSnapshotContainerRect(container);
+    const nearClip = {
+      left: containerRect.left,
+      right: containerRect.right,
+      top: clip.top - SNAPSHOT_EDGE_TOLERANCE_PX,
+      bottom: clip.bottom + SNAPSHOT_EDGE_TOLERANCE_PX
+    };
+    for (const element of document.body?.querySelectorAll('*') || []) {
+      if (hidden.has(element) || element === container || element.contains(container)
+        || (session.matchElement && element.contains(session.matchElement))) {
+        continue;
+      }
+      const style = window.getComputedStyle(element);
+      const position = style.position;
+      if (position !== 'sticky' && position !== 'fixed' && position !== 'absolute') {
+        continue;
+      }
+      if (style.display === 'none' || !isSnapshotPinned(element, container)) {
+        continue;
+      }
+      fadeHosts.add(element);
+      const rect = element.getBoundingClientRect();
+      if (style.boxShadow && style.boxShadow !== 'none' && !session.quietedElements.has(element)
+        && overlapsSnapshotClip(rect, nearClip)) {
+        session.quietedElements.add(element);
+        session.savedStyles.push(saveSnapshotInlineStyle(element, 'box-shadow'));
+        element.style.setProperty('box-shadow', 'none', 'important');
+        changed = true;
+      }
+      if (rect.height > clipHeight * SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO || !overlapsSnapshotClip(rect, clip)) {
+        continue;
+      }
+      if (input && element.contains(input)) {
+        continue;
+      }
+      const isButton = element.matches('button, [role="button"]');
+      if (!session.stitch && !isButton && hasSnapshotReadableText(element)) {
+        continue;
+      }
+      hide(element);
+    }
+
+    for (const element of fadeHosts) {
+      if (element.style && hideSnapshotFadePseudos(session, element)) {
+        changed = true;
+      }
+    }
+
+    // The clip ends at the input box, so whatever else the pinned composer
+    // shows over the conversation sits next to the input's ancestors.
+    const dock = input && getSnapshotPinningNode(input, container);
+    if (dock) {
+      for (let node = input; node !== dock; node = node.parentElement) {
+        for (const sibling of node.parentElement.children) {
+          if (sibling !== node && !hidden.has(sibling) && sibling.style
+            && !(session.matchElement && sibling.contains(session.matchElement))
+            && window.getComputedStyle(sibling).display !== 'none'
+            && overlapsSnapshotClip(sibling.getBoundingClientRect(), clip)) {
+            hide(sibling);
+          }
+        }
+      }
+    }
+    return changed;
+  }
+
+  /** Puts back every style, mark and pointer a snapshot changed; scroll positions stay. */
+  function restoreSnapshotPage(session) {
+    if (!session) {
+      return;
+    }
+    restoreSnapshotInlineStyles(session.savedStyles);
+    session.savedStyles = [];
+    session.hiddenPseudos.forEach((value, element) => {
+      if (value === null) {
+        element.removeAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE);
+      } else {
+        element.setAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE, value);
+      }
+    });
+    session.hiddenPseudos.clear();
+    session.hidesScrollbar = false;
+    session.hiddenElements.clear();
+    session.unmaskedElements.clear();
+    session.unstuckElements.clear();
+    session.keptStickyElements.clear();
+    session.quietedElements.clear();
+    document.documentElement.removeAttribute(SNAPSHOT_HIDE_CURSOR_ATTRIBUTE);
+    removeSnapshotStyles();
+  }
+
+  /** Un-sticks and hides what should not be captured, then waits for the result to show. */
+  async function settleSnapshotScreen(session) {
+    await waitForSnapshotPaint();
+    if (!session.hideFloating) {
+      return;
+    }
+    // A second pass for what only appeared after the first one.
+    for (let pass = 0; pass < 2; pass += 1) {
+      const unstuck = session.stitch && unstickSnapshotContent(session);
+      const hidden = hideSnapshotFloatingElements(session);
+      if (!unstuck && !hidden) {
+        break;
+      }
+      await waitForSnapshotPaint();
+    }
+  }
+
+  function waitForSnapshotPaint() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+      // Frames can be throttled when hidden; the timeout keeps replies coming.
+      setTimeout(finish, SNAPSHOT_PAINT_TIMEOUT_MS);
+      if (typeof requestAnimationFrame !== 'function') {
+        setTimeout(finish, SNAPSHOT_PAINT_SETTLE_MS);
+        return;
+      }
+      requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(finish, SNAPSHOT_PAINT_SETTLE_MS)));
+    });
+  }
+
+  function postSnapshotState(requestId, session, extra = {}) {
+    const container = session?.container || null;
+    window.parent.postMessage({
+      type: PANELIZE_SNAPSHOT_STATE,
+      context: MULTI_PANEL_SNAPSHOT_CONTEXT,
+      requestId,
+      sessionId: session?.id || null,
+      provider: detectProvider(),
+      matched: Boolean(session?.matched),
+      // 'prompt', 'user-turn' or 'top'; null when the panel was left as it was.
+      alignedBy: session?.alignedBy || null,
+      scrollTop: container ? getSnapshotScrollTop(container) : 0,
+      maxScrollTop: container ? getSnapshotMaxScrollTop(container) : 0,
+      originalScrollTop: container ? session.scrolled.get(container)?.top ?? null : null,
+      clip: session?.clip || null,
+      viewport: getSnapshotViewport(),
+      ...extra
+    }, '*');
+  }
+
+  /** Captures this container: remembers where it was, un-sticks its content and measures its clip. */
+  function useSnapshotContainer(session, container) {
+    if (session.container === container) {
+      return;
+    }
+    session.container = container;
+    if (!session.scrolled.has(container)) {
+      const top = getSnapshotScrollTop(container);
+      const maxScrollTop = getSnapshotMaxScrollTop(container);
+      session.scrolled.set(container, {
+        top,
+        maxScrollTop,
+        atEnd: top >= maxScrollTop - SNAPSHOT_ALIGN_TOLERANCE_PX
+      });
+    }
+    session.keptStickyElements.clear();
+    if (session.stitch) {
+      // Before measuring, so a heading stuck at the top is not taken for a header.
+      unstickSnapshotContent(session);
+    }
+    session.clip = getSnapshotClip(container, session.provider);
+  }
+
+  /**
+   * Scrolls the element just under the provider's header, not behind it,
+   * and checks that it got there: the container scrolled as asked and the
+   * element moved with it. Otherwise the container is put back.
+   * @returns {boolean} Whether the element is aligned.
+   */
+  function alignSnapshotElement(session, { element, container }, alignedBy) {
+    useSnapshotContainer(session, container);
+    const before = getSnapshotScrollTop(container);
+    const elementTop = element.getBoundingClientRect().top;
+    const target = clampSnapshotScrollTop(container, before + elementTop - session.clip.top - SNAPSHOT_ALIGN_MARGIN_PX);
+    scrollSnapshotContainer(container, target);
+    const after = getSnapshotScrollTop(container);
+    const moved = elementTop - element.getBoundingClientRect().top;
+    if (Math.abs(after - target) > SNAPSHOT_ALIGN_TOLERANCE_PX
+      || Math.abs(moved - (after - before)) > SNAPSHOT_ALIGN_TOLERANCE_PX) {
+      scrollSnapshotContainer(container, before);
+      return false;
+    }
+    session.alignedBy = alignedBy;
+    session.alignTarget = target;
+    session.matched = alignedBy === 'prompt';
+    session.matchElement = element;
+    return true;
+  }
+
+  async function handleSnapshotPrepare(data) {
+    // A capture that never restored, e.g. when the page went away.
+    restoreSnapshotPage(snapshotSession);
+    snapshotSession = null;
+    const stitch = Boolean(data.stitch);
+    const session = {
+      id: data.sessionId,
+      provider: detectProvider(),
+      stitch,
+      hideFloating: stitch || Boolean(data.hideFloating),
+      container: null,
+      clip: null,
+      matched: false,
+      alignedBy: null,
+      alignTarget: null,
+      matchElement: null,
+      // Scroll position of every container touched, to put them back.
+      scrolled: new Map(),
+      hiddenElements: new Set(),
+      unmaskedElements: new Set(),
+      unstuckElements: new Set(),
+      keptStickyElements: new Set(),
+      quietedElements: new Set(),
+      hiddenPseudos: new Map(),
+      hidesScrollbar: false,
+      savedStyles: []
+    };
+    snapshotSession = session;
+    if (data.hideCursor) {
+      // Tab sharing can draw the pointer into the frames.
+      installSnapshotStyles();
+      document.documentElement.setAttribute(SNAPSHOT_HIDE_CURSOR_ATTRIBUTE, '');
+    }
+
+    const main = findMainSnapshotScrollContainer();
+    useSnapshotContainer(session, main);
+    if (data.align && typeof data.prompt === 'string') {
+      for (const match of findSnapshotPromptMatches(data.prompt, main)) {
+        if (alignSnapshotElement(session, match, 'prompt')) {
+          break;
+        }
+      }
+    }
+    if (!session.alignedBy && stitch) {
+      const turn = findSnapshotUserTurn(main);
+      if (turn) {
+        alignSnapshotElement(session, turn, 'user-turn');
+      }
+    }
+    if (!session.alignedBy && stitch) {
+      // Never stitch from wherever the panel happened to be scrolled.
+      useSnapshotContainer(session, main);
+      scrollSnapshotContainer(main, 0);
+      session.alignedBy = 'top';
+      session.alignTarget = 0;
+    }
+
+    if (session.alignedBy || session.hideFloating) {
+      await settleSnapshotScreen(session);
+    }
+    const isOffTarget = () => session.alignTarget !== null
+      && Math.abs(getSnapshotScrollTop(session.container) - session.alignTarget) > SNAPSHOT_ALIGN_TOLERANCE_PX;
+    if (isOffTarget()) {
+      // The page scrolled itself meanwhile (e.g. back to the bottom).
+      scrollSnapshotContainer(session.container, session.alignTarget);
+      await settleSnapshotScreen(session);
+    }
+    if (isOffTarget()) {
+      // It keeps doing so: a stitch from here would miss the start, so the
+      // panel is shown as it is; a current view just is not aligned.
+      session.alignedBy = null;
+      session.alignTarget = null;
+      session.matched = false;
+      postSnapshotState(data.requestId, session, stitch ? { error: 'unaligned' } : {});
+      return;
+    }
+    postSnapshotState(data.requestId, session);
+  }
+
+  async function handleSnapshotScroll(data) {
+    const session = snapshotSession;
+    if (!session || session.id !== data.sessionId || typeof data.scrollTop !== 'number') {
+      postSnapshotState(data.requestId, null, { error: 'no-session' });
+      return;
+    }
+    scrollSnapshotContainer(session.container, data.scrollTop);
+    await settleSnapshotScreen(session);
+    postSnapshotState(data.requestId, session);
+  }
+
+  async function handleSnapshotRestore(data) {
+    const session = snapshotSession;
+    if (!session || session.id !== data.sessionId) {
+      postSnapshotState(data.requestId, null, { error: 'no-session' });
+      return;
+    }
+    snapshotSession = null;
+    restoreSnapshotPage(session);
+    const positions = Array.from(session.scrolled).reverse();
+    let { scrolled, heldBack } = restoreSnapshotScrollPositions(positions, false);
+    // A virtual list (DeepSeek) renders the rows near its old position only
+    // once scrolled there, so its range can be short at first and hold it
+    // back: follow the range while it grows back.
+    for (let attempt = 0; heldBack && !snapshotSession && attempt < SNAPSHOT_RESTORE_ATTEMPTS; attempt += 1) {
+      await waitForSnapshotPaint();
+      scrolled = false;
+      ({ heldBack } = restoreSnapshotScrollPositions(positions, true));
+    }
+    if (scrolled) {
+      await waitForSnapshotPaint();
+    }
+    postSnapshotState(data.requestId, session, { restored: true });
+  }
+
+  /**
+   * Scrolls each container back; one that was at the end goes back to the
+   * end. With `onlyHeldBack`, only containers left at the end of the short
+   * range seen last time are touched; one that moved off it was scrolled by
+   * the page meanwhile and is left alone.
+   * @returns {{scrolled: boolean, heldBack: boolean}} heldBack: a range is
+   *   still shorter than the position needs.
+   */
+  function restoreSnapshotScrollPositions(positions, onlyHeldBack) {
+    let scrolled = false;
+    let heldBack = false;
+    for (const [container, position] of positions) {
+      const current = getSnapshotScrollTop(container);
+      if (onlyHeldBack && (position.heldAt === undefined || Math.abs(current - position.heldAt) > 1)) {
+        continue;
+      }
+      const max = getSnapshotMaxScrollTop(container);
+      const target = position.atEnd ? max : position.top;
+      if (Math.abs(current - target) > 1) {
+        scrollSnapshotContainer(container, target);
+        scrolled = true;
+      }
+      const needed = position.atEnd ? position.maxScrollTop : position.top;
+      const reached = getSnapshotMaxScrollTop(container);
+      position.heldAt = reached < needed - 1 ? getSnapshotScrollTop(container) : undefined;
+      heldBack = heldBack || position.heldAt !== undefined;
+    }
+    return { scrolled, heldBack };
+  }
+
+  /** Returns true when the message belonged to the snapshot protocol. */
+  function handleSnapshotMessage(event) {
+    const type = event.data.type;
+    if (type !== PANELIZE_SNAPSHOT_PREPARE && type !== PANELIZE_SNAPSHOT_SCROLL && type !== PANELIZE_SNAPSHOT_RESTORE) {
+      return false;
+    }
+    // Only the page embedding this frame may scroll it.
+    if (event.data.context !== 'multi-panel' || event.source !== window.parent) {
+      return true;
+    }
+    const handler = type === PANELIZE_SNAPSHOT_PREPARE
+      ? handleSnapshotPrepare
+      : type === PANELIZE_SNAPSHOT_SCROLL ? handleSnapshotScroll : handleSnapshotRestore;
+    handler(event.data).catch((error) => {
+      console.warn('[Snapshot] Could not prepare the conversation:', error);
+      postSnapshotState(event.data.requestId, null, { error: 'failed' });
+    });
+    return true;
+  }
+
   // Listen for messages from the multi-panel host
   setupProviderLocationReporting();
+  setupPageWidthReporting();
   window.addEventListener('message', handleTextInjection);
 })();

@@ -61,6 +61,10 @@
             <path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1c-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13C4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68c.34-.24 1.23-.69 2.32.02c.18 2.05 1.84 3.66 3.9 3.66c2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86s2.82 1.28 2.82 2.86s-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74l-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z" />
           </svg>
         </button>
+        <button id="share-snapshot-btn" class="toolbar-btn" data-i18n-title="shareButtonTitle" title="Share a snapshot of this comparison">
+          <span class="material-symbols-outlined" aria-hidden="true">photo_camera</span>
+          <span class="btn-text" data-i18n="shareButtonText">Share</span>
+        </button>
         <button id="layout-btn" class="toolbar-btn" title="Change Layout">
           <span class="material-symbols-outlined">grid_view</span>
         </button>
@@ -82,6 +86,17 @@
       <!-- Panel Grid Container -->
       <div id="panel-grid" class="layout-2x2">
         <!-- Panels will be dynamically generated -->
+      </div>
+    </div>
+
+    <!-- Store rating prompt (shown after enough successful sends) -->
+    <div id="rating-banner" class="rating-banner" role="status" hidden>
+      <span class="material-symbols-outlined rating-banner-icon" aria-hidden="true">star</span>
+      <span class="rating-banner-text" data-i18n="ratingPromptMessage">Enjoying Panelize? Rate it on the Chrome Web Store</span>
+      <div class="rating-banner-actions">
+        <button id="rating-rate-btn" class="rating-banner-btn primary" data-i18n="ratingPromptRate">Rate</button>
+        <button id="rating-later-btn" class="rating-banner-btn" data-i18n="ratingPromptLater">Later</button>
+        <button id="rating-never-btn" class="rating-banner-btn" data-i18n="ratingPromptNever">Don't ask again</button>
       </div>
     </div>
 
@@ -116,6 +131,12 @@
             <span class="btn-text">Send All</span>
           </button>
         </div>
+      </div>
+      <div id="snapshot-progress" class="snapshot-progress" role="status" hidden>
+        <span class="material-symbols-outlined snapshot-progress-icon" aria-hidden="true">photo_camera</span>
+        <span id="snapshot-progress-text" class="snapshot-progress-text"></span>
+        <progress id="snapshot-progress-bar" class="snapshot-progress-bar"></progress>
+        <button id="snapshot-cancel-btn" type="button" class="btn-secondary snapshot-cancel-btn" data-i18n="shareProgressCancel">Cancel</button>
       </div>
     </footer>
 
@@ -358,6 +379,56 @@
         <div class="modal-footer">
           <button id="cancel-variable-btn" class="btn-secondary">Cancel</button>
           <button id="apply-variable-btn" class="btn-primary">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Share Snapshot Modal -->
+    <div id="share-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
+      <div class="modal-content modal-large share-modal-content">
+        <div class="modal-header">
+          <h3 id="share-modal-title" data-i18n="shareDialogTitle">Share comparison</h3>
+          <button class="close-btn" id="close-share-modal" data-i18n-title="shareDialogClose" data-i18n-aria="shareDialogClose" title="Close" aria-label="Close">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="modal-body share-modal-body">
+          <div class="share-controls">
+            <div class="share-mode-switch" role="radiogroup" data-i18n-aria="shareModeLabel" aria-label="Snapshot area">
+              <button type="button" class="share-mode-btn" role="radio" aria-checked="false" data-mode="current" data-i18n="shareModeCurrent">Current view</button>
+              <button type="button" class="share-mode-btn" role="radio" aria-checked="true" data-mode="full" data-i18n="shareModeFull">Full answers</button>
+            </div>
+            <label class="share-title-field">
+              <span data-i18n="shareTitleLabel">Title</span>
+              <input id="share-title-input" type="text" maxlength="400" autocomplete="off" spellcheck="false" data-i18n-placeholder="shareTitlePlaceholder" placeholder="Add a title (optional)" />
+            </label>
+          </div>
+          <p id="share-capture-hint" class="share-hint" hidden>
+            <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+            <span id="share-capture-hint-text"></span>
+          </p>
+          <p id="share-stream-status" class="share-stream-status" hidden>
+            <span class="material-symbols-outlined" aria-hidden="true">screen_share</span>
+            <span data-i18n="shareStreamStatus">Sharing this tab for snapshots</span>
+            <span aria-hidden="true">·</span>
+            <button type="button" id="share-stream-stop" class="share-stream-stop" data-i18n="shareStreamStop">Stop</button>
+          </p>
+          <p id="share-capture-notes" class="share-notes" role="status" hidden></p>
+          <p class="share-privacy-warning">
+            <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+            <span data-i18n="sharePrivacyWarning">Check the image before you share it: it may show chat history in sidebars, account names or avatars.</span>
+          </p>
+          <img id="share-preview" class="share-preview" alt="" />
+        </div>
+        <div class="modal-footer">
+          <button id="share-download-btn" class="btn-secondary share-action-btn">
+            <span class="material-symbols-outlined" aria-hidden="true">download</span>
+            <span data-i18n="shareDownloadButton">Download PNG</span>
+          </button>
+          <button id="share-copy-btn" class="btn-primary share-action-btn">
+            <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
+            <span data-i18n="shareCopyButton">Copy to clipboard</span>
+          </button>
         </div>
       </div>
     </div>

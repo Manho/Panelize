@@ -827,5 +827,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "Panelize を気に入っていただけましたか？Chrome ウェブストアで評価をお願いします"
+  },
+  "ratingPromptRate": {
+    "message": "評価する"
+  },
+  "ratingPromptLater": {
+    "message": "後で"
+  },
+  "ratingPromptNever": {
+    "message": "今後表示しない"
+  },
+  "shareButtonText": {
+    "message": "共有"
+  },
+  "shareButtonTitle": {
+    "message": "この比較のスナップショットを共有します。画像はお使いのデバイスにのみ保存されます。"
+  },
+  "shareDialogTitle": {
+    "message": "比較を共有"
+  },
+  "shareDialogClose": {
+    "message": "閉じる"
+  },
+  "sharePrivacyWarning": {
+    "message": "共有する前に画像を確認してください。サイドバーのチャット履歴、アカウント名、アバターが写っている場合があります。"
+  },
+  "shareCopyButton": {
+    "message": "クリップボードにコピー"
+  },
+  "shareDownloadButton": {
+    "message": "PNG をダウンロード"
+  },
+  "shareCopied": {
+    "message": "画像をクリップボードにコピーしました"
+  },
+  "shareCopyFailed": {
+    "message": "画像をコピーできませんでした。代わりに「PNG をダウンロード」を使用してください。"
+  },
+  "shareCaptureCancelled": {
+    "message": "スナップショットをキャンセルしました"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "スナップショットを撮るには、この Panelize タブを共有してください"
+  },
+  "shareCaptureTabHidden": {
+    "message": "スナップショットを中止しました：完了するまでこの Panelize タブを表示したままにしてください"
+  },
+  "shareCaptureFailed": {
+    "message": "比較画面をキャプチャできませんでした"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "ウィンドウやパネルのサイズが変わり続けたため、比較画面をキャプチャできませんでした。もう一度お試しください"
+  },
+  "shareModeLabel": {
+    "message": "撮影範囲"
+  },
+  "shareModeCurrent": {
+    "message": "現在の表示"
+  },
+  "shareModeFull": {
+    "message": "回答全体"
+  },
+  "shareTitleLabel": {
+    "message": "タイトル"
+  },
+  "shareTitlePlaceholder": {
+    "message": "見出しを追加（任意）"
+  },
+  "shareSnapshotTagline": {
+    "message": "AI を並べて比較"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "プロンプト"
+  },
+  "shareSnapshotCaption": {
+    "message": "無料の Chrome 拡張機能"
+  },
+  "shareSnapshotSubline": {
+    "message": "同じプロンプト · $1 · 並べて比較"
+  },
+  "shareTruncatedNote": {
+    "message": "回答が長すぎるため、画像には冒頭のみ表示：$1"
+  },
+  "shareInterruptedNote": {
+    "message": "最後までキャプチャできなかったため、冒頭のみ表示：$1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "現在の表示のみ：$1"
+  },
+  "panelResizeHandle": {
+    "message": "ドラッグでパネル幅を調整、ダブルクリックでリセット"
+  },
+  "shareOutOfViewNote": {
+    "message": "全体が表示されていないため除外：$1 — 横にスクロールしてもう一度共有すると含められます"
+  },
+  "shareShortcutHint": {
+    "message": "ヒント：このページで $1 を押すと Chrome の確認を省略できます"
+  },
+  "shareToolbarHint": {
+    "message": "ヒント：このページでツールバーの Panelize アイコンをクリックすると Chrome の確認を省略できます"
+  },
+  "shareProgressPreparing": {
+    "message": "スナップショットを準備しています…"
+  },
+  "shareProgressStep": {
+    "message": "$2 画面中 $1 画面目を撮影しています…"
+  },
+  "shareStreamStatus": {
+    "message": "スナップショット用にこのタブを共有中"
+  },
+  "shareStreamStop": {
+    "message": "停止"
+  },
+  "shareProgressHoldPointer": {
+    "message": "少しの間マウスを動かさないでください…"
+  },
+  "shareProgressCancel": {
+    "message": "キャンセル"
+  },
+  "labelShareWatermark": {
+    "message": "共有画像に透かしを表示"
+  },
+  "descShareWatermark": {
+    "message": "「共有」ボタンで作成したスナップショットに Panelize の名前、panelize.dev、日付を表示します。見出しと枠は常に表示されます。"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "共有画像の透かしを有効にしました"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "共有画像の透かしを無効にしました"
   }
 }

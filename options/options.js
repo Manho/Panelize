@@ -288,6 +288,12 @@ async function loadSettings() {
     openModeSelect.value = settings.openMode || 'tab';
   }
 
+  // Share snapshot watermark setting
+  const shareWatermarkToggle = document.getElementById('share-watermark-toggle');
+  if (shareWatermarkToggle) {
+    shareWatermarkToggle.checked = settings.shareWatermarkEnabled !== false;
+  }
+
   // Enter key behavior settings
   const enterBehavior = settings.enterKeyBehavior || {
     enabled: true,
@@ -750,6 +756,16 @@ function setupEventListeners() {
     openModeSelect.addEventListener('change', async (e) => {
       await saveSetting('openMode', e.target.value);
       showStatus('success', t('msgOpenModeUpdated') || 'Open mode updated');
+    });
+  }
+
+  // Multi-Panel: Share snapshot watermark
+  const shareWatermarkToggle = document.getElementById('share-watermark-toggle');
+  if (shareWatermarkToggle) {
+    shareWatermarkToggle.addEventListener('change', async (e) => {
+      const enabled = e.target.checked;
+      await saveSetting('shareWatermarkEnabled', enabled);
+      showStatus('success', enabled ? t('msgShareWatermarkEnabled') : t('msgShareWatermarkDisabled'));
     });
   }
 

@@ -54,7 +54,8 @@ test.describe('Focus protection E2E', () => {
 
   function providerFrame(providerId) {
     const host = PROVIDER_HOSTS[providerId];
-    return page.frames().find((frame) => new URL(frame.url()).host === host);
+    // A frame that has not started loading yet has no URL.
+    return page.frames().find((frame) => URL.canParse(frame.url()) && new URL(frame.url()).host === host);
   }
 
   async function waitForFixtureReady(providerId) {

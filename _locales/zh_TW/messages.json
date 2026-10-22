@@ -823,5 +823,137 @@
         "content": "$1"
       }
     }
+  },
+  "ratingPromptMessage": {
+    "message": "喜歡 Panelize 嗎？歡迎到 Chrome 線上應用程式商店為它評分"
+  },
+  "ratingPromptRate": {
+    "message": "去評分"
+  },
+  "ratingPromptLater": {
+    "message": "稍後再說"
+  },
+  "ratingPromptNever": {
+    "message": "不要再詢問"
+  },
+  "shareButtonText": {
+    "message": "分享"
+  },
+  "shareButtonTitle": {
+    "message": "分享目前比較的截圖，圖片只會保存在你的裝置上。"
+  },
+  "shareDialogTitle": {
+    "message": "分享比較截圖"
+  },
+  "shareDialogClose": {
+    "message": "關閉"
+  },
+  "sharePrivacyWarning": {
+    "message": "分享前請檢查圖片：其中可能包含側邊欄的聊天記錄、帳號名稱或頭像。"
+  },
+  "shareCopyButton": {
+    "message": "複製到剪貼簿"
+  },
+  "shareDownloadButton": {
+    "message": "下載 PNG"
+  },
+  "shareCopied": {
+    "message": "圖片已複製到剪貼簿"
+  },
+  "shareCopyFailed": {
+    "message": "無法複製圖片，請改用「下載 PNG」。"
+  },
+  "shareCaptureCancelled": {
+    "message": "已取消截圖"
+  },
+  "shareCaptureWrongSurface": {
+    "message": "要截圖，請選擇分享目前的 Panelize 分頁"
+  },
+  "shareCaptureTabHidden": {
+    "message": "截圖已停止：完成前請保持在此 Panelize 分頁"
+  },
+  "shareCaptureFailed": {
+    "message": "無法擷取比較畫面"
+  },
+  "shareCaptureLayoutChanged": {
+    "message": "視窗或面板大小一直在變，無法擷取比較畫面，請再試一次"
+  },
+  "shareModeLabel": {
+    "message": "截圖範圍"
+  },
+  "shareModeCurrent": {
+    "message": "目前檢視"
+  },
+  "shareModeFull": {
+    "message": "完整回答"
+  },
+  "shareTitleLabel": {
+    "message": "標題"
+  },
+  "shareTitlePlaceholder": {
+    "message": "新增標題（選填）"
+  },
+  "shareSnapshotTagline": {
+    "message": "並排比較 AI"
+  },
+  "shareSnapshotPromptLabel": {
+    "message": "提示詞"
+  },
+  "shareSnapshotCaption": {
+    "message": "免費 Chrome 擴充功能"
+  },
+  "shareSnapshotSubline": {
+    "message": "同一提示詞 · $1 · 並排比較"
+  },
+  "shareTruncatedNote": {
+    "message": "回答太長，圖片中只顯示了開頭部分：$1"
+  },
+  "shareInterruptedNote": {
+    "message": "頁面未能截到結尾，只顯示了開頭部分：$1"
+  },
+  "shareCurrentViewOnly": {
+    "message": "僅目前檢視：$1"
+  },
+  "panelResizeHandle": {
+    "message": "拖曳可調整面板寬度，按兩下恢復預設"
+  },
+  "shareOutOfViewNote": {
+    "message": "未完整顯示，未截入：$1 — 左右捲動後重新截圖即可包含"
+  },
+  "shareShortcutHint": {
+    "message": "提示：在此頁面按 $1 即可略過 Chrome 的確認"
+  },
+  "shareToolbarHint": {
+    "message": "提示：在此頁面點擊工具列中的 Panelize 圖示即可略過 Chrome 的確認"
+  },
+  "shareProgressPreparing": {
+    "message": "正在準備截圖…"
+  },
+  "shareProgressStep": {
+    "message": "正在擷取第 $1 個畫面，共 $2 個…"
+  },
+  "shareStreamStatus": {
+    "message": "正在分享此分頁，用於截圖"
+  },
+  "shareStreamStop": {
+    "message": "停止"
+  },
+  "shareProgressHoldPointer": {
+    "message": "請讓滑鼠保持不動片刻…"
+  },
+  "shareProgressCancel": {
+    "message": "取消"
+  },
+  "labelShareWatermark": {
+    "message": "在分享圖片上顯示浮水印"
+  },
+  "descShareWatermark": {
+    "message": "在「分享」按鈕產生的截圖上顯示 Panelize 名稱、panelize.dev 和日期。標題和外框一律保留。"
+  },
+  "msgShareWatermarkEnabled": {
+    "message": "已開啟分享圖片浮水印"
+  },
+  "msgShareWatermarkDisabled": {
+    "message": "已關閉分享圖片浮水印"
   }
 }
