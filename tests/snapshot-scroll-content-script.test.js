@@ -324,6 +324,70 @@ describe('snapshot scroll protocol in provider frames', () => {
     });
   });
 
+  describe('on a page that puts itself back at its bottom', () => {
+    // Like a scroll listener keeping the conversation at its end.
+    function keepAtBottom(container, times) {
+      const descriptor = Object.getOwnPropertyDescriptor(container, 'scrollTop');
+      const bottom = CONTAINER.scrollHeight - CONTAINER.height;
+      let left = times;
+      Object.defineProperty(container, 'scrollTop', {
+        configurable: true,
+        get: descriptor.get,
+        set: (value) => {
+          descriptor.set(value);
+          if (value < bottom && left > 0) {
+            left -= 1;
+            setTimeout(() => descriptor.set(bottom), 0);
+          }
+        }
+      });
+      container.scrollTo = ({ top }) => { container.scrollTop = top; };
+    }
+
+    const messages = [
+      { text: 'Explain how HTTPS works in detail', offset: 300 },
+      { text: 'The answer', offset: 400 }
+    ];
+
+    it('says full answers could not start at the prompt when the page keeps going back', async () => {
+      const { container, setScrollTop, getScrollTop } = createConversation(messages);
+      setScrollTop(CONTAINER.scrollHeight - CONTAINER.height);
+      keepAtBottom(container, Infinity);
+
+      const state = await prepare('Explain how HTTPS works in detail', { stitch: true });
+
+      expect(state.error).toBe('unaligned');
+      expect(state.sessionId).toBe('session-1');
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+      expect(getScrollTop()).toBe(CONTAINER.scrollHeight - CONTAINER.height);
+    });
+
+    it('does not claim a current view is aligned when the page keeps going back', async () => {
+      const { container, setScrollTop } = createConversation(messages);
+      setScrollTop(CONTAINER.scrollHeight - CONTAINER.height);
+      keepAtBottom(container, Infinity);
+
+      const state = await prepare('Explain how HTTPS works in detail');
+
+      expect(state).toMatchObject({ matched: false, alignedBy: null, scrollTop: CONTAINER.scrollHeight - CONTAINER.height });
+      expect(state.error).toBeUndefined();
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+    });
+
+    it('starts at the prompt when the page goes back only once', async () => {
+      const { container, setScrollTop, getScrollTop } = createConversation(messages);
+      setScrollTop(CONTAINER.scrollHeight - CONTAINER.height);
+      keepAtBottom(container, 1);
+
+      const state = await prepare('Explain how HTTPS works in detail', { stitch: true });
+
+      expect(state.error).toBeUndefined();
+      expect(state).toMatchObject({ alignedBy: 'prompt', scrollTop: 300 - 56 - 16 });
+      expect(getScrollTop()).toBe(300 - 56 - 16);
+      await sendSnapshotMessage({ type: 'PANELIZE_SNAPSHOT_RESTORE', sessionId: 'session-1' });
+    });
+  });
+
   it('hides the pointer in the frame while asked to, then shows it again', async () => {
     createConversation([{ text: 'Explain how HTTPS works', offset: 1500 }]);
     const root = document.documentElement;

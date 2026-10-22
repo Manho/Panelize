@@ -4541,11 +4541,21 @@
     if (session.alignedBy || session.hideFloating) {
       await settleSnapshotScreen(session);
     }
-    if (session.alignTarget !== null
-      && Math.abs(getSnapshotScrollTop(session.container) - session.alignTarget) > SNAPSHOT_ALIGN_TOLERANCE_PX) {
+    const isOffTarget = () => session.alignTarget !== null
+      && Math.abs(getSnapshotScrollTop(session.container) - session.alignTarget) > SNAPSHOT_ALIGN_TOLERANCE_PX;
+    if (isOffTarget()) {
       // The page scrolled itself meanwhile (e.g. back to the bottom).
       scrollSnapshotContainer(session.container, session.alignTarget);
       await settleSnapshotScreen(session);
+    }
+    if (isOffTarget()) {
+      // It keeps doing so: a stitch from here would miss the start, so the
+      // panel is shown as it is; a current view just is not aligned.
+      session.alignedBy = null;
+      session.alignTarget = null;
+      session.matched = false;
+      postSnapshotState(data.requestId, session, stitch ? { error: 'unaligned' } : {});
+      return;
     }
     postSnapshotState(data.requestId, session);
   }
