@@ -917,11 +917,8 @@
   "shareSnapshotPromptLabel": {
     "message": "Prompt"
   },
-  "shareSnapshotAiCountOne": {
-    "message": "1 AI"
-  },
-  "shareSnapshotAiCountMany": {
-    "message": "$1 AIs"
+  "shareSnapshotCaption": {
+    "message": "Free Chrome extension"
   },
   "shareSnapshotSubline": {
     "message": "Same prompt · $1 · side by side"

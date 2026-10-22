@@ -896,11 +896,8 @@
   "shareSnapshotPromptLabel": {
     "message": "提示詞"
   },
-  "shareSnapshotAiCountOne": {
-    "message": "1 個 AI"
-  },
-  "shareSnapshotAiCountMany": {
-    "message": "$1 個 AI"
+  "shareSnapshotCaption": {
+    "message": "免費 Chrome 擴充功能"
   },
   "shareSnapshotSubline": {
     "message": "同一提示詞 · $1 · 並排比較"

@@ -6,9 +6,10 @@ import {
   SNAPSHOT_MAX_CAPTURE_WIDTH,
   SNAPSHOT_MAX_PROMPT_CHARS,
   SNAPSHOT_SITE_LABEL,
+  SNAPSHOT_SITE_LINK_TEXT,
   composeSnapshot,
   formatProviderList,
-  formatSnapshotMeta,
+  formatSnapshotSubline,
   getCaptureCrop,
   getSnapshotFileName,
   getSnapshotFrameChromeHeight,
@@ -172,14 +173,15 @@ const FRAME = {
 };
 
 describe('getSnapshotFrameLayout', () => {
-  it('lays out theme A (light): brand row, prompt label, headline, card', () => {
+  it('lays out theme A (light): brand row, prompt label, headline, subline, card', () => {
     const style = FRAME.light;
     const layout = getSnapshotFrameLayout({
       contentWidth: 1392,
       contentHeight: 800,
       scale: 1,
       theme: 'light',
-      titleLineCount: 1
+      titleLineCount: 1,
+      hasSubline: true
     });
 
     expect(layout.style.variant).toBe('a');
@@ -188,8 +190,9 @@ describe('getSnapshotFrameLayout', () => {
     expect(layout.brand).toMatchObject({ x: 64, y: 48, height: 34, iconSize: 34 });
     expect(layout.label).toMatchObject({ y: 48 + 34 + 40, height: 16 });
     expect(layout.title).toMatchObject({ y: 48 + 34 + 40 + 16 + 10, lineHeight: 45, height: 45, maxWidth: 1240 });
-    expect(layout.subline).toBeNull();
-    const cardY = layout.title.y + 45 + 32;
+    expect(layout.brand).toMatchObject({ right: 64 + 1392, pillHeight: 34, ctaGap: 14 });
+    expect(layout.subline).toMatchObject({ x: 64, y: layout.title.y + 45 + 10, height: 22, maxWidth: 1392 });
+    const cardY = layout.subline.y + 22 + 32;
     expect(layout.card).toMatchObject({ x: 64, y: cardY, width: 1392, height: 800, titleBarHeight: 0, radius: 16 });
     expect(layout.content).toEqual({ x: 64, y: cardY, width: 1392, height: 800 });
     expect(layout.note).toBeNull();
@@ -235,6 +238,10 @@ describe('getSnapshotFrameLayout', () => {
     expect(dark.title).toBeNull();
     // The subline stays and takes the headline's place under the brand row.
     expect(dark.subline.y).toBe(44 + 34 + FRAME.dark.sublineGapWithoutTitle);
+
+    const lightSubline = getSnapshotFrameLayout({ contentWidth: 1000, contentHeight: 500, scale: 1, theme: 'light', titleLineCount: 0, hasSubline: true });
+    expect(lightSubline.label).toBeNull();
+    expect(lightSubline.subline.y).toBe(48 + 34 + FRAME.light.sublineGapWithoutTitle);
   });
 
   it('drops the brand row with the watermark off but keeps headline and card', () => {
@@ -248,6 +255,10 @@ describe('getSnapshotFrameLayout', () => {
     expect(dark.brand).toBeNull();
     expect(dark.title.y).toBe(44);
     expect(dark.card.titleBarHeight).toBe(38);
+
+    // The providers and date describe the content, so they stay.
+    const lightSubline = getSnapshotFrameLayout({ contentWidth: 1000, contentHeight: 500, scale: 1, theme: 'light', titleLineCount: 1, hasSubline: true, showWatermark: false });
+    expect(lightSubline.subline).toMatchObject({ y: lightSubline.title.y + 45 + FRAME.light.sublineGap });
 
     const bare = getSnapshotFrameLayout({ contentWidth: 1000, contentHeight: 500, scale: 1, theme: 'light', showWatermark: false });
     expect(bare.card.y).toBe(48);
@@ -290,7 +301,7 @@ describe('composeSnapshot', () => {
   const icon = { width: 128, height: 128, id: 'icon' };
   const texts = (canvas) => canvas.calls.filter((call) => call.op === 'fillText').map((call) => call.args[0]);
 
-  it('draws theme A with brand, tagline, meta, label, headline and content', () => {
+  it('draws theme A with brand, tagline, site link, label, headline, subline and content', () => {
     const canvas = createRecordingCanvas();
     const layout = composeSnapshot(canvas, {
       content,
@@ -300,18 +311,26 @@ describe('composeSnapshot', () => {
       theme: 'light',
       labelText: 'Prompt',
       taglineText: 'Compare AI side by side',
-      metaText: '4 AIs · Oct 21, 2026'
+      captionText: 'Free Chrome extension',
+      sublineText: 'Same prompt · ChatGPT and Claude · side by side · Oct 22, 2026'
     });
 
     expect(canvas.width).toBe(layout.width);
     expect(canvas.height).toBe(layout.height);
-    expect(texts(canvas)).toEqual([
+    const drawn = canvas.calls.filter((call) => call.op === 'fillText');
+    expect(drawn.map((call) => call.args[0])).toEqual([
       SNAPSHOT_BRAND_NAME,
       '· Compare AI side by side',
-      `4 AIs · Oct 21, 2026 · ${SNAPSHOT_SITE_LABEL}`,
+      'Free Chrome extension',
+      SNAPSHOT_SITE_LINK_TEXT,
       'PROMPT',
-      'Which answer is best?'
+      'Which answer is best?',
+      'Same prompt · ChatGPT and Claude · side by side · Oct 22, 2026'
     ]);
+    expect(SNAPSHOT_SITE_LINK_TEXT).toBe(`${SNAPSHOT_SITE_LABEL} ↗`);
+    expect(drawn[2]).toMatchObject({ fillStyle: FRAME.light.captionColor });
+    expect(drawn[3]).toMatchObject({ fillStyle: FRAME.light.pillColor });
+    expect(drawn[6]).toMatchObject({ fillStyle: FRAME.light.sublineColor });
     const background = canvas.calls.find((call) => call.op === 'fillRect');
     expect(background).toMatchObject({ fillStyle: FRAME.light.background, args: [0, 0, layout.width, layout.height] });
     const images = canvas.calls.filter((call) => call.op === 'drawImage');
@@ -328,21 +347,23 @@ describe('composeSnapshot', () => {
       title: 'Which answer is best?',
       theme: 'dark',
       taglineText: 'ignored in B',
-      metaText: 'ignored in B',
-      sublineText: 'Same prompt · ChatGPT, Claude · side by side'
+      captionText: 'Free Chrome extension',
+      sublineText: 'Same prompt · ChatGPT and Claude · side by side · Oct 22, 2026'
     });
 
     const drawn = canvas.calls.filter((call) => call.op === 'fillText');
     expect(drawn.map((call) => call.args[0])).toEqual([
       SNAPSHOT_BRAND_NAME,
-      SNAPSHOT_SITE_LABEL,
+      'Free Chrome extension',
+      SNAPSHOT_SITE_LINK_TEXT,
       '“',
       'Which answer is best?',
       '”',
-      'Same prompt · ChatGPT, Claude · side by side'
+      'Same prompt · ChatGPT and Claude · side by side · Oct 22, 2026'
     ]);
-    expect(drawn[2].fillStyle).toBe(FRAME.dark.openQuoteColor);
-    expect(drawn[4].fillStyle).toBe(FRAME.dark.closeQuoteColor);
+    expect(drawn[2].fillStyle).toBe(FRAME.dark.pillColor);
+    expect(drawn[3].fillStyle).toBe(FRAME.dark.openQuoteColor);
+    expect(drawn[5].fillStyle).toBe(FRAME.dark.closeQuoteColor);
     expect(canvas.calls.filter((call) => call.op === 'arc')).toHaveLength(3);
     expect(layout.content.y).toBe(layout.card.y + 38);
   });
@@ -392,7 +413,52 @@ describe('composeSnapshot', () => {
     expect(texts(canvas)).not.toContain('PROMPT');
   });
 
-  it('draws no brand, site label or meta with the watermark off', () => {
+  it('keeps the site link on a narrow brand row and drops the tagline, then the caption', () => {
+    const draw = (contentWidth) => {
+      const canvas = createRecordingCanvas();
+      composeSnapshot(canvas, {
+        content: { width: contentWidth, height: 300 },
+        scale: 1,
+        icon,
+        theme: 'light',
+        taglineText: 'Compare AI side by side',
+        captionText: 'Free Chrome extension'
+      });
+      return texts(canvas);
+    };
+    expect(draw(800)).toEqual([SNAPSHOT_BRAND_NAME, '· Compare AI side by side', 'Free Chrome extension', SNAPSHOT_SITE_LINK_TEXT]);
+    expect(draw(600)).toEqual([SNAPSHOT_BRAND_NAME, 'Free Chrome extension', SNAPSHOT_SITE_LINK_TEXT]);
+    expect(draw(400)).toEqual([SNAPSHOT_BRAND_NAME, SNAPSHOT_SITE_LINK_TEXT]);
+  });
+
+  it('wraps the subline once on a narrow capture so the date stays visible', () => {
+    const subline = 'Same prompt · ChatGPT and Grok · side by side · Oct 22, 2026';
+    const canvas = createRecordingCanvas();
+    const layout = composeSnapshot(canvas, {
+      content: { width: 400, height: 300 },
+      scale: 1,
+      theme: 'dark',
+      showWatermark: false,
+      sublineText: subline
+    });
+    const lines = texts(canvas);
+    expect(lines).toHaveLength(2);
+    expect(lines.join(' ')).toBe(subline);
+    expect(lines[1].endsWith('Oct 22, 2026')).toBe(true);
+    expect(layout.subline).toMatchObject({ lineHeight: 22, height: 44 });
+    expect(layout.card.y).toBe(layout.subline.y + 44 + FRAME.dark.cardGap);
+
+    const wide = composeSnapshot(createRecordingCanvas(), {
+      content: { width: 1000, height: 300 },
+      scale: 1,
+      theme: 'dark',
+      showWatermark: false,
+      sublineText: subline
+    });
+    expect(wide.subline.height).toBe(22);
+  });
+
+  it('draws no brand, caption or site link with the watermark off', () => {
     const canvas = createRecordingCanvas();
     const layout = composeSnapshot(canvas, {
       content,
@@ -402,11 +468,12 @@ describe('composeSnapshot', () => {
       theme: 'light',
       labelText: 'Prompt',
       taglineText: 'Compare AI side by side',
-      metaText: '4 AIs · Oct 21, 2026',
+      captionText: 'Free Chrome extension',
+      sublineText: 'Same prompt · ChatGPT · side by side · Oct 22, 2026',
       showWatermark: false
     });
     expect(layout.brand).toBeNull();
-    expect(texts(canvas)).toEqual(['PROMPT', 'Still here']);
+    expect(texts(canvas)).toEqual(['PROMPT', 'Still here', 'Same prompt · ChatGPT · side by side · Oct 22, 2026']);
     const images = canvas.calls.filter((call) => call.op === 'drawImage');
     expect(images.map((call) => call.args[0])).toEqual([content]);
   });
@@ -427,11 +494,12 @@ describe('composeSnapshot', () => {
 });
 
 describe('format helpers', () => {
-  it('formats the meta line with a localized date', () => {
-    expect(formatSnapshotMeta({ countText: '4 AIs', date: new Date(2026, 9, 21), locale: 'en-US' }))
-      .toBe('4 AIs · Oct 21, 2026');
-    expect(formatSnapshotMeta({ countText: '4 个 AI', date: new Date(2026, 9, 21), locale: 'zh-CN' }))
-      .toBe('4 个 AI · 2026年10月21日');
+  it('formats the subline with a localized date', () => {
+    expect(formatSnapshotSubline({ providersText: 'Same prompt · ChatGPT and Grok · side by side', date: new Date(2026, 9, 22), locale: 'en-US' }))
+      .toBe('Same prompt · ChatGPT and Grok · side by side · Oct 22, 2026');
+    expect(formatSnapshotSubline({ providersText: '同一提示词 · ChatGPT和Grok · 并排对比', date: new Date(2026, 9, 22), locale: 'zh-CN' }))
+      .toBe('同一提示词 · ChatGPT和Grok · 并排对比 · 2026年10月22日');
+    expect(formatSnapshotSubline({ providersText: '', date: new Date(2026, 9, 22), locale: 'en-US' })).toBe('Oct 22, 2026');
   });
 
   it('lists provider names once, in order', () => {

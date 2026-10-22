@@ -900,11 +900,8 @@
   "shareSnapshotPromptLabel": {
     "message": "프롬프트"
   },
-  "shareSnapshotAiCountOne": {
-    "message": "AI 1개"
-  },
-  "shareSnapshotAiCountMany": {
-    "message": "AI $1개"
+  "shareSnapshotCaption": {
+    "message": "무료 Chrome 확장 프로그램"
   },
   "shareSnapshotSubline": {
     "message": "같은 프롬프트 · $1 · 나란히 비교"

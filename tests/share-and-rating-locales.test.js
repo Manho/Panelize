@@ -30,8 +30,7 @@ const FEATURE_KEYS = [
   'shareTitlePlaceholder',
   'shareSnapshotTagline',
   'shareSnapshotPromptLabel',
-  'shareSnapshotAiCountOne',
-  'shareSnapshotAiCountMany',
+  'shareSnapshotCaption',
   'shareSnapshotSubline',
   'shareTruncatedNote',
   'shareCurrentViewOnly',
@@ -73,7 +72,6 @@ describe('share and rating strings', () => {
 
   it('keeps every substitution in the snapshot strings', () => {
     const substitutions = {
-      shareSnapshotAiCountMany: ['$1'],
       shareSnapshotSubline: ['$1'],
       shareTruncatedNote: ['$1'],
       shareCurrentViewOnly: ['$1'],

@@ -261,6 +261,7 @@ async function readConversationRuns(page, preview, index, frame = {}) {
     contentHeight: 0,
     scale,
     titleLineCount: 1,
+    hasSubline: true,
     ...frame,
   });
   const top = empty.content.y;
@@ -343,7 +344,8 @@ test('Share falls back to tab sharing with a shortcut hint, then copies and down
     await expect(page.locator('#snapshot-progress')).toBeHidden();
     expect(await getDisplayMediaCalls(page)).toBe(1);
 
-    // Layout A: brand row, "PROMPT" label, one headline line, the capture.
+    // Layout A: brand row with the site link pill, "PROMPT" label, one
+    // headline line, the providers and date subline, the capture.
     const preview = await inspectPreview(page);
     const scale = getPreviewScale(preview);
     const layout = getSnapshotFrameLayout({
@@ -353,16 +355,19 @@ test('Share falls back to tab sharing with a shortcut hint, then copies and down
       theme: 'light',
       titleLineCount: 1,
       showWatermark: true,
+      hasSubline: true,
     });
     expect(Math.abs(preview.height - layout.height)).toBeLessThanOrEqual(2);
-    const [corner, providerPixel] = await readPreviewPixels(page, [
+    const [corner, pill, providerPixel] = await readPreviewPixels(page, [
       { x: 2, y: 2 },
+      { x: layout.brand.right - layout.brand.pillPaddingX / 2, y: layout.brand.centerY },
       {
         x: layout.content.x + (preview.frames[0].left + preview.frames[0].width / 2) * scale,
         y: layout.content.y + (preview.frames[0].top + preview.frames[0].height / 2) * scale,
       },
     ]);
     expectColorNear(corner, hexToRgb(SNAPSHOT_FRAME_STYLES.light.background));
+    expectColorNear(pill, hexToRgb(SNAPSHOT_FRAME_STYLES.light.pillBackground));
     // Pixels from the cross-origin provider iframe made it into the image.
     expectColorNear(providerPixel, PROVIDER_BACKGROUND, 24);
 
@@ -415,6 +420,7 @@ test('editing the title re-renders the headline, and an empty title removes it',
       contentHeight: Math.round(oneLine.grid.height * scale),
       scale,
       titleLineCount,
+      hasSubline: true,
     }).height;
 
     await title.fill('');

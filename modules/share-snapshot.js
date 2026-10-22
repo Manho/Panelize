@@ -12,6 +12,9 @@ export const SNAPSHOT_MAX_PROMPT_CHARS = 400;
 
 export const SNAPSHOT_MAX_PROMPT_LINES = 3;
 
+/** The subline wraps once on narrow captures so the date is not cut off. */
+export const SNAPSHOT_MAX_SUBLINE_LINES = 2;
+
 /** Widest capture kept in the image, in device pixels. */
 export const SNAPSHOT_MAX_CAPTURE_WIDTH = 2560;
 
@@ -35,8 +38,9 @@ export const SNAPSHOT_FONT_FAMILY = [
 
 /**
  * Frame styles in CSS pixels; multiplied by the capture scale when drawn.
- * `light` is layout A (warm paper, prompt label, meta line) and `dark` is
- * layout B (glows, quoted headline, provider subline, window card).
+ * `light` is layout A (warm paper, tagline, prompt label) and `dark` is
+ * layout B (glows, quoted headline, window card). Both put the site link on
+ * the brand row and the providers and date in a subline under the headline.
  */
 export const SNAPSHOT_FRAME_STYLES = Object.freeze({
   light: Object.freeze({
@@ -55,8 +59,15 @@ export const SNAPSHOT_FRAME_STYLES = Object.freeze({
     brandColor: '#16161A',
     taglineFontSize: 15,
     taglineColor: 'rgba(22, 22, 26, 0.55)',
-    metaFontSize: 15,
-    metaColor: '#7A7A80',
+    ctaGap: 14,
+    captionFontSize: 14,
+    captionColor: '#8A8A90',
+    pillHeight: 34,
+    pillPaddingX: 16,
+    pillFontSize: 16,
+    pillWeight: 650,
+    pillBackground: '#16161A',
+    pillColor: '#ffffff',
     labelGap: 40,
     labelFontSize: 13,
     labelWeight: 650,
@@ -71,7 +82,11 @@ export const SNAPSHOT_FRAME_STYLES = Object.freeze({
     titleLetterSpacing: -0.02,
     titleColor: '#16161A',
     titleMaxWidth: 1240,
-    sublineGap: 0,
+    sublineGap: 10,
+    sublineGapWithoutTitle: 40,
+    sublineFontSize: 16,
+    sublineLineHeight: 22,
+    sublineColor: '#7A7A80',
     cardGap: 32,
     cardGapWithoutHeadline: 32,
     cardRadius: 16,
@@ -102,8 +117,15 @@ export const SNAPSHOT_FRAME_STYLES = Object.freeze({
     brandWeight: 650,
     brandLetterSpacing: -0.01,
     brandColor: '#ffffff',
-    metaFontSize: 15,
-    metaColor: 'rgba(255, 255, 255, 0.55)',
+    ctaGap: 14,
+    captionFontSize: 14,
+    captionColor: 'rgba(255, 255, 255, 0.55)',
+    pillHeight: 34,
+    pillPaddingX: 16,
+    pillFontSize: 16,
+    pillWeight: 650,
+    pillBackground: '#ffffff',
+    pillColor: '#16161A',
     titleGap: 36,
     titleGapWithoutBrand: 0,
     titleFontSize: 38,
@@ -139,6 +161,9 @@ export const SNAPSHOT_FRAME_STYLES = Object.freeze({
     noteColor: 'rgba(255, 255, 255, 0.6)'
   })
 });
+
+/** Text of the site link pill on the brand row. */
+export const SNAPSHOT_SITE_LINK_TEXT = `${SNAPSHOT_SITE_LABEL} ↗`;
 
 /**
  * @param {string} theme - 'light' or 'dark'.
@@ -301,7 +326,9 @@ function font(weight, size) {
  * Elements are dropped, and the space they used collapses, when they have
  * nothing to show: no title lines removes the headline (and the light
  * theme's "PROMPT" label), `showWatermark: false` removes the brand row with
- * its tagline, meta and site label, and an empty subline or note is skipped.
+ * its tagline, caption and site link, and an empty subline or note is
+ * skipped. The subline (providers and date) describes the content, so it
+ * stays without the watermark.
  * The card around the content is always drawn.
  *
  * @param {object} options
@@ -311,7 +338,8 @@ function font(weight, size) {
  * @param {string} [options.theme] - 'light' (layout A) or 'dark' (layout B).
  * @param {number} [options.titleLineCount] - Wrapped headline lines; 0 hides it.
  * @param {boolean} [options.showWatermark]
- * @param {boolean} [options.hasSubline] - Dark theme provider subline.
+ * @param {boolean} [options.hasSubline] - Provider and date line under the headline.
+ * @param {number} [options.sublineLineCount] - Wrapped subline lines.
  * @param {boolean} [options.hasNote] - Truncation note under the card.
  */
 export function getSnapshotFrameLayout({
@@ -322,6 +350,7 @@ export function getSnapshotFrameLayout({
   titleLineCount = 0,
   showWatermark = true,
   hasSubline = false,
+  sublineLineCount = 1,
   hasNote = false
 }) {
   const style = getSnapshotFrameStyle(theme);
@@ -346,8 +375,12 @@ export function getSnapshotFrameLayout({
       font: font(style.brandWeight, px(style.brandFontSize)),
       letterSpacing: style.brandFontSize * style.brandLetterSpacing * scale,
       taglineFont: style.taglineFontSize ? font(500, px(style.taglineFontSize)) : null,
-      metaFont: font(500, px(style.metaFontSize)),
-      metaRight: paddingX + innerWidth
+      right: paddingX + innerWidth,
+      ctaGap: px(style.ctaGap),
+      captionFont: font(500, px(style.captionFontSize)),
+      pillHeight: px(style.pillHeight),
+      pillPaddingX: px(style.pillPaddingX),
+      pillFont: font(style.pillWeight, px(style.pillFontSize))
     };
     y += height;
   }
@@ -384,7 +417,7 @@ export function getSnapshotFrameLayout({
   }
 
   let subline = null;
-  if (isDark && hasSubline) {
+  if (hasSubline) {
     if (title) {
       y += px(style.sublineGap);
     } else if (brand) {
@@ -393,7 +426,8 @@ export function getSnapshotFrameLayout({
     subline = {
       x: paddingX,
       y,
-      height: px(style.sublineLineHeight),
+      lineHeight: px(style.sublineLineHeight),
+      height: px(style.sublineLineHeight) * Math.max(1, sublineLineCount),
       font: font(400, px(style.sublineFontSize)),
       maxWidth: innerWidth
     };
@@ -504,7 +538,10 @@ function drawBackground(ctx, layout) {
   });
 }
 
-function drawBrand(ctx, layout, { icon, taglineText, metaText }) {
+// The site link sits at the right end of the brand row: a solid pill, with
+// the caption to its left. When the row is too narrow the tagline goes
+// first, then the caption; the pill always stays.
+function drawBrand(ctx, layout, { icon, taglineText, captionText }) {
   const { brand, style } = layout;
   let x = brand.x;
   if (icon) {
@@ -524,17 +561,39 @@ function drawBrand(ctx, layout, { icon, taglineText, metaText }) {
     return ctx.measureText(SNAPSHOT_BRAND_NAME).width;
   });
 
+  ctx.font = brand.pillFont;
+  const pillWidth = Math.round(ctx.measureText(SNAPSHOT_SITE_LINK_TEXT).width) + brand.pillPaddingX * 2;
+  const pillX = brand.right - pillWidth;
+  ctx.font = brand.captionFont;
+  const captionWidth = captionText ? ctx.measureText(captionText).width : 0;
+  const captionRight = pillX - brand.ctaGap;
+  const showCaption = captionWidth > 0 && captionRight - captionWidth >= x + brand.ctaGap;
+  const ctaLeft = showCaption ? captionRight - captionWidth : pillX;
+
   if (brand.taglineFont && taglineText) {
     ctx.font = brand.taglineFont;
-    ctx.fillStyle = style.taglineColor;
-    ctx.fillText(`· ${taglineText}`, x + brand.iconGap, brand.centerY);
+    const tagline = `· ${taglineText}`;
+    const taglineX = x + brand.iconGap;
+    if (taglineX + ctx.measureText(tagline).width + brand.ctaGap <= ctaLeft) {
+      ctx.fillStyle = style.taglineColor;
+      ctx.fillText(tagline, taglineX, brand.centerY);
+    }
   }
 
-  const meta = [metaText, SNAPSHOT_SITE_LABEL].filter(Boolean).join(' · ');
-  ctx.font = brand.metaFont;
-  ctx.fillStyle = style.metaColor;
-  ctx.textAlign = 'right';
-  ctx.fillText(meta, brand.metaRight, brand.centerY);
+  if (showCaption) {
+    ctx.font = brand.captionFont;
+    ctx.fillStyle = style.captionColor;
+    ctx.textAlign = 'right';
+    ctx.fillText(captionText, captionRight, brand.centerY);
+  }
+
+  roundedRectPath(ctx, pillX, brand.centerY - brand.pillHeight / 2, pillWidth, brand.pillHeight, brand.pillHeight / 2);
+  ctx.fillStyle = style.pillBackground;
+  ctx.fill();
+  ctx.font = brand.pillFont;
+  ctx.fillStyle = style.pillColor;
+  ctx.textAlign = 'center';
+  ctx.fillText(SNAPSHOT_SITE_LINK_TEXT, pillX + pillWidth / 2, brand.centerY);
   ctx.textAlign = 'left';
 }
 
@@ -581,6 +640,18 @@ function drawSingleLine(ctx, box, text, color, align = 'left', measure) {
   const x = align === 'center' ? box.x + box.maxWidth / 2 : box.x;
   ctx.fillText(line, x, box.y + box.height / 2);
   ctx.textAlign = 'left';
+}
+
+function drawSubline(ctx, layout, text, measure) {
+  const { subline, style } = layout;
+  ctx.font = subline.font;
+  ctx.fillStyle = style.sublineColor;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const lines = wrapTextLines(text, subline.maxWidth, measure, Math.round(subline.height / subline.lineHeight));
+  lines.forEach((line, index) => {
+    ctx.fillText(line, subline.x, subline.y + subline.lineHeight * (index + 0.5));
+  });
 }
 
 function drawCard(ctx, layout, content, { fadeBottom }) {
@@ -641,8 +712,8 @@ function drawCard(ctx, layout, content, { fadeBottom }) {
  * @param {string[]} [options.titleLines]
  * @param {string} [options.labelText] - Light theme "PROMPT" label.
  * @param {string} [options.taglineText] - Light theme "Compare AI side by side".
- * @param {string} [options.metaText] - Light theme "4 AIs · Oct 21, 2026".
- * @param {string} [options.sublineText] - Dark theme provider line.
+ * @param {string} [options.captionText] - "Free Chrome extension" beside the site link.
+ * @param {string} [options.sublineText] - Providers and date, see formatSnapshotSubline.
  * @param {string} [options.noteText] - Truncation note; also fades the content bottom.
  */
 export function drawSnapshot(ctx, {
@@ -652,20 +723,20 @@ export function drawSnapshot(ctx, {
   titleLines = [],
   labelText = '',
   taglineText = '',
-  metaText = '',
+  captionText = '',
   sublineText = '',
   noteText = ''
 }) {
   const measure = (text) => ctx.measureText(text).width;
   drawBackground(ctx, layout);
   if (layout.brand) {
-    drawBrand(ctx, layout, { icon, taglineText: layout.style.variant === 'a' ? taglineText : '', metaText: layout.style.variant === 'a' ? metaText : '' });
+    drawBrand(ctx, layout, { icon, taglineText: layout.style.variant === 'a' ? taglineText : '', captionText });
   }
   if (layout.title) {
     drawTitle(ctx, layout, titleLines, labelText);
   }
   if (layout.subline) {
-    drawSingleLine(ctx, layout.subline, sublineText, layout.style.sublineColor, 'left', measure);
+    drawSubline(ctx, layout, sublineText, measure);
   }
   drawCard(ctx, layout, content, { fadeBottom: Boolean(layout.note) });
   if (layout.note) {
@@ -686,6 +757,12 @@ function measureTitleLines(ctx, layoutOptions, title, theme) {
   });
 }
 
+function measureSublineLines(ctx, layoutOptions, text) {
+  const probe = getSnapshotFrameLayout(layoutOptions);
+  ctx.font = probe.subline.font;
+  return wrapTextLines(text, probe.subline.maxWidth, (line) => ctx.measureText(line).width, SNAPSHOT_MAX_SUBLINE_LINES);
+}
+
 /**
  * Measures, lays out and draws a snapshot onto `canvas`.
  * @param {HTMLCanvasElement | OffscreenCanvas} canvas
@@ -699,7 +776,7 @@ function measureTitleLines(ctx, layoutOptions, title, theme) {
  * @param {CanvasImageSource | null} [options.icon]
  * @param {string} [options.labelText]
  * @param {string} [options.taglineText]
- * @param {string} [options.metaText]
+ * @param {string} [options.captionText]
  * @param {string} [options.sublineText]
  * @param {string} [options.noteText]
  * @returns {ReturnType<typeof getSnapshotFrameLayout>}
@@ -713,7 +790,7 @@ export function composeSnapshot(canvas, {
   icon = null,
   labelText = '',
   taglineText = '',
-  metaText = '',
+  captionText = '',
   sublineText = '',
   noteText = ''
 }) {
@@ -732,30 +809,32 @@ export function composeSnapshot(canvas, {
   // the context state.
   const titleText = normalizePromptText(title);
   const titleLines = titleText ? measureTitleLines(ctx, layoutOptions, titleText, theme) : [];
-  const layout = getSnapshotFrameLayout({ ...layoutOptions, titleLineCount: titleLines.length });
+  const sublineLineCount = sublineText ? measureSublineLines(ctx, layoutOptions, sublineText).length : 1;
+  const layout = getSnapshotFrameLayout({ ...layoutOptions, titleLineCount: titleLines.length, sublineLineCount });
   canvas.width = layout.width;
   canvas.height = layout.height;
   drawSnapshot(ctx, {
-    layout, content, icon, titleLines, labelText, taglineText, metaText, sublineText, noteText
+    layout, content, icon, titleLines, labelText, taglineText, captionText, sublineText, noteText
   });
   return layout;
 }
 
 /**
- * Light theme meta line, e.g. "4 AIs · Oct 21, 2026".
+ * Subline of both themes, e.g.
+ * "Same prompt · ChatGPT, Grok, and DeepSeek · side by side · Oct 22, 2026".
  * @param {object} options
- * @param {string} options.countText - Localized provider count.
+ * @param {string} [options.providersText] - Localized provider sentence; empty leaves only the date.
  * @param {Date} options.date
  * @param {string} [options.locale] - BCP 47 tag for the date.
  */
-export function formatSnapshotMeta({ countText, date, locale }) {
+export function formatSnapshotSubline({ providersText, date, locale }) {
   let dateText;
   try {
     dateText = new Intl.DateTimeFormat(locale || undefined, { dateStyle: 'medium' }).format(date);
   } catch {
     dateText = date.toDateString();
   }
-  return [countText, dateText].filter(Boolean).join(' · ');
+  return [providersText, dateText].filter(Boolean).join(' · ');
 }
 
 /**

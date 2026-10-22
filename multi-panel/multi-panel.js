@@ -38,9 +38,10 @@ import {
 } from '../modules/rating-prompt.js';
 import {
   SNAPSHOT_MAX_PROMPT_LINES,
+  SNAPSHOT_MAX_SUBLINE_LINES,
   composeSnapshot,
   formatProviderList,
-  formatSnapshotMeta,
+  formatSnapshotSubline,
   getSnapshotFileName,
   getSnapshotFrameChromeHeight,
   normalizePromptText,
@@ -2197,10 +2198,6 @@ function getSnapshotLocale() {
   return toLanguageTag(getTranslationLocale());
 }
 
-function getSnapshotCountText(count) {
-  return count === 1 ? t('shareSnapshotAiCountOne') : t('shareSnapshotAiCountMany', [String(count)]);
-}
-
 function setCurrentSnapshot(blob) {
   const fileName = currentSnapshot?.fileName || getSnapshotFileName(new Date());
   releaseCurrentSnapshot();
@@ -2225,8 +2222,12 @@ async function renderSnapshot() {
     icon,
     labelText: t('shareSnapshotPromptLabel'),
     taglineText: t('shareSnapshotTagline'),
-    metaText: formatSnapshotMeta({ countText: getSnapshotCountText(names.length), date: capture.date, locale }),
-    sublineText: names.length ? t('shareSnapshotSubline', [formatProviderList(names, locale)]) : '',
+    captionText: t('shareSnapshotCaption'),
+    sublineText: formatSnapshotSubline({
+      providersText: names.length ? t('shareSnapshotSubline', [formatProviderList(names, locale)]) : '',
+      date: capture.date,
+      locale
+    }),
     noteText: capture.truncated ? t('shareTruncatedNote', [String(capture.screens)]) : ''
   });
   const blob = await canvasToPngBlob(canvas);
@@ -2346,7 +2347,8 @@ async function captureSnapshot(mode, { refresh = false } = {}) {
           theme,
           showWatermark,
           titleLineCount: SNAPSHOT_MAX_PROMPT_LINES,
-          hasSubline: theme === 'dark',
+          hasSubline: true,
+          sublineLineCount: SNAPSHOT_MAX_SUBLINE_LINES,
           hasNote: true
         })
       })

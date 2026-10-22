@@ -900,11 +900,8 @@
   "shareSnapshotPromptLabel": {
     "message": "Промпт"
   },
-  "shareSnapshotAiCountOne": {
-    "message": "1 ИИ"
-  },
-  "shareSnapshotAiCountMany": {
-    "message": "$1 ИИ"
+  "shareSnapshotCaption": {
+    "message": "Бесплатное расширение для Chrome"
   },
   "shareSnapshotSubline": {
     "message": "Один промпт · $1 · бок о бок"

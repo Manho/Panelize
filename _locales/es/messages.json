@@ -900,11 +900,8 @@
   "shareSnapshotPromptLabel": {
     "message": "Prompt"
   },
-  "shareSnapshotAiCountOne": {
-    "message": "1 IA"
-  },
-  "shareSnapshotAiCountMany": {
-    "message": "$1 IA"
+  "shareSnapshotCaption": {
+    "message": "Extensión gratuita para Chrome"
   },
   "shareSnapshotSubline": {
     "message": "Mismo prompt · $1 · en paralelo"

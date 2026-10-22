@@ -900,11 +900,8 @@
   "shareSnapshotPromptLabel": {
     "message": "プロンプト"
   },
-  "shareSnapshotAiCountOne": {
-    "message": "1 つの AI"
-  },
-  "shareSnapshotAiCountMany": {
-    "message": "$1 つの AI"
+  "shareSnapshotCaption": {
+    "message": "無料の Chrome 拡張機能"
   },
   "shareSnapshotSubline": {
     "message": "同じプロンプト · $1 · 並べて比較"
