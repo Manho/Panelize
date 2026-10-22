@@ -86,11 +86,29 @@ import {
   deletePrompt,
   getPrompt
 } from '../modules/prompt-manager.js';
+import {
+  applyPanelFitScale,
+  createPanelFitState,
+  getPanelFitScale,
+  updatePanelFitState
+} from '../modules/panel-fit.js';
+import { setupPanelResize } from '../modules/panel-resize.js';
 
 
 // ===== State Management =====
 let currentLayout = '1x3';
 let panels = []; // Array of { id, providerId, iframe, state }
+// Re-fits pages when their panel changes width (window, layout or drag).
+const panelFitObserver = typeof ResizeObserver === 'function'
+  ? new ResizeObserver((entries) => {
+    entries.forEach(({ target }) => {
+      const panel = panels.find(candidate => candidate.iframe?.parentElement === target);
+      if (panel) {
+        updatePanelFit(panel);
+      }
+    });
+  })
+  : null;
 let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
 let failedFillPanelIds = new Set();
 let pendingFillImageIdsByPanel = new Map();
@@ -186,6 +204,7 @@ const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
 const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
+const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
 const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao']);
@@ -228,6 +247,13 @@ async function init() {
 
   // Load saved settings
   await loadSettings();
+
+  await setupPanelResize({
+    grid: document.getElementById('panel-grid'),
+    getLayout: () => currentLayout,
+    storage: chrome.storage.local,
+    label: t('panelResizeHandle')
+  });
 
   // Initialize panels
   await initializePanels();
@@ -867,7 +893,9 @@ function handleProviderStatusMessage(event) {
 
   const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
   const isLocationMessage = data.type === PANELIZE_PROVIDER_LOCATION;
-  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT || (!data.requestId && !isTempChatMessage && !isLocationMessage)) {
+  const isPageWidthMessage = data.type === PANELIZE_PAGE_WIDTH;
+  if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT
+    || (!data.requestId && !isTempChatMessage && !isLocationMessage && !isPageWidthMessage)) {
     return;
   }
 
@@ -882,6 +910,13 @@ function handleProviderStatusMessage(event) {
         return;
       }
       panel.currentUrl = isProviderCurrentUrl(panel.providerId, data.url) ? data.url : null;
+      break;
+    case PANELIZE_PAGE_WIDTH:
+      if (!Number.isFinite(data.neededWidth) || data.neededWidth < 0) {
+        return;
+      }
+      panel.pageNeededWidth = data.neededWidth;
+      updatePanelFit(panel);
       break;
     case PANELIZE_PROVIDER_BUSY:
       if (!isChatgptProvider(panel.providerId)) {
@@ -1320,13 +1355,17 @@ async function addPanel(providerId) {
   });
 
   // Add to panels array
-  panels.push({
+  const panel = {
     id: panelId,
     providerId,
     iframe,
     currentUrl: null,
-    state: 'loading'
-  });
+    state: 'loading',
+    pageNeededWidth: 0,
+    fit: createPanelFitState()
+  };
+  panels.push(panel);
+  panelFitObserver?.observe(iframe.parentElement);
   resetFillRetryState();
 
   bindPanelHeaderActions(panelId);
@@ -1341,6 +1380,11 @@ async function addPanel(providerId) {
 function removePanel(panelId) {
   const panelIndex = panels.findIndex(p => p.id === panelId);
   if (panelIndex === -1) return;
+
+  const fitContainer = panels[panelIndex].iframe?.parentElement;
+  if (fitContainer) {
+    panelFitObserver?.unobserve(fitContainer);
+  }
 
   // Remove from DOM
   const panelEl = document.getElementById(panelId);
@@ -1413,6 +1457,8 @@ async function switchPanelProvider(panelId, newProviderId) {
   panel.providerId = newProviderId;
   panel.iframe = iframe;
   panel.currentUrl = null;
+  panel.pageNeededWidth = 0;
+  updatePanelFit(panel);
   bindPanelHeaderActions(panelId);
   reloadPanelIframe(panel);
 
@@ -2702,6 +2748,20 @@ async function triggerSendButtons() {
     sendBtn.disabled = false;
     fillBtn.disabled = false;
   }
+}
+
+// ===== Panel Fit =====
+function updatePanelFit(panel) {
+  const container = panel.iframe?.parentElement;
+  if (!container) {
+    return;
+  }
+  panel.fit = updatePanelFitState(panel.fit || createPanelFitState(), {
+    available: container.clientWidth,
+    needed: panel.pageNeededWidth || 0,
+    now: performance.now()
+  });
+  applyPanelFitScale(panel.iframe, getPanelFitScale(panel.fit));
 }
 
 // ===== Layout Management =====

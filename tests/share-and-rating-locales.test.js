@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 const LOCALES_DIR = resolve(process.cwd(), '_locales');
 
-// Strings added for the store rating prompt and the share snapshot.
+// Strings added for the store rating prompt, the share snapshot and the
+// panel resize handles.
 const FEATURE_KEYS = [
   'ratingPromptMessage',
   'ratingPromptRate',
@@ -45,7 +46,8 @@ const FEATURE_KEYS = [
   'labelShareWatermark',
   'descShareWatermark',
   'msgShareWatermarkEnabled',
-  'msgShareWatermarkDisabled'
+  'msgShareWatermarkDisabled',
+  'panelResizeHandle'
 ];
 
 const locales = readdirSync(LOCALES_DIR);

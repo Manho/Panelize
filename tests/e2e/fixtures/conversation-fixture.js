@@ -25,6 +25,8 @@
  * @param {boolean} [options.fade] - Composer ::before fade over the conversation.
  * @param {boolean} [options.userRole] - Mark the user message with
  *   data-message-author-role="user", as ChatGPT does.
+ * @param {number} [options.minWidth] - Width the page needs, like an app
+ *   shell with a min-width (Kimi, ChatGLM); narrower panels scale it down.
  * @returns {string} HTML document.
  */
 export function renderConversationFixture({
@@ -36,6 +38,7 @@ export function renderConversationFixture({
   wideTable = false,
   fade = false,
   userRole = false,
+  minWidth = 0,
 }) {
   const rgb = (color) => `rgb(${color.join(', ')})`;
   const escape = (text) => text.replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`);
@@ -78,6 +81,7 @@ export function renderConversationFixture({
 </style>
 </head>
 <body>
+  ${minWidth ? `<div class="min-width" style="min-width: ${minWidth}px; height: 1px"></div>` : ''}
   <div id="thread">
     <header></header>
     <div class="earlier"></div>

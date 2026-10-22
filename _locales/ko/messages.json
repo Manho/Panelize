@@ -912,6 +912,9 @@
   "shareCurrentViewOnly": {
     "message": "현재 화면만: $1"
   },
+  "panelResizeHandle": {
+    "message": "드래그하여 패널 너비 조정, 더블클릭하여 초기화"
+  },
   "shareOutOfViewNote": {
     "message": "화면에 다 보이지 않아 제외됨: $1 — 좌우로 스크롤한 뒤 다시 공유하면 포함됩니다"
   },

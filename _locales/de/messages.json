@@ -912,6 +912,9 @@
   "shareCurrentViewOnly": {
     "message": "Nur aktuelle Ansicht: $1"
   },
+  "panelResizeHandle": {
+    "message": "Ziehen, um die Panelbreite zu ändern. Doppelklick zum Zurücksetzen."
+  },
   "shareOutOfViewNote": {
     "message": "Nicht vollständig sichtbar, ausgelassen: $1 — seitlich scrollen und erneut teilen, um sie einzuschließen"
   },

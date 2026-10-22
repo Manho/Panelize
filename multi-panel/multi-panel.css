@@ -301,6 +301,7 @@ body {
   scroll-snap-type: x mandatory;
   scroll-behavior: smooth;
   scrollbar-width: thin;
+  position: relative;
 }
 
 /* Layout variations */
@@ -312,64 +313,75 @@ body {
 
 /* 1x2 最小宽度 */
 .layout-1x2 {
-  grid-template-columns: repeat(2, minmax(400px, 1fr));
+  grid-template-columns: repeat(2, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x3 最小宽度 */
 .layout-1x3 {
-  grid-template-columns: repeat(3, minmax(400px, 1fr));
+  grid-template-columns: repeat(3, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 确保 1x4 在窄屏幕也有最小宽度 */
 .layout-1x4 {
-  grid-template-columns: repeat(4, minmax(400px, 1fr));
+  grid-template-columns: repeat(4, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x5 五列 - 最小宽度 400px */
 .layout-1x5 {
-  grid-template-columns: repeat(5, minmax(400px, 1fr));
+  grid-template-columns: repeat(5, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x6 六列 - 最小宽度 400px */
 .layout-1x6 {
-  grid-template-columns: repeat(6, minmax(400px, 1fr));
+  grid-template-columns: repeat(6, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 400px;
   grid-template-rows: 1fr;
 }
 
 /* 1x7 七列 - 最小宽度 350px */
 .layout-1x7 {
-  grid-template-columns: repeat(7, minmax(350px, 1fr));
+  grid-template-columns: repeat(7, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 350px;
   grid-template-rows: 1fr;
 }
 
 /* 1x8 八列 - 最小宽度 320px */
 .layout-1x8 {
-  grid-template-columns: repeat(8, minmax(320px, 1fr));
+  grid-template-columns: repeat(8, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 /* Keep high-density row layouts horizontally scrollable and usable. */
 .layout-1x9 {
-  grid-template-columns: repeat(9, minmax(320px, 1fr));
+  grid-template-columns: repeat(9, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 .layout-1x10 {
-  grid-template-columns: repeat(10, minmax(320px, 1fr));
+  grid-template-columns: repeat(10, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 .layout-1x11 {
-  grid-template-columns: repeat(11, minmax(320px, 1fr));
+  grid-template-columns: repeat(11, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
 .layout-1x12 {
-  grid-template-columns: repeat(12, minmax(320px, 1fr));
+  grid-template-columns: repeat(12, minmax(var(--panel-min-width), 1fr));
+  --panel-min-width: 320px;
   grid-template-rows: 1fr;
 }
 
@@ -437,6 +449,61 @@ body {
 .layout-1x11 .panel-item,
 .layout-1x12 .panel-item {
   scroll-snap-align: start;
+}
+
+/* Column resize handles (modules/panel-resize.js), centered on the gaps. */
+.panel-resize-handles {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  z-index: 2;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 4px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+
+.panel-resize-handle:hover::after,
+.panel-resize-handle:focus-visible::after,
+.panel-resize-handle.active::after {
+  background: #1976d2;
+}
+
+.panel-resize-handle:focus-visible {
+  outline: none;
+}
+
+/* Frames would swallow the pointer while a column is dragged. */
+.panel-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.panel-resizing iframe {
+  pointer-events: none;
+}
+
+.panel-resizing #panel-grid {
+  scroll-snap-type: none;
 }
 
 /* Panel Item */
@@ -577,6 +644,18 @@ body {
   width: 100%;
   height: auto;
   border: none;
+}
+
+/* A page wider than its panel is laid out at the width it needs and scaled
+   down to fit (modules/panel-fit.js). */
+.panel-iframe-container iframe.panel-fitted {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--panel-fit-scale));
+  height: calc(100% / var(--panel-fit-scale));
+  transform: scale(var(--panel-fit-scale));
+  transform-origin: 0 0;
 }
 
 .panel-loading {

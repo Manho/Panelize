@@ -912,6 +912,9 @@
   "shareCurrentViewOnly": {
     "message": "Vue actuelle uniquement : $1"
   },
+  "panelResizeHandle": {
+    "message": "Faites glisser pour redimensionner les panneaux. Double-cliquez pour réinitialiser."
+  },
   "shareOutOfViewNote": {
     "message": "Pas entièrement visibles, exclus : $1 — faites défiler latéralement et partagez à nouveau pour les inclure"
   },

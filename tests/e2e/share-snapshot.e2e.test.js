@@ -661,6 +661,49 @@ test('Full answers stitches every panel in lock-step, without headers, composer 
   }
 });
 
+test('Full answers of a page scaled to fit its panel are captured as shown', async ({}, testInfo) => {
+  test.setTimeout(120_000);
+  const extension = await launchExtension({
+    viewport: { width: 1280, height: 800 },
+    args: [UNSAFE_EXTENSION_DEBUGGING],
+  });
+  try {
+    const columns = [BLOCK_COLORS.slice(0, 2), BLOCK_COLORS.slice(2, 6)];
+    const page = await openConversationPanels(extension, [
+      { provider: 'chatgpt', blocks: columns[0] },
+      { provider: 'deepseek', blocks: columns[1], minWidth: 1000 },
+    ], '1x2');
+    const fitted = page.locator('#panel-grid iframe').nth(1);
+    await expect(fitted).toHaveClass(/panel-fitted/);
+    const zoom = await fitted.evaluate(frame => frame.getBoundingClientRect().width / 1000);
+    expect(zoom).toBeLessThan(0.7);
+    expect(await page.frames().find(frame => frame.url().startsWith(PROVIDER_ORIGINS.deepseek))
+      .evaluate(() => window.innerWidth)).toBe(1000);
+
+    await clickToolbarIcon(extension, page);
+    await expect(page.locator('#share-modal')).toBeVisible();
+    const full = await showFullAnswers(page);
+    await page.locator('#share-preview').screenshot({ path: testInfo.outputPath('share-preview-fitted.png') });
+    const scale = getPreviewScale(full);
+    for (const [index, blocks] of columns.entries()) {
+      const runs = await readConversationRuns(page, full, index, { hasNote: false });
+      const names = runs.map(run => run.name);
+      expect(names.filter(name => name === 'header'), `panel ${index}`).toHaveLength(1);
+      expect(names, `panel ${index}`).not.toContain('composer');
+      const blockRuns = runs.filter(run => run.name.startsWith('block'));
+      expect(blockRuns.map(run => run.name), `panel ${index}`)
+        .toEqual(blocks.map(color => `block${BLOCK_COLORS.indexOf(color)}`));
+      // The scaled page keeps its proportions across stitched screens.
+      const blockHeight = CONVERSATION_COLORS.blockHeight * scale * (index === 1 ? zoom : 1);
+      blockRuns.forEach(run => {
+        expect(Math.abs(run.length - blockHeight), `${run.name} of panel ${index}`).toBeLessThanOrEqual(3 * scale);
+      });
+    }
+  } finally {
+    await extension.close();
+  }
+});
+
 /** Switches the open dialog to Full answers, unless it shows it already. */
 async function showFullAnswers(page) {
   const full = page.locator('.share-mode-btn[data-mode="full"]');

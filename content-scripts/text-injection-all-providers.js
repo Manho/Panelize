@@ -20,6 +20,12 @@
   const PANELIZE_SNAPSHOT_RESTORE = 'PANELIZE_SNAPSHOT_RESTORE';
   const PANELIZE_SNAPSHOT_STATE = 'PANELIZE_SNAPSHOT_STATE';
   const MULTI_PANEL_SNAPSHOT_CONTEXT = 'multi-panel-snapshot';
+  const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
+  const PAGE_WIDTH_REPORT_THROTTLE_MS = 500;
+  // The app shell is near the top of the tree; deeper nodes are content.
+  const PAGE_WIDTH_MAX_DEPTH = 12;
+  const PAGE_WIDTH_MAX_ELEMENTS = 1000;
+  const PAGE_WIDTH_SCROLLING_OVERFLOW = /^(auto|scroll)$/;
   // Normalized prompt prefix that identifies the user's message.
   const SNAPSHOT_MATCH_KEY_LENGTH = 40;
   const SNAPSHOT_MIN_MATCH_KEY_LENGTH = 2;
@@ -694,6 +700,114 @@
     window.addEventListener('popstate', reportIfChanged);
     window.addEventListener('hashchange', reportIfChanged);
     reportIfChanged();
+  }
+
+  function isMultiPanelFrame() {
+    if (window.parent === window || window.parent !== window.top) {
+      return false;
+    }
+    const embedder = window.location.ancestorOrigins?.[0];
+    return embedder === undefined || /^(chrome|moz)-extension:/.test(embedder);
+  }
+
+  /** Boxes filling the viewport hold the app itself, even when they scroll or float. */
+  function isPageShellBox(rect, viewportWidth, viewportHeight) {
+    return rect.left <= 1 && rect.right >= viewportWidth - 1 && rect.height >= viewportHeight / 2;
+  }
+
+  /**
+   * Width the page's layout needs, in CSS pixels: the furthest an element
+   * held open by a pixel min-width reaches from where it starts. Only the app
+   * shell is scanned: floating layers (menus, popovers) and content of
+   * scrolling boxes (chat lists, code blocks, tables) are left out. Returns 0
+   * when nothing needs more room than the viewport.
+   */
+  function measurePageNeededWidth() {
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+    const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+    if (!document.body || !(viewportWidth > 0)) {
+      return 0;
+    }
+    let needed = 0;
+    let visited = 0;
+    const queue = Array.from(document.body.children, (element) => ({ element, depth: 1 }));
+    for (let index = 0; index < queue.length && visited < PAGE_WIDTH_MAX_ELEMENTS; index += 1) {
+      const { element, depth } = queue[index];
+      visited += 1;
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none') {
+        continue;
+      }
+      const rect = element.getBoundingClientRect();
+      const shell = isPageShellBox(rect, viewportWidth, viewportHeight);
+      if ((style.position === 'absolute' || style.position === 'fixed') && !shell) {
+        continue;
+      }
+      const minWidth = style.minWidth.endsWith('px') ? parseFloat(style.minWidth) : 0;
+      const startsOnScreen = rect.left >= -1 && rect.left < viewportWidth - 1;
+      if (minWidth > 0 && rect.height > 0 && startsOnScreen && style.visibility !== 'hidden') {
+        const reach = rect.left + window.scrollX + minWidth;
+        if (reach > viewportWidth + 1) {
+          needed = Math.max(needed, Math.ceil(reach));
+        }
+      }
+      const scrolls = PAGE_WIDTH_SCROLLING_OVERFLOW.test(style.overflowX)
+        || PAGE_WIDTH_SCROLLING_OVERFLOW.test(style.overflowY);
+      if (depth < PAGE_WIDTH_MAX_DEPTH && (shell || !scrolls)) {
+        for (const child of element.children) {
+          queue.push({ element: child, depth: depth + 1 });
+        }
+      }
+    }
+    return needed;
+  }
+
+  /**
+   * Tells the multi-panel host how wide this page needs to be, so a panel
+   * narrower than that can scale the page down to fit instead of cutting it.
+   */
+  function setupPageWidthReporting() {
+    if (!isMultiPanelFrame() || typeof ResizeObserver !== 'function') {
+      return;
+    }
+    let lastReported = null;
+    let timer = null;
+
+    const report = () => {
+      timer = null;
+      // Snapshots move content around; measure once they are done.
+      if (snapshotSession) {
+        schedule();
+        return;
+      }
+      const provider = detectProvider();
+      const neededWidth = measurePageNeededWidth();
+      if (!provider || neededWidth === lastReported) {
+        return;
+      }
+      lastReported = neededWidth;
+      window.parent.postMessage({
+        type: PANELIZE_PAGE_WIDTH,
+        provider,
+        neededWidth,
+        context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
+      }, '*');
+    };
+
+    function schedule() {
+      if (timer === null) {
+        timer = setTimeout(report, PAGE_WIDTH_REPORT_THROTTLE_MS);
+      }
+    }
+
+    new ResizeObserver(schedule).observe(document.documentElement);
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    });
+    schedule();
   }
 
   function rememberUserFocus() {
@@ -4523,5 +4637,6 @@
 
   // Listen for messages from the multi-panel host
   setupProviderLocationReporting();
+  setupPageWidthReporting();
   window.addEventListener('message', handleTextInjection);
 })();

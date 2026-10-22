@@ -908,6 +908,9 @@
   "shareCurrentViewOnly": {
     "message": "仅当前视图：$1"
   },
+  "panelResizeHandle": {
+    "message": "拖动可调整面板宽度，双击恢复默认"
+  },
   "shareOutOfViewNote": {
     "message": "未完整显示，未截入：$1 — 左右滚动后重新截图即可包含"
   },

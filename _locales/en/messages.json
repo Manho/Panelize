@@ -929,6 +929,9 @@
   "shareCurrentViewOnly": {
     "message": "Current view only: $1"
   },
+  "panelResizeHandle": {
+    "message": "Drag to resize panels. Double-click to reset."
+  },
   "shareOutOfViewNote": {
     "message": "Not fully on screen, left out: $1 — scroll sideways and share again to include them"
   },

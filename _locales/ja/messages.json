@@ -912,6 +912,9 @@
   "shareCurrentViewOnly": {
     "message": "現在の表示のみ：$1"
   },
+  "panelResizeHandle": {
+    "message": "ドラッグでパネル幅を調整、ダブルクリックでリセット"
+  },
   "shareOutOfViewNote": {
     "message": "全体が表示されていないため除外：$1 — 横にスクロールしてもう一度共有すると含められます"
   },
