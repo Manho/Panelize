@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.0.1 - 2026-10-23
+- The extension name and summary now describe what Panelize does, in all 10 supported languages.
+
 ## 2.0.0 - 2026-10-22
 - Added Share: turn your comparison into an image to copy or download, with the prompt as an editable title. Choose Current view, or Full answers to stitch each answer from your latest prompt down.
 - Provider pages wider than their panel (such as Kimi, Qwen and Zhipu in narrow layouts) are now scaled down to fit instead of being cut off.
