@@ -1,9 +1,9 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "Panelize - 複数の AI チャットを並べて比較"
   },
   "extensionDescription": {
-    "message": "ChatGPT、Claude、Gemini などに素早くアクセスできるマルチ AI サイドバー拡張機能"
+    "message": "複数の AI チャットに一度に質問して、回答を並べて比較。自分のアカウントでそのまま使えて、無料・API キー不要。"
   },
   "commandOpenSidebar": {
     "message": "デフォルトプロバイダーで Panelize を開く"
