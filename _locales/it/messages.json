@@ -1,9 +1,9 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "Panelize - Confronta i chatbot IA fianco a fianco"
   },
   "extensionDescription": {
-    "message": "Estensione barra laterale multi-IA per accesso rapido a ChatGPT, Claude, Gemini e altro"
+    "message": "Chiedi a più chatbot IA in una volta e confronta le risposte fianco a fianco. Usa i tuoi account. Gratis, senza chiavi API."
   },
   "commandOpenSidebar": {
     "message": "Apri Panelize con provider predefinito"

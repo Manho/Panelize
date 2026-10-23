@@ -1,9 +1,9 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "Panelize - Compare AI Chatbots Side by Side"
   },
   "extensionDescription": {
-    "message": "Compare AI assistants side by side in one window. Send one prompt and review responses faster."
+    "message": "Ask multiple AI chatbots at once and compare their answers side by side. Uses your own accounts. Free, no API keys."
   },
   "commandOpenSidebar": {
     "message": "Open Panelize"

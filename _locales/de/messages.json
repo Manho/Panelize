@@ -1,9 +1,9 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "Panelize - KI-Chatbots nebeneinander vergleichen"
   },
   "extensionDescription": {
-    "message": "Multi-KI-Seitenleisten-Erweiterung für schnellen Zugriff auf ChatGPT, Claude, Gemini und mehr"
+    "message": "Frage mehrere KI-Chatbots zugleich und vergleiche die Antworten nebeneinander. Mit eigenen Konten. Gratis, ohne API-Schlüssel."
   },
   "commandOpenSidebar": {
     "message": "Panelize mit Standard-Anbieter öffnen"

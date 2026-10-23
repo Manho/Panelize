@@ -1,9 +1,9 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "Panelize - 多个 AI 并排对比"
   },
   "extensionDescription": {
-    "message": "并排比较 AI 聊天机器人。在一个窗口中使用 ChatGPT、Claude、Gemini、Grok 等。"
+    "message": "一次提问，同时问多个 AI 聊天助手，回答并排对比。直接使用你自己的账号，免费，无需 API Key。"
   },
   "commandOpenSidebar": {
     "message": "打开 Panelize"

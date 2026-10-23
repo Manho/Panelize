@@ -1,9 +1,9 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "Panelize - сравнивайте ИИ-чатботы рядом"
   },
   "extensionDescription": {
-    "message": "Расширение с боковой панелью для быстрого доступа к ChatGPT, Claude, Gemini и другим ИИ"
+    "message": "Задайте вопрос нескольким ИИ-чатботам сразу и сравните ответы рядом. Со своими аккаунтами. Бесплатно, без API-ключей."
   },
   "commandOpenSidebar": {
     "message": "Открыть Panelize с провайдером по умолчанию"

@@ -38,6 +38,8 @@
 
 ## 为什么选择 Panelize？
 
+Panelize 是一个免费、开源的 Chrome / Edge 扩展：一次输入，同时发给 ChatGPT、Claude、Gemini、DeepSeek、Kimi、豆包等 AI，并在同一个窗口里并排显示它们的回答。每个面板加载的都是官方网站，直接使用你已登录的账号，不需要 API Key，也不用额外订阅。
+
 还在把同一个 Prompt 复制到多个 AI 标签页里逐个比较吗？
 
 **Panelize 让你在一个窗口里，一次发送，直接横向对比多个 AI 的答案。**
@@ -144,6 +146,15 @@
 ---
 
 ## 常见问题
+
+**怎样同时问 ChatGPT、Claude 和 DeepSeek 同一个问题？**
+→ 安装 Panelize，按 `Cmd/Ctrl + Shift + E` 打开，选好 AI 和布局，输入问题后点 **Send All**，每个 AI 的回答会显示在各自的面板里。
+
+**Panelize 免费吗？需要 API Key 吗？**
+→ 免费，MIT 开源。不需要 API Key：每个面板就是官方网站，用你平时登录的账号。ChatGPT Plus、Claude Pro 等付费套餐照常可用。
+
+**和 ChatHub、ChatALL 有什么区别？**
+→ ChatHub 和 ChatALL 是把多个模型接到同一个聊天界面里；Panelize 直接显示各家官网，所以你的套餐、模型选择和聊天记录都保留在各自账号里。
 
 **AI 页面显示登录状态？**
 → 先在普通标签页登录该平台，再刷新 Panelize。

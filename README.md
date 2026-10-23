@@ -38,6 +38,8 @@
 
 ## Why Panelize?
 
+Panelize is a free, open-source Chrome and Edge extension that sends one prompt to ChatGPT, Claude, Gemini, Grok, DeepSeek and other AI chatbots at the same time and shows their answers side by side in one window. It loads each provider's real website with your existing login, so there are no API keys and no extra subscription.
+
 Ever found yourself copying the same prompt across multiple AI tabs just to compare answers? Panelize eliminates that workflow entirely.
 
 **One window. One prompt. Multiple AI responses—instantly.**
@@ -157,6 +159,20 @@ That's it. No accounts to create, no API keys to configure.
 Customize shortcuts at `chrome://extensions/shortcuts`
 
 ---
+
+## FAQ
+
+**How do I ask ChatGPT, Claude and Gemini the same question at once?**
+→ Install Panelize, open it with `Cmd/Ctrl + Shift + E`, pick the providers and a layout, type your prompt and click **Send All**. Each answer appears in its own panel.
+
+**Is Panelize free? Do I need API keys?**
+→ Yes, it is free and MIT-licensed. No API keys are needed: each panel is the provider's own website, signed in with your normal account. Paid plans such as ChatGPT Plus or Claude Pro work as usual.
+
+**How is Panelize different from ChatHub or ChatALL?**
+→ ChatHub and ChatALL put many models behind one chat interface. Panelize shows each provider's real website instead, so you keep your own plans, model pickers and chat history. See [Panelize vs ChatHub](https://panelize.dev/alternatives/chathub/).
+
+**Which AI chatbots are supported?**
+→ ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Qwen, Doubao, Zhipu, Z.ai, Yuanbao and Google AI Mode. See [Supported AI Providers](#supported-ai-providers).
 
 ## Troubleshooting
 
