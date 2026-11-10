@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.0.2 - 2026-11-10
+- Hardened messaging between the Multi-Panel page and provider panels.
+
 ## 2.0.1 - 2026-10-23
 - The extension name and summary now describe what Panelize does, in all 10 supported languages.
 
