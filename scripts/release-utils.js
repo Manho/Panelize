@@ -45,6 +45,8 @@ export const PACKAGE_EXCLUDED_PREFIXES = [
   'scripts/',
   '_metadata/',
   'icons/ICON_GUIDE.md',
+  'libs/material-symbols/README.md',
+  'libs/material-symbols/font-source.json',
   'data/prompt-libraries/Generate_a_Basic_Prompt_Library.md',
   'data/prompt-libraries/transform-libraries.js'
 ];

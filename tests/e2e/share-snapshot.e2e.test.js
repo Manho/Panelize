@@ -97,6 +97,14 @@ async function openConversationPanels(extension, conversations, layout = '1x1') 
   for (let index = 0; index < conversations.length; index += 1) {
     await expect(page.frameLocator('#panel-grid iframe').nth(index).locator('.user')).toBeVisible();
   }
+  // Tests start with every thread scrolled to the end. The fixture scrolls
+  // from its closing script, which does nothing when it runs before the panel
+  // gives the frame a size, so scroll again until every thread is there.
+  await expect.poll(async () => {
+    await scrollThreadsToBottom(page);
+    const tops = await getThreadScrollTops(page);
+    return tops.length === conversations.length && tops.every(scroll => scroll && scroll.top === scroll.max);
+  }).toBe(true);
   // The prompt the snapshot aligns to, as if it was about to be sent again.
   await page.locator('#unified-input').fill(CONVERSATION_PROMPT);
   return page;
@@ -1384,6 +1392,10 @@ test('switching tabs during a silent capture stops it instead of taking the othe
     // Another tab the extension may capture too.
     const other = await extension.context.newPage();
     await other.goto(extension.extensionUrl('multi-panel/multi-panel.html#other'));
+    // The page drops a toolbar click that arrives while it still initializes
+    // (the service worker expects the user to click again). Initialization
+    // ends by focusing the unified input, and nothing focuses it before.
+    await expect.poll(() => other.evaluate(() => document.activeElement?.id)).toBe('unified-input');
     await clickToolbarIcon(extension, other);
     await expect(other.locator('#snapshot-progress')).toBeHidden({ timeout: 60_000 });
     await expect(other.locator('#share-modal')).toBeVisible();

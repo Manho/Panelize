@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchExtension, openMultiPanel } from './extension-harness.js';
+import { getTabUrls, launchExtension, openMultiPanel } from './extension-harness.js';
 import { renderChatgptFixture } from './fixtures/chatgpt-fixture.js';
 import {
   RATING_PROMPT_REVIEW_URL,
@@ -69,13 +69,14 @@ test('"Rate" opens the store reviews page and never shows the banner again', asy
     const banner = page.locator('#rating-banner');
     await expect(banner).toBeVisible();
 
-    // The store page is never loaded; only the requested URL is checked.
-    await extension.context.route('https://chromewebstore.google.com/**', route => route.fulfill({
-      contentType: 'text/html', body: '<title>store</title>',
-    }));
-    const storePage = extension.context.waitForEvent('page');
+    // The store page is never loaded: the harness blocks its host, and Chrome
+    // tears the page down when a route fulfills a Web Store document. The tab
+    // is checked by the exact URL the extension opened it with.
+    const tabsBefore = await getTabUrls(page);
     await page.locator('#rating-rate-btn').click();
-    await (await storePage).waitForURL(RATING_PROMPT_REVIEW_URL);
+    // A new target reports an empty URL until its navigation starts.
+    await expect.poll(async () => (await getTabUrls(page)).filter(url => !tabsBefore.includes(url)))
+      .toEqual([RATING_PROMPT_REVIEW_URL]);
 
     await expect(banner).toBeHidden();
     await expect.poll(async () => (await readRatingState(extension))?.dismissed).toBe(true);

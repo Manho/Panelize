@@ -9,6 +9,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +36,14 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The official Playwright image ships Chromium and its system libraries, so
+    # the job no longer runs `playwright install --with-deps`, whose apt step
+    # could hang. Keep the tag equal to the @playwright/test version in
+    # package-lock.json; the check below fails when they drift apart.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --user 1001
     steps:
       - uses: actions/checkout@v4
 
@@ -45,8 +54,29 @@ jobs:
 
       - run: npm ci
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Check the image matches the installed Playwright
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const { chromium } = require('@playwright/test');
+            const version = require('@playwright/test/package.json').version;
+            if (!fs.existsSync(chromium.executablePath())) {
+              console.error('Chromium for @playwright/test ' + version + ' is not in this image; use mcr.microsoft.com/playwright:v' + version + '-noble.');
+              process.exit(1);
+            }
+            console.log('Playwright ' + version + ': ' + chromium.executablePath());
+          "
 
       - name: Extension E2E tests
+        # Shorter than the job timeout, so a hung run fails this step and the
+        # results are still uploaded below.
+        timeout-minutes: 15
         run: xvfb-run -a npm run test:e2e
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 14

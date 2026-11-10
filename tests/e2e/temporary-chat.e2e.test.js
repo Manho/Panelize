@@ -61,7 +61,8 @@ test.describe('Temporary chat E2E', () => {
 
   function providerFrame(providerId) {
     const host = PROVIDER_HOSTS[providerId];
-    return page.frames().find((frame) => new URL(frame.url()).host === host);
+    // A panel iframe reports an empty URL until its first navigation commits.
+    return page.frames().find((frame) => URL.canParse(frame.url()) && new URL(frame.url()).host === host);
   }
 
   async function waitForFixtureReady(providerId) {

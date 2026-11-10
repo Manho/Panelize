@@ -39,6 +39,7 @@ for (const [index, batch] of batches.entries()) {
   // Store the provider settings with a short headless session, which also
   // reveals the extension id for the multi-panel URL.
   const setup = await launchExtension({
+    allowNetwork: true,
     extensionPath,
     userDataDir: LIVE_USER_DATA_DIR,
     headless: true,

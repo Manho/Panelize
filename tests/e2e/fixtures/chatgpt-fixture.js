@@ -5,7 +5,9 @@
  * multi-panel focus protection has to defend against.
  *
  * Focus steals use plain `element.focus()` from page scripts, which is how
- * provider SPAs autofocus their composer after load, new chat, or send.
+ * provider SPAs autofocus their composer after load, new chat, or send. Each
+ * steal is recorded in `window.__fixture.steals`, and marked `blurred` once
+ * the composer loses focus afterwards.
  *
  * @param {object} [config]
  * @param {number[]} [config.loadStealDelays] - Composer autofocus delays after load.
@@ -56,10 +58,16 @@ ${composerHtml}
       delays.forEach((delay) => {
         setTimeout(() => {
           composer.focus();
-          window.__fixture.steals.push({ reason, delay });
+          window.__fixture.steals.push({ reason, delay, blurred: false });
         }, delay);
       });
     }
+
+    // A steal is undone once focus leaves the composer again, e.g. when the
+    // multi-panel page moves focus back to its unified input.
+    composer.addEventListener('blur', () => {
+      window.__fixture.steals.forEach((steal) => { steal.blurred = true; });
+    });
 
     scheduleComposerFocus(config.loadStealDelays, 'load');
 
