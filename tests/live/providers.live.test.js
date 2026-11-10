@@ -70,6 +70,7 @@ test.describe('Live provider smoke', () => {
   test.beforeAll(async () => {
     const extensionPath = await prepareLiveExtension();
     extension = await launchExtension({
+      allowNetwork: true,
       extensionPath,
       userDataDir: LIVE_USER_DATA_DIR,
       headless: LIVE_HEADLESS,

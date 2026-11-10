@@ -44,6 +44,7 @@ test('Share snapshot of a live 2x2 comparison', async () => {
 
   const extensionPath = await prepareLiveExtension();
   const extension = await launchExtension({
+    allowNetwork: true,
     extensionPath,
     userDataDir: LIVE_USER_DATA_DIR,
     headless: LIVE_HEADLESS,
@@ -370,6 +371,7 @@ test('Share snapshot v2: layouts and full answers on a live 2x2', async () => {
 
   const extensionPath = await prepareLiveExtension();
   const extension = await launchExtension({
+    allowNetwork: true,
     extensionPath,
     userDataDir: LIVE_USER_DATA_DIR,
     headless: LIVE_HEADLESS,
@@ -603,6 +605,7 @@ test('Share snapshot v3: latest turn, one tab-sharing grant and clean answers on
 
   const extensionPath = await prepareLiveExtension();
   const extension = await launchExtension({
+    allowNetwork: true,
     extensionPath,
     userDataDir: LIVE_USER_DATA_DIR,
     headless: LIVE_HEADLESS,

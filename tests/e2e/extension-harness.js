@@ -70,11 +70,41 @@ export async function startFixtureServer(handler) {
   };
 }
 
+const HOST_RESOLVER_RULES_SWITCH = '--host-resolver-rules=';
+
+/**
+ * Fails every DNS lookup the test did not map itself. `context.route` alone is
+ * not enough: the first navigation of a tab opened by `chrome.tabs.create` can
+ * start before Playwright intercepts it, and then reaches the real site.
+ * Loopback stays reachable for fixture servers.
+ */
+const BLOCK_EXTERNAL_HOSTS_RULES = 'MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1';
+
+/**
+ * Chromium honours only one `--host-resolver-rules` switch, so the caller's
+ * rules and the catch-all block are merged into a single switch. Rules match
+ * in order, so the caller's mappings win over the catch-all.
+ * @param {string[]} args - Chromium arguments from the test.
+ * @returns {string[]}
+ */
+export function withExternalHostsBlocked(args) {
+  const callerRules = args
+    .filter((arg) => arg.startsWith(HOST_RESOLVER_RULES_SWITCH))
+    .map((arg) => arg.slice(HOST_RESOLVER_RULES_SWITCH.length));
+  return [
+    ...args.filter((arg) => !arg.startsWith(HOST_RESOLVER_RULES_SWITCH)),
+    `${HOST_RESOLVER_RULES_SWITCH}${[...callerRules, BLOCK_EXTERNAL_HOSTS_RULES].join(', ')}`,
+  ];
+}
+
 /**
  * Launches Chromium with the unpacked extension.
  * @param {object} [options]
  * @param {string} [options.extensionPath] - Unpacked extension directory.
  * @param {string[]} [options.args] - Extra Chromium arguments.
+ * @param {boolean} [options.allowNetwork] - Live suite only. E2E launches stay
+ *   offline: hosts load only through `context.route` or the test's own
+ *   `--host-resolver-rules` mappings.
  * @param {{width: number, height: number} | null} [options.viewport]
  * @param {string} [options.userDataDir] - Profile to reuse and keep. Defaults
  *   to a throwaway profile that is deleted on close.
@@ -87,6 +117,7 @@ export async function startFixtureServer(handler) {
 export async function launchExtension({
   extensionPath = REPO_EXTENSION_PATH,
   args = [],
+  allowNetwork = false,
   viewport,
   userDataDir: persistentUserDataDir,
   headless,
@@ -105,7 +136,7 @@ export async function launchExtension({
         `--load-extension=${extensionPath}`,
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        ...args,
+        ...(allowNetwork ? args : withExternalHostsBlocked(args)),
       ],
     })
   );
@@ -128,6 +159,24 @@ export async function launchExtension({
       }
     },
   };
+}
+
+/**
+ * URLs of every open tab as the browser process reports them. Unlike
+ * `page.url()`, a tab whose host is blocked still reports the URL it was
+ * opened with, so a test can check that URL without loading the site.
+ * @param {import('@playwright/test').Page} page - Any open page of the browser;
+ *   it only hosts the CDP session.
+ * @returns {Promise<string[]>}
+ */
+export async function getTabUrls(page) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { targetInfos } = await session.send('Target.getTargets');
+    return targetInfos.filter((target) => target.type === 'page').map((target) => target.url);
+  } finally {
+    await session.detach().catch(() => {});
+  }
 }
 
 /**
