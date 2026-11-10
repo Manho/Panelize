@@ -12,6 +12,11 @@ const THIRD_PARTY_PAGE = `<!doctype html>
   <button id="open" type="button">Open</button>
   <iframe id="frame" width="900" height="500"></iframe>
   <script>
+    // Everything posted to this page, to prove the framed provider tells it nothing.
+    window.receivedMessages = [];
+    window.addEventListener('message', (event) => {
+      window.receivedMessages.push({ origin: event.origin, type: event.data && event.data.type });
+    });
     document.getElementById('open').addEventListener('click', () => {
       window.popup = window.open('https://chatgpt.com/');
     });
@@ -83,6 +88,19 @@ test('a third-party page cannot type or send prompts in a ChatGPT tab it opened'
     await expect.poll(async () => (await readFixture(panelFrame()))?.sentTexts)
       .toEqual(['Prompt from Multi-Panel']);
 
+    // The Multi-Panel page itself still hears where its panel is.
+    await multiPanel.evaluate(() => {
+      window.__panelLocations = [];
+      window.addEventListener('message', (event) => {
+        if (event.data?.type === 'PANELIZE_PROVIDER_LOCATION') {
+          window.__panelLocations.push({ origin: event.origin, url: event.data.url });
+        }
+      });
+    });
+    await panelFrame().evaluate(() => { window.location.hash = 'thread'; });
+    await expect.poll(() => multiPanel.evaluate(() => window.__panelLocations))
+      .toContainEqual({ origin: 'https://chatgpt.com', url: 'https://chatgpt.com/#thread' });
+
     expectUntouched(await readFixture(popup));
   } finally {
     await extension.close();
@@ -106,6 +124,14 @@ test('a third-party page cannot type or send prompts in a ChatGPT frame it embed
     ));
     await page.waitForTimeout(SETTLE_MS);
     expectUntouched(await readFixture(chatgptFrame));
+
+    // A URL change makes the content script report its location; none of
+    // that, nor any status from the load or the messages above, reaches here.
+    await chatgptFrame.evaluate(() => { window.location.hash = 'thread'; });
+    await expect.poll(() => chatgptFrame.evaluate(() => window.location.hash)).toBe('#thread');
+    await page.waitForTimeout(SETTLE_MS);
+    const received = await page.evaluate(() => window.receivedMessages);
+    expect(received.filter(message => message.origin === 'https://chatgpt.com')).toEqual([]);
   } finally {
     await extension.close();
   }
