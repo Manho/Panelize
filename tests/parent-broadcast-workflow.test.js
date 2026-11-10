@@ -65,8 +65,33 @@ describe('parent page sendToPanel & broadcastMessage production implementation w
           providerMode: null,
           context: 'multi-panel',
         },
-        '*'
+        'https://grok.com'
       );
+    });
+
+    it('posts once to each origin the provider page may be on and never to any origin', async () => {
+      const chatgptFrame = { contentWindow: { postMessage: vi.fn() } };
+      const chatgptPanel = { id: 'panel-2', providerId: 'chatgpt', iframe: chatgptFrame };
+
+      const result = await sendToPanel(chatgptPanel, 'Fan-out prompt', [], true, 'send-focus-fan-out', false, 8000, {
+        isFillAction: false,
+        waitForActionResult: false,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(chatgptFrame.contentWindow.postMessage.mock.calls.map((call) => call[1]))
+        .toEqual(['https://chatgpt.com', 'https://chat.openai.com']);
+      chatgptFrame.contentWindow.postMessage.mock.calls.forEach((call) => {
+        expect(call[0]).toMatchObject({ type: 'INJECT_TEXT', text: 'Fan-out prompt', context: 'multi-panel' });
+      });
+    });
+
+    it('posts nothing to a panel whose provider has no known origin', async () => {
+      const unknownFrame = { contentWindow: { postMessage: vi.fn() } };
+      await sendToPanel({ id: 'panel-3', providerId: 'unknown', iframe: unknownFrame }, 'Prompt', [], true,
+        'send-focus-unknown', false, 8000, { isFillAction: false, waitForActionResult: false });
+
+      expect(unknownFrame.contentWindow.postMessage).not.toHaveBeenCalled();
     });
 
     it('posts INJECT_TEXT for plain text Enter trigger', async () => {
@@ -98,7 +123,7 @@ describe('parent page sendToPanel & broadcastMessage production implementation w
           images: [],
           autoSubmit: true,
         }),
-        '*'
+        'https://grok.com'
       );
     });
 
@@ -137,7 +162,7 @@ describe('parent page sendToPanel & broadcastMessage production implementation w
           providerMode: null,
           context: 'multi-panel',
         },
-        '*'
+        'https://grok.com'
       );
 
       // Simulate content script sending matching ACK back to window

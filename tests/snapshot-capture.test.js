@@ -22,7 +22,7 @@ function messageEvent(data, source) {
 }
 
 describe('createSnapshotBridge', () => {
-  function createFrame(host, reply) {
+  function createFrame(host, reply, targetOrigins = ['https://chatgpt.com']) {
     const contentWindow = {
       postMessage: vi.fn((message) => {
         const answer = reply(message);
@@ -31,7 +31,7 @@ describe('createSnapshotBridge', () => {
         }
       })
     };
-    return { contentWindow };
+    return { iframe: { contentWindow }, targetOrigins, contentWindow };
   }
 
   it('sends the request to the frame and resolves with its state', async () => {
@@ -51,7 +51,33 @@ describe('createSnapshotBridge', () => {
       align: true,
       prompt: 'Hi',
       sessionId: bridge.sessionId
-    }), '*');
+    }), 'https://chatgpt.com');
+    expect(frame.contentWindow.postMessage).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
+  it('posts once to each origin the provider page may be on, never to any origin', async () => {
+    const host = new EventTarget();
+    const bridge = createSnapshotBridge(host);
+    const frame = createFrame(host, (message) => ({
+      type: SNAPSHOT_MESSAGES.STATE,
+      context: 'multi-panel-snapshot',
+      requestId: message.requestId,
+      scrollTop: 7
+    }), ['https://chatgpt.com', 'https://chat.openai.com']);
+    const state = await bridge.request(frame, SNAPSHOT_MESSAGES.PREPARE);
+    expect(state.scrollTop).toBe(7);
+    expect(frame.contentWindow.postMessage.mock.calls.map((call) => call[1]))
+      .toEqual(['https://chatgpt.com', 'https://chat.openai.com']);
+    bridge.dispose();
+  });
+
+  it('resolves null without posting when the provider has no known origin', async () => {
+    const host = new EventTarget();
+    const bridge = createSnapshotBridge(host);
+    const frame = createFrame(host, () => null, []);
+    expect(await bridge.request(frame, SNAPSHOT_MESSAGES.PREPARE)).toBeNull();
+    expect(frame.contentWindow.postMessage).not.toHaveBeenCalled();
     bridge.dispose();
   });
 
@@ -209,7 +235,7 @@ describe('captureCurrentView', () => {
       })
     };
     const iframe = { contentWindow, getBoundingClientRect: () => rect(left, 40, 400, 560) };
-    return { panel: { id: name, name, iframe, element }, messages };
+    return { panel: { id: name, name, iframe, targetOrigins: ['https://chatgpt.com'], element }, messages };
   }
 
   it('hides floating controls, and the pointer when asked, and reports where each panel started', async () => {
@@ -284,7 +310,7 @@ function createScrollingPanel(name, left, clip = { left: 0, top: 50, right: 400,
     })
   };
   const iframe = { contentWindow, getBoundingClientRect: () => rect(left, 40, 400, 560) };
-  return { panel: { id: name, name, iframe, element }, messages };
+  return { panel: { id: name, name, iframe, targetOrigins: ['https://chatgpt.com'], element }, messages };
 }
 
 function createGrid() {

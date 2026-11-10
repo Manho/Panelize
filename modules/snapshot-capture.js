@@ -136,12 +136,16 @@ export function createSnapshotBridge(host = window) {
   return {
     sessionId,
     /**
+     * @param {{iframe: HTMLIFrameElement, targetOrigins: string[]}} panel -
+     *   The request goes to each origin the provider page may be on, never
+     *   to '*', so a frame that navigated elsewhere receives nothing.
      * @returns {Promise<object | null>} The frame's state, or null when it
      *   did not answer in time (no content script, still loading).
      */
-    request(iframe, type, data = {}, timeoutMs = SCROLL_TIMEOUT_MS) {
-      const target = iframe?.contentWindow;
-      if (!target) {
+    request(panel, type, data = {}, timeoutMs = SCROLL_TIMEOUT_MS) {
+      const target = panel?.iframe?.contentWindow;
+      const targetOrigins = Array.isArray(panel?.targetOrigins) ? panel.targetOrigins : [];
+      if (!target || targetOrigins.length === 0) {
         return Promise.resolve(null);
       }
       nextId += 1;
@@ -153,7 +157,8 @@ export function createSnapshotBridge(host = window) {
         }, timeoutMs);
         pending.set(requestId, { target, resolve, timer });
         try {
-          target.postMessage({ ...data, type, context: HOST_CONTEXT, requestId, sessionId }, '*');
+          const message = { ...data, type, context: HOST_CONTEXT, requestId, sessionId };
+          targetOrigins.forEach((origin) => target.postMessage(message, origin));
         } catch (error) {
           pending.delete(requestId);
           clearTimeout(timer);
@@ -353,7 +358,7 @@ function sampleFillColor(bitmap) {
  */
 async function prepareAll(bridge, panels, { prompt, stitch = false, hideCursor = false }, signal) {
   const states = await Promise.all(panels.map((panel) => bridge.request(
-    panel.iframe,
+    panel,
     SNAPSHOT_MESSAGES.PREPARE,
     { align: Boolean(prompt), prompt: prompt || '', stitch, hideFloating: true, hideCursor },
     PREPARE_TIMEOUT_MS
@@ -364,7 +369,7 @@ async function prepareAll(bridge, panels, { prompt, stitch = false, hideCursor =
 
 function restoreAll(bridge, panels) {
   return Promise.all(panels.map((panel) => bridge.request(
-    panel.iframe,
+    panel,
     SNAPSHOT_MESSAGES.RESTORE,
     {},
     RESTORE_TIMEOUT_MS
@@ -380,6 +385,8 @@ function isUsableState(state) {
  * @property {string} id
  * @property {string} name - Provider name shown in notes.
  * @property {HTMLIFrameElement} iframe
+ * @property {string[]} targetOrigins - Origins the provider page may be on;
+ *   see getProviderFrameOrigins.
  * @property {HTMLElement} element - The .panel-item.
  */
 
@@ -641,7 +648,7 @@ export async function captureFullAnswers({
         throwIfAborted(signal);
         const active = cells.filter((cell) => cell.track && !cell.track.done);
         const nextStates = await Promise.all(active.map((cell) => bridge.request(
-          cell.panel.iframe,
+          cell.panel,
           SNAPSHOT_MESSAGES.SCROLL,
           { scrollTop: getNextStitchScrollTop(cell.track, cell.state) },
           SCROLL_TIMEOUT_MS

@@ -36,6 +36,21 @@ function hasAllowedProviderHost(providerId, url) {
   return Boolean(allowedHosts && allowedHosts.has(url.hostname));
 }
 
+/**
+ * Origins a provider's panel can be on while its content script runs there.
+ * The Multi-Panel page posts to each one instead of to '*': the browser
+ * delivers to the one the frame is on, and to none when the frame has left
+ * them, so prompts never reach another site.
+ * @param {string} providerId
+ * @returns {string[]}
+ */
+export function getProviderFrameOrigins(providerId) {
+  if (!Object.prototype.hasOwnProperty.call(PROVIDER_ALLOWED_HOSTS, providerId)) {
+    return [];
+  }
+  return Array.from(PROVIDER_ALLOWED_HOSTS[providerId], (host) => `https://${host}`);
+}
+
 export function isProviderAllowedUrl(providerId, rawUrl) {
   const url = parseHttpUrl(rawUrl);
   return Boolean(url && hasAllowedProviderHost(providerId, url));
