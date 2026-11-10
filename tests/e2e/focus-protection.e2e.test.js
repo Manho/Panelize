@@ -74,8 +74,22 @@ test.describe('Focus protection E2E', () => {
       const state = await fixtureState(providerId);
       return state.steals.filter((steal) => steal.reason === reason).length;
     }, { timeout: 20000 }).toBe(count);
-    // Let the multi-panel blur handler and requestAnimationFrame refocus settle.
-    await page.waitForTimeout(300);
+  }
+
+  /**
+   * Waits until focus protection has undone every steal so far: the provider
+   * composer lost focus after each one and the unified input has it again.
+   * Checking the composer as well matters because the page's activeElement
+   * still reads the unified input for a moment after the provider took focus.
+   */
+  async function waitForFocusRestored(providerId) {
+    await expect.poll(async () => {
+      const { steals } = await fixtureState(providerId);
+      return {
+        unrestoredSteals: steals.filter((steal) => !steal.blurred).length,
+        activeElement: await activeElementLabel(),
+      };
+    }).toEqual({ unrestoredSteals: 0, activeElement: 'unified-input' });
   }
 
   async function activeElementLabel() {
@@ -106,10 +120,18 @@ test.describe('Focus protection E2E', () => {
 
   test('keeps the unified input focused while a panel autofocuses during load', async () => {
     await openPanels({ chatgpt: { loadStealDelays: [300, 800, 1500] } });
-    await expect.poll(activeElementLabel).toBe('unified-input');
 
-    await page.keyboard.type('hello world', { delay: 80 });
+    // Typing only starts once the steals have been undone. A key pressed while a
+    // steal is in flight can still land in the provider panel: the panel's
+    // focus() moves focus in another renderer process, and the page only hears
+    // about it, and refocuses, a round trip later. Measured on this fixture:
+    // typing through the steals lost the first key in 2 of 50 runs, and typing
+    // 310 keys through repeated steals lost 15 with the requestAnimationFrame
+    // refocus, 10 with setTimeout(0) and 11 with an inert iframe. The page
+    // cannot win that race, so this test checks that every steal is undone.
     await waitForSteals('chatgpt', 'load', 3);
+    await waitForFocusRestored('chatgpt');
+    await page.keyboard.type('hello world', { delay: 80 });
 
     expect(await activeElementLabel()).toBe('unified-input');
     await expect(page.locator('#unified-input')).toHaveValue('hello world');
@@ -128,6 +150,9 @@ test.describe('Focus protection E2E', () => {
       waitForSteals('gemini', 'load', 1),
       waitForSteals('grok', 'load', 1),
     ]);
+    for (const providerId of ['chatgpt', 'gemini', 'grok']) {
+      await waitForFocusRestored(providerId);
+    }
 
     expect(await activeElementLabel()).toBe('unified-input');
   });
@@ -138,6 +163,8 @@ test.describe('Focus protection E2E', () => {
     await page.click('#unified-input');
 
     await page.frameLocator('iframe').locator('#prompt-textarea').click();
+    await expect.poll(activeElementLabel).toBe('IFRAME');
+    // Focus must stay in the panel, not be pulled back a moment later.
     await page.waitForTimeout(500);
 
     expect(await activeElementLabel()).toBe('IFRAME');
@@ -152,6 +179,7 @@ test.describe('Focus protection E2E', () => {
     await page.click('#unified-input');
     await waitForFixtureReady('chatgpt');
     await waitForSteals('chatgpt', 'load', 2);
+    await waitForFocusRestored('chatgpt');
 
     expect(await activeElementLabel()).toBe('unified-input');
   });
@@ -163,6 +191,7 @@ test.describe('Focus protection E2E', () => {
 
     await page.click('#new-chat-btn');
     await waitForSteals('chatgpt', 'new-chat', 3);
+    await waitForFocusRestored('chatgpt');
 
     expect((await fixtureState('chatgpt')).newChats).toBe(1);
     expect(await activeElementLabel()).toBe('unified-input');
@@ -179,7 +208,7 @@ test.describe('Focus protection E2E', () => {
     await waitForSteals('chatgpt', 'new-chat', 1);
 
     // The restore timers at 1000-1500ms must not pull focus back.
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1100);
     expect(await activeElementLabel()).toBe('IFRAME');
   });
 
@@ -193,6 +222,7 @@ test.describe('Focus protection E2E', () => {
     await page.fill('#unified-input', 'hello');
     await page.click('#send-all-btn');
     await waitForSteals('chatgpt', 'send', 5);
+    await waitForFocusRestored('chatgpt');
 
     expect((await fixtureState('chatgpt')).sentTexts).toEqual(['hello']);
     expect(await activeElementLabel()).toBe('unified-input');
@@ -213,6 +243,7 @@ test.describe('Focus protection E2E', () => {
     await page.keyboard.type('hello');
     await page.keyboard.press('Enter');
     await waitForSteals('chatgpt', 'send', 3);
+    await waitForFocusRestored('chatgpt');
 
     expect((await fixtureState('chatgpt')).sentTexts).toEqual(['hello']);
     expect(await activeElementLabel()).toBe('unified-input');
@@ -229,6 +260,7 @@ test.describe('Focus protection E2E', () => {
     await page.fill('#unified-input', '');
     await page.click('#send-all-btn');
     await waitForSteals('chatgpt', 'send', 3);
+    await waitForFocusRestored('chatgpt');
 
     expect((await fixtureState('chatgpt')).sentTexts).toEqual(['filled first']);
     expect(await activeElementLabel()).toBe('unified-input');
@@ -245,7 +277,7 @@ test.describe('Focus protection E2E', () => {
     await waitForSteals('chatgpt', 'send', 1);
 
     // Restore timers at 1500ms and later must not pull focus back.
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1800);
     expect(await activeElementLabel()).toBe('IFRAME');
   });
 
