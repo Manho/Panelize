@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dispatchMultiPanelMessage as dispatchFromMultiPanel } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -38,12 +39,10 @@ function markVisible(element) {
 }
 
 function dispatchMultiPanelMessage(data) {
-  window.dispatchEvent(new MessageEvent('message', {
-    data: {
-      context: 'multi-panel',
-      ...data,
-    },
-  }));
+  dispatchFromMultiPanel({
+    context: 'multi-panel',
+    ...data,
+  });
 }
 
 function createYuanbaoDom({ previewDelayMs = 0 } = {}) {

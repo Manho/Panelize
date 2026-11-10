@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -93,10 +94,7 @@ function sendSnapshotMessage(data, { source = window } = {}) {
     };
     window.addEventListener('message', listener);
   });
-  window.dispatchEvent(new MessageEvent('message', {
-    data: { context: 'multi-panel', requestId, ...data },
-    source
-  }));
+  dispatchMultiPanelMessage({ context: 'multi-panel', requestId, ...data }, { source });
   return reply;
 }
 
@@ -778,10 +776,10 @@ describe('snapshot scroll protocol in provider frames', () => {
     };
     window.addEventListener('message', listener);
 
-    window.dispatchEvent(new MessageEvent('message', {
-      data: { type: 'PANELIZE_SNAPSHOT_PREPARE', context: 'multi-panel', requestId: 'x', sessionId: 's', prompt: 'Explain how HTTPS works', align: true },
-      source: null
-    }));
+    dispatchMultiPanelMessage(
+      { type: 'PANELIZE_SNAPSHOT_PREPARE', context: 'multi-panel', requestId: 'x', sessionId: 's', prompt: 'Explain how HTTPS works', align: true },
+      { source: null }
+    );
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 600));
     window.removeEventListener('message', listener);
 

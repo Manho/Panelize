@@ -21,6 +21,9 @@
   const PANELIZE_SNAPSHOT_STATE = 'PANELIZE_SNAPSHOT_STATE';
   const MULTI_PANEL_SNAPSHOT_CONTEXT = 'multi-panel-snapshot';
   const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
+  // Origin of this extension's own pages, e.g. chrome-extension://<id>. Only
+  // the Multi-Panel page embedding this frame may drive it.
+  const EXTENSION_ORIGIN = getExtensionOrigin();
   const PAGE_WIDTH_REPORT_THROTTLE_MS = 500;
   // The app shell is near the top of the tree; deeper nodes are content.
   const PAGE_WIDTH_MAX_DEPTH = 12;
@@ -702,6 +705,29 @@
     window.addEventListener('popstate', reportIfChanged);
     window.addEventListener('hashchange', reportIfChanged);
     reportIfChanged();
+  }
+
+  function getExtensionOrigin() {
+    try {
+      const baseUrl = chrome.runtime.getURL('');
+      // String form: URL#origin is "null" for non-special schemes in some engines.
+      const origin = typeof baseUrl === 'string' ? baseUrl.replace(/\/+$/, '') : '';
+      return /^[a-z][a-z0-9+.-]*:\/\/[^/]+$/.test(origin) ? origin : null;
+    } catch (error) {
+      console.warn('[Text Injection] Extension origin unavailable; panel messages are ignored:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Panel messages type and send prompts in the user's session, so they are
+   * accepted only from the extension page that embeds this frame. Any page
+   * holding a reference to this window can post, and it controls the data.
+   */
+  function isFromMultiPanelHost(event) {
+    return EXTENSION_ORIGIN !== null
+      && event.origin === EXTENSION_ORIGIN
+      && event.source === window.parent;
   }
 
   function isMultiPanelFrame() {
@@ -3415,6 +3441,11 @@
   function handleTextInjection(event) {
     // Validate event data structure
     if (!event || !event.data || typeof event.data !== 'object') {
+      return;
+    }
+
+    // Every message type below acts on the page; check the sender first.
+    if (!isFromMultiPanelHost(event)) {
       return;
     }
 

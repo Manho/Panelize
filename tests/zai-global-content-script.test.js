@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -42,10 +43,6 @@ function createZaiGlobalDom({ withFileInput = true } = {}) {
   });
 
   return { editor, sendButton, newChatButton, fileInput, previewList };
-}
-
-function dispatchMultiPanelMessage(payload) {
-  window.dispatchEvent(new MessageEvent('message', { data: payload }));
 }
 
 function dispatchImageInjection(autoSubmit = false) {

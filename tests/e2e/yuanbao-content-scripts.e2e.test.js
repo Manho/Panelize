@@ -73,9 +73,32 @@ const YUANBAO_FIXTURE = `<!doctype html>
   </body>
 </html>`;
 
+/**
+ * Opens the fixture the way Multi-Panel shows it: framed by an extension
+ * page, which is the only sender its content script accepts.
+ * @returns {Promise<{page: import('@playwright/test').Page, frame: import('@playwright/test').Frame}>}
+ */
+async function openFramedFixture(context, url) {
+  const extensionId = new URL(context.serviceWorkers()[0].url()).host;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/options/options.html`);
+  await page.evaluate((src) => {
+    document.body.replaceChildren();
+    const iframe = document.createElement('iframe');
+    iframe.id = 'fixture-frame';
+    iframe.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0';
+    iframe.src = src;
+    document.body.append(iframe);
+  }, url);
+  const frame = await (await page.waitForSelector('#fixture-frame')).contentFrame();
+  await frame.waitForLoadState('domcontentloaded');
+  return { page, frame };
+}
+
 function postPanelMessage(page, payload) {
   return page.evaluate((data) => {
-    window.postMessage({ context: 'multi-panel', ...data }, '*');
+    document.getElementById('fixture-frame').contentWindow
+      .postMessage({ context: 'multi-panel', ...data }, '*');
   }, payload);
 }
 
@@ -159,26 +182,25 @@ test.describe('Yuanbao production content scripts', () => {
 
   for (const providerCase of providerCases) {
     test(`runs text, keyboard, new-chat, and image flows for ${providerCase.name}`, async () => {
-      const page = await context.newPage();
-      await page.goto(providerCase.url());
-      await page.waitForSelector(providerCase.editor);
+      const { page, frame } = await openFramedFixture(context, providerCase.url());
+      await frame.waitForSelector(providerCase.editor);
 
       await postPanelMessage(page, {
         type: 'INJECT_TEXT',
         text: ' + extension',
         autoSubmit: false,
       });
-      await expect(page.locator(providerCase.editor)).toContainText('extension');
-      await expect(page.locator(providerCase.send)).toBeEnabled();
+      await expect(frame.locator(providerCase.editor)).toContainText('extension');
+      await expect(frame.locator(providerCase.send)).toBeEnabled();
 
-      await page.locator(providerCase.editor).focus();
+      await frame.locator(providerCase.editor).focus();
       await page.keyboard.press('Shift+Enter');
-      await expect(page.locator(`${providerCase.editor} p`)).toHaveCount(2);
+      await expect(frame.locator(`${providerCase.editor} p`)).toHaveCount(2);
       await page.keyboard.press('Enter');
-      await expect.poll(() => page.evaluate(() => window.__sendCount)).toBe(1);
+      await expect.poll(() => frame.evaluate(() => window.__sendCount)).toBe(1);
 
       await postPanelMessage(page, { type: 'NEW_CHAT' });
-      await expect.poll(() => page.evaluate(() => window.__newChatCount)).toBe(1);
+      await expect.poll(() => frame.evaluate(() => window.__newChatCount)).toBe(1);
 
       await postPanelMessage(page, {
         type: 'INJECT_TEXT_WITH_IMAGES',
@@ -187,18 +209,17 @@ test.describe('Yuanbao production content scripts', () => {
         autoSubmit: false,
         requestId: 'fixture-fill',
       });
-      await expect(page.locator(providerCase.preview)).toBeVisible();
+      await expect(frame.locator(providerCase.preview)).toBeVisible();
 
       await page.close();
     });
   }
 
   test('Yuanbao generation keeps its stop control untouched by Enter and auto-submit', async () => {
-    const page = await context.newPage();
-    await page.goto(`http://yuanbao.tencent.com:${port}/chat/naQivTmsDa`);
-    const editor = page.locator('.ql-editor');
+    const { page, frame } = await openFramedFixture(context, `http://yuanbao.tencent.com:${port}/chat/naQivTmsDa`);
+    const editor = frame.locator('.ql-editor');
     await expect(editor).toBeVisible();
-    await page.locator('#yuanbao-send-btn').evaluate(button => {
+    await frame.locator('#yuanbao-send-btn').evaluate(button => {
       button.className = 'SendButton_sendButton__test SendButton_sendStop__test';
       button.setAttribute('aria-label', 'Stop Answering');
       button.querySelector('svg').remove();
@@ -211,7 +232,7 @@ test.describe('Yuanbao production content scripts', () => {
       autoSubmit: true,
     });
     await page.waitForTimeout(950);
-    expect(await page.evaluate(() => window.__sendCount)).toBe(0);
+    expect(await frame.evaluate(() => window.__sendCount)).toBe(0);
     await expect(editor).toContainText('queued');
     await page.close();
   });

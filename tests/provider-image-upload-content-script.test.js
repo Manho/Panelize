@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -47,17 +48,15 @@ function dispatchImageInjection({
   requestId,
   retry = false,
 } = {}) {
-  window.dispatchEvent(new MessageEvent('message', {
-    data: {
-      type: 'INJECT_TEXT_WITH_IMAGES',
-      context: 'multi-panel',
-      images,
-      text,
-      autoSubmit,
-      requestId,
-      retry,
-    },
-  }));
+  dispatchMultiPanelMessage({
+    type: 'INJECT_TEXT_WITH_IMAGES',
+    context: 'multi-panel',
+    images,
+    text,
+    autoSubmit,
+    requestId,
+    retry,
+  });
 }
 
 async function finishSuccessfulInjection() {
