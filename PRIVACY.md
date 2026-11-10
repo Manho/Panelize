@@ -1,6 +1,6 @@
 # Privacy Policy for Panelize
 
-**Last Updated: September 22, 2026**
+**Last Updated: November 10, 2026**
 
 ## Overview
 
@@ -89,7 +89,7 @@ Panelize can check for updates by requesting version information from GitHub (ap
 
 ### UI Assets
 
-Panelize loads the Material Symbols font from Google Fonts for UI icons. This request is made directly to Google Fonts.
+Panelize ships the Material Symbols icon font inside the extension. Showing its icons makes no network request.
 
 ---
 
