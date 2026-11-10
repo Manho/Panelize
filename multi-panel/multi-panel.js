@@ -17,6 +17,7 @@ import {
 } from '../modules/google-mode.js';
 import {
   getProviderFrameOrigins,
+  findMessageSourcePanel,
   getProviderOpenUrl,
   isProviderAllowedUrl,
   isProviderCurrentUrl
@@ -915,7 +916,7 @@ function handleProviderStatusMessage(event) {
     return;
   }
 
-  const panel = panels.find(candidate => candidate.iframe?.contentWindow === event.source);
+  const panel = findMessageSourcePanel(panels, event);
   if (!panel || data.provider !== panel.providerId) {
     return;
   }
@@ -2705,26 +2706,31 @@ function clearAllImages() {
 
 function renderImagePreviews() {
   const container = document.getElementById('image-preview-container');
-
-  if (uploadedImages.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  container.innerHTML = uploadedImages.map(img => `
-    <div class="image-preview-item" data-image-id="${img.id}">
-      <img src="${img.dataUrl}" alt="${img.name}">
-      <button class="remove-image" onclick="window.removeImageById('${img.id}')" title="Remove">
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    </div>
-  `).join('');
+  // Build nodes instead of markup: the extension CSP blocks inline handlers,
+  // and file names must never be parsed as HTML.
+  container.replaceChildren(...uploadedImages.map(createImagePreviewItem));
 }
 
-// Expose removeImage to window for onclick handler
-window.removeImageById = (imageId) => {
-  removeImage(imageId);
-};
+function createImagePreviewItem(img) {
+  const item = document.createElement('div');
+  item.className = 'image-preview-item';
+  item.dataset.imageId = img.id;
+
+  const preview = document.createElement('img');
+  preview.src = img.dataUrl;
+  preview.alt = img.name;
+
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'remove-image';
+  removeButton.title = 'Remove';
+  // Constant markup (no user data), kept as markup so icon-name tooling can find it.
+  removeButton.innerHTML = '<span class="material-symbols-outlined">close</span>';
+  removeButton.addEventListener('click', () => removeImage(img.id));
+
+  item.append(preview, removeButton);
+  return item;
+}
 
 // Create new chat for all panels
 async function newChatAllProviders() {

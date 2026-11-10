@@ -8,6 +8,13 @@ import {
   syncOptionalProviderAccess,
 } from '../modules/optional-provider-access.js';
 
+function installedOptionalFrameRules() {
+  return Object.values(OPTIONAL_PROVIDER_CONFIGS)
+    .map(({ frameRule }) => frameRule)
+    .filter(Boolean)
+    .map((rule) => structuredClone(rule));
+}
+
 describe('optional provider access', () => {
   beforeEach(() => {
     chrome.permissions = {
@@ -275,12 +282,8 @@ describe('optional provider access', () => {
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
     ]);
-    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
-      { id: 1001 },
-      { id: 1002 },
-      { id: 1003 },
-      { id: 1004 },
-    ]);
+    // getDynamicRules returns each installed rule in full.
+    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue(installedOptionalFrameRules());
 
     await syncOptionalProviderAccess([
       'qwen-cn',
@@ -309,12 +312,8 @@ describe('optional provider access', () => {
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
     ]);
-    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
-      { id: 1001 },
-      { id: 1002 },
-      { id: 1003 },
-      { id: 1004 },
-    ]);
+    // getDynamicRules returns each installed rule in full.
+    chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue(installedOptionalFrameRules());
 
     await syncOptionalProviderAccess([
       'qwen-cn',

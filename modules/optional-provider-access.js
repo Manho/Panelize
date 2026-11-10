@@ -1,3 +1,5 @@
+import { syncFrameHeaderRules } from './frame-header-rules.js';
+
 function createContentScript(id, matches, enterBehaviorScript) {
   return {
     id,
@@ -16,7 +18,8 @@ function createContentScript(id, matches, enterBehaviorScript) {
 }
 
 function createFrameRule(id, urlFilter) {
-  // Installed only for enabled providers and scoped to their embedded subframes.
+  // Installed only for enabled providers and scoped to their embedded subframes;
+  // see frame-header-rules.js for the top-level page restriction.
   return {
     id,
     priority: 1,
@@ -180,28 +183,8 @@ async function syncContentScripts(allConfigs, desiredConfigs) {
 }
 
 async function syncFrameRules(allConfigs, desiredConfigs) {
-  if (!chrome.declarativeNetRequest?.getDynamicRules) {
-    return;
-  }
-
-  const allFrameRules = allConfigs
-    .map(({ frameRule }) => frameRule)
-    .filter(Boolean);
-  const desiredFrameRules = desiredConfigs
-    .map(({ frameRule }) => frameRule)
-    .filter(Boolean);
-  const managedRuleIds = new Set(allFrameRules.map(({ id }) => id));
-  const desiredRuleIds = new Set(desiredFrameRules.map(({ id }) => id));
-  const dynamicRules = await chrome.declarativeNetRequest.getDynamicRules();
-  const installedManagedRuleIds = dynamicRules
-    .map(({ id }) => id)
-    .filter((id) => managedRuleIds.has(id));
-  const removeRuleIds = installedManagedRuleIds.filter((id) => !desiredRuleIds.has(id));
-  const installedRuleIdSet = new Set(installedManagedRuleIds);
-  const addRules = desiredFrameRules
-    .filter(({ id }) => !installedRuleIdSet.has(id));
-
-  if (removeRuleIds.length > 0 || addRules.length > 0) {
-    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
-  }
+  await syncFrameHeaderRules({
+    optionalRules: desiredConfigs.map(({ frameRule }) => frameRule).filter(Boolean),
+    optionalRuleIds: allConfigs.map(({ frameRule }) => frameRule?.id).filter(Number.isInteger)
+  });
 }

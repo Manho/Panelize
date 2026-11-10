@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import { PROVIDERS } from '../modules/providers.js';
 import { OPTIONAL_PROVIDER_CONFIGS } from '../modules/optional-provider-access.js';
-import { getProviderFrameOrigins } from '../modules/provider-open-url.js';
+import {
+  findMessageSourcePanel,
+  getProviderFrameOrigins,
+  isProviderFrameOrigin
+} from '../modules/provider-open-url.js';
 
 const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'manifest.json'), 'utf8'));
 
@@ -76,5 +80,78 @@ describe('provider frame origins', () => {
     const origins = getProviderFrameOrigins('chatgpt');
     origins.push('*');
     expect(getProviderFrameOrigins('chatgpt')).toEqual(['https://chatgpt.com', 'https://chat.openai.com']);
+  });
+});
+
+describe('isProviderFrameOrigin', () => {
+  it('accepts every origin the provider frame may be on', () => {
+    PROVIDERS.forEach((provider) => {
+      getProviderFrameOrigins(provider.id).forEach((origin) => {
+        expect(isProviderFrameOrigin(provider.id, origin), `${provider.id} ${origin}`).toBe(true);
+      });
+    });
+  });
+
+  it.each([
+    ['another site', 'chatgpt', 'https://evil.example'],
+    ['a look-alike host', 'chatgpt', 'https://chatgpt.com.evil.example'],
+    ['plain http', 'chatgpt', 'http://chatgpt.com'],
+    ['a port', 'chatgpt', 'https://chatgpt.com:8443'],
+    ['a trailing slash', 'chatgpt', 'https://chatgpt.com/'],
+    ['another provider', 'claude', 'https://chatgpt.com'],
+    ['the extension origin', 'chatgpt', 'chrome-extension://panelize-test-extension-id'],
+    ['an opaque origin', 'chatgpt', 'null'],
+    ['an empty origin', 'chatgpt', ''],
+    ['a missing origin', 'chatgpt', undefined],
+    ['an unknown provider', 'unknown', 'https://chatgpt.com'],
+  ])('rejects %s', (_label, providerId, origin) => {
+    expect(isProviderFrameOrigin(providerId, origin)).toBe(false);
+  });
+});
+
+describe('findMessageSourcePanel', () => {
+  function createPanels() {
+    const chatgpt = { id: 'panel-1', providerId: 'chatgpt', iframe: { contentWindow: {} } };
+    const claude = { id: 'panel-2', providerId: 'claude', iframe: { contentWindow: {} } };
+    return { chatgpt, claude, panels: [chatgpt, claude] };
+  }
+
+  it.each(['https://chatgpt.com', 'https://chat.openai.com'])(
+    'finds the ChatGPT panel messaging from %s, either origin its frame may be on',
+    (origin) => {
+      const { chatgpt, panels } = createPanels();
+      expect(findMessageSourcePanel(panels, { source: chatgpt.iframe.contentWindow, origin })).toBe(chatgpt);
+    }
+  );
+
+  it('finds each panel by its own frame and origin', () => {
+    const { claude, panels } = createPanels();
+    expect(findMessageSourcePanel(panels, {
+      source: claude.iframe.contentWindow,
+      origin: 'https://claude.ai',
+    })).toBe(claude);
+  });
+
+  it.each([
+    ['another site', 'https://evil.example'],
+    ["another panel's provider", 'https://claude.ai'],
+    ['plain http', 'http://chatgpt.com'],
+    ['the extension origin', 'chrome-extension://panelize-test-extension-id'],
+    ['an opaque origin', 'null'],
+    ['no origin', undefined],
+  ])('ignores a panel frame that messages from %s', (_label, origin) => {
+    const { chatgpt, panels } = createPanels();
+    expect(findMessageSourcePanel(panels, { source: chatgpt.iframe.contentWindow, origin })).toBeNull();
+  });
+
+  it('ignores a message from a window that is not a panel frame', () => {
+    const { panels } = createPanels();
+    expect(findMessageSourcePanel(panels, { source: {}, origin: 'https://chatgpt.com' })).toBeNull();
+    expect(findMessageSourcePanel(panels, { source: null, origin: 'https://chatgpt.com' })).toBeNull();
+  });
+
+  it('ignores a panel whose frame has no window', () => {
+    const panel = { id: 'panel-1', providerId: 'chatgpt', iframe: null };
+    expect(findMessageSourcePanel([panel], { source: undefined, origin: 'https://chatgpt.com' })).toBeNull();
   });
 });

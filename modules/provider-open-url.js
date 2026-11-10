@@ -51,6 +51,34 @@ export function getProviderFrameOrigins(providerId) {
   return Array.from(PROVIDER_ALLOWED_HOSTS[providerId], (host) => `https://${host}`);
 }
 
+/**
+ * Whether a message origin is one the provider's panel frame can be on. A
+ * frame may move between them (ChatGPT redirects between its two origins),
+ * so any listed origin is accepted.
+ * @param {string} providerId
+ * @param {unknown} origin - `MessageEvent.origin`.
+ * @returns {boolean}
+ */
+export function isProviderFrameOrigin(providerId, origin) {
+  return typeof origin === 'string' && getProviderFrameOrigins(providerId).includes(origin);
+}
+
+/**
+ * Finds the panel a window message came from. It must come from a panel's
+ * frame window and from an origin that panel's provider page can be on, so
+ * a frame that navigated elsewhere is not trusted.
+ * @param {Array<{providerId: string, iframe?: HTMLIFrameElement}>} panels
+ * @param {MessageEvent} event
+ * @returns {object | null} The sending panel, or null.
+ */
+export function findMessageSourcePanel(panels, event) {
+  if (!event?.source || !Array.isArray(panels)) {
+    return null;
+  }
+  const panel = panels.find((candidate) => candidate?.iframe?.contentWindow === event.source);
+  return panel && isProviderFrameOrigin(panel.providerId, event.origin) ? panel : null;
+}
+
 export function isProviderAllowedUrl(providerId, rawUrl) {
   const url = parseHttpUrl(rawUrl);
   return Boolean(url && hasAllowedProviderHost(providerId, url));

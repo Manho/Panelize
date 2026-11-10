@@ -90,20 +90,6 @@
     }
   },
   {
-    "id": 6,
-    "priority": 1,
-    "action": {
-      "type": "modifyHeaders",
-      "responseHeaders": [
-        { "header": "X-Frame-Options", "operation": "remove" }
-      ]
-    },
-    "condition": {
-      "urlFilter": "http://localhost:3000/*",
-      "resourceTypes": ["sub_frame"]
-    }
-  },
-  {
     "id": 8,
     "priority": 1,
     "action": {

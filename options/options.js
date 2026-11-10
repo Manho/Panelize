@@ -320,6 +320,16 @@ async function loadSettings() {
 }
 
 // T052-T053: Render provider enable/disable toggles with drag-and-drop reordering
+/**
+ * Hides a provider icon whose image fails to load. `error` does not bubble,
+ * so each image gets its own listener. Call it in the same task that inserts
+ * the image: load errors are dispatched asynchronously, so none is missed.
+ * @param {HTMLImageElement} image
+ */
+function hideIconOnLoadError(image) {
+  image.addEventListener('error', () => { image.style.display = 'none'; }, { once: true });
+}
+
 async function renderProviderList() {
   const settings = await getSettings();
   const enabledProviders = getEnabledProvidersOrDefault(settings);
@@ -354,8 +364,7 @@ async function renderProviderList() {
         <div class="provider-info">
           ${isEnabled ? '<span class="drag-handle material-symbols-outlined">drag_indicator</span>' : ''}
           <div class="provider-icon">
-            <img src="${getProviderIcon(provider)}" alt="${provider.name}" width="24" height="24"
-                 onerror="this.style.display='none'" />
+            <img src="${getProviderIcon(provider)}" alt="${provider.name}" width="24" height="24" />
           </div>
           <span class="provider-name">${provider.name}</span>
         </div>
@@ -366,6 +375,9 @@ async function renderProviderList() {
       </div>
     `;
   }).join('');
+
+  // Inline onerror handlers are blocked by the extension CSP.
+  listContainer.querySelectorAll('.provider-icon img').forEach(hideIconOnLoadError);
 
   // Add click listeners to toggles
   listContainer.querySelectorAll('.toggle-switch').forEach(toggle => {
