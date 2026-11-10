@@ -11,6 +11,8 @@ global.chrome = {
       addListener: vi.fn(),
     },
     lastError: null,
+    // A plain function, so vi.restoreAllMocks() in a test never clears it.
+    getURL: (path = '') => `chrome-extension://panelize-test-extension-id/${String(path).replace(/^\/+/, '')}`,
   },
   storage: {
     sync: {

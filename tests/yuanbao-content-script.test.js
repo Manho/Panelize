@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXTENSION_ORIGIN, dispatchMultiPanelMessage as dispatchFromMultiPanel } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -38,12 +39,10 @@ function markVisible(element) {
 }
 
 function dispatchMultiPanelMessage(data) {
-  window.dispatchEvent(new MessageEvent('message', {
-    data: {
-      context: 'multi-panel',
-      ...data,
-    },
-  }));
+  dispatchFromMultiPanel({
+    context: 'multi-panel',
+    ...data,
+  });
 }
 
 function createYuanbaoDom({ previewDelayMs = 0 } = {}) {
@@ -216,7 +215,7 @@ describe('Yuanbao content script integration', () => {
         type: 'PANELIZE_TEMP_CHAT_ENABLED',
         provider: 'yuanbao',
       }),
-      '*'
+      EXTENSION_ORIGIN
     );
   });
 
@@ -236,7 +235,7 @@ describe('Yuanbao content script integration', () => {
       expect(clickSpy).not.toHaveBeenCalled();
       expect(window.parent.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'PANELIZE_TEMP_CHAT_ENABLED', provider: 'yuanbao' }),
-        '*'
+        EXTENSION_ORIGIN
       );
     }
   );
@@ -269,7 +268,7 @@ describe('Yuanbao content script integration', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(window.parent.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'PANELIZE_TEMP_CHAT_ENABLED', provider: 'yuanbao' }),
-      '*'
+      EXTENSION_ORIGIN
     );
   });
 

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const composerScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/chatgpt-composer.js'),
@@ -10,10 +11,6 @@ const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
   'utf8'
 );
-
-function dispatchMultiPanelMessage(payload) {
-  window.dispatchEvent(new MessageEvent('message', { data: payload }));
-}
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));

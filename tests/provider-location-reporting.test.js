@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Window } from 'happy-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXTENSION_ORIGIN } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -19,6 +20,8 @@ describe('provider location reporting content script', () => {
 
   beforeEach(() => {
     testWindow = new Window({ url: 'https://chatgpt.com/c/initial' });
+    // The content script reads its extension origin from chrome.runtime.
+    testWindow.chrome = globalThis.chrome;
     Object.defineProperty(testWindow, 'parent', {
       configurable: true,
       value: { postMessage: vi.fn() },
@@ -34,6 +37,13 @@ describe('provider location reporting content script', () => {
       provider: 'chatgpt',
       url: 'https://chatgpt.com/c/initial',
     });
+  });
+
+  it('posts reports only to the extension origin', () => {
+    const targetOrigins = testWindow.parent.postMessage.mock.calls.map(call => call[1]);
+
+    expect(targetOrigins.length).toBeGreaterThan(0);
+    expect(new Set(targetOrigins)).toEqual(new Set([EXTENSION_ORIGIN]));
   });
 
   it('reports location after pushState', async () => {

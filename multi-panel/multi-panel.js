@@ -16,6 +16,7 @@ import {
   normalizeGoogleProviderMode
 } from '../modules/google-mode.js';
 import {
+  getProviderFrameOrigins,
   getProviderOpenUrl,
   isProviderAllowedUrl,
   isProviderCurrentUrl
@@ -365,16 +366,30 @@ function getPanelProviderMode(panel) {
   return isGoogleProvider(panel.providerId) ? currentGoogleProviderMode : null;
 }
 
+/**
+ * Posts a message to a panel's provider page on each origin it may be on,
+ * never to '*': a frame that navigated elsewhere receives nothing.
+ */
+function postToPanelFrame(panel, message) {
+  const target = panel?.iframe?.contentWindow;
+  if (!target) {
+    return;
+  }
+  getProviderFrameOrigins(panel.providerId).forEach((origin) => {
+    target.postMessage(message, origin);
+  });
+}
+
 function postNewChatToPanel(panel) {
   if (!panel || !panel.iframe || !panel.iframe.contentWindow) {
     return;
   }
 
-  panel.iframe.contentWindow.postMessage({
+  postToPanelFrame(panel, {
     type: 'NEW_CHAT',
     providerMode: getPanelProviderMode(panel),
     context: 'multi-panel'
-  }, '*');
+  });
 }
 
 function getProviderFrameUrl(providerId) {
@@ -939,10 +954,10 @@ function handleProviderStatusMessage(event) {
         // arrived. Return focus to the panel the user actually chose.
         if (document.activeElement === document.getElementById('unified-input')) {
           panel.iframe.focus();
-          panel.iframe.contentWindow?.postMessage({
+          postToPanelFrame(panel, {
             type: 'PANELIZE_RESTORE_USER_FOCUS',
             context: 'multi-panel'
-          }, '*');
+          });
         }
       }
       break;
@@ -1847,7 +1862,7 @@ export async function sendToPanel(
       type: img.type
     }));
 
-    panel.iframe.contentWindow.postMessage({
+    postToPanelFrame(panel, {
       type: messageType,
       text,
       images: imagesPayload,
@@ -1857,7 +1872,7 @@ export async function sendToPanel(
       retry: waitForActionResult ? isRetry : undefined,
       providerMode: getPanelProviderMode(panel),
       context: 'multi-panel'
-    }, '*');
+    });
 
     if (waiter) {
       return await waiter.promise;
@@ -1896,12 +1911,12 @@ async function clearAllInputs() {
   // Send clear message to all panels
   panels.forEach(panel => {
     if (panel.iframe && panel.iframe.contentWindow) {
-      panel.iframe.contentWindow.postMessage({
+      postToPanelFrame(panel, {
         type: 'CLEAR_INPUT',
         clearImages: true,
         providerMode: getPanelProviderMode(panel),
         context: 'multi-panel'
-      }, '*');
+      });
     }
   });
   showToast('All inputs cleared');
@@ -2135,6 +2150,7 @@ function getSnapshotPanels() {
     id: panel.id,
     name: getProviderById(panel.providerId)?.name || panel.providerId,
     iframe: panel.iframe,
+    targetOrigins: getProviderFrameOrigins(panel.providerId),
     element: document.getElementById(panel.id)
   })).filter(panel => panel.element && panel.iframe);
 }
@@ -2741,11 +2757,11 @@ function scheduleTemporaryChatRetry(panel, delay) {
     }
 
     focusUnifiedInput({ force: true });
-    panel.iframe.contentWindow.postMessage({
+    postToPanelFrame(panel, {
       type: 'ENABLE_TEMP_CHAT',
       providerMode: getPanelProviderMode(panel),
       context: 'multi-panel'
-    }, '*');
+    });
   }, delay);
 
   const timerIds = tempChatRetryTimerIds.get(panel.id) || [];
@@ -2803,12 +2819,12 @@ async function triggerSendButtons() {
     // Send TRIGGER_SEND message to all panels
     panels.forEach(panel => {
       if (panel.iframe && panel.iframe.contentWindow) {
-        panel.iframe.contentWindow.postMessage({
+        postToPanelFrame(panel, {
           type: 'TRIGGER_SEND',
           requestId: sendFocusRequestId,
           providerMode: getPanelProviderMode(panel),
           context: 'multi-panel'
-        }, '*');
+        });
       }
     });
 
