@@ -28,9 +28,13 @@ function createPanel(id = 'panel-1', providerId = 'grok') {
   };
 }
 
-function createActionMessage(source, overrides = {}) {
+// Results come from the provider page's frame on the provider's origin.
+const PROVIDER_ORIGINS = { grok: 'https://grok.com', kimi: 'https://www.kimi.com', deepseek: 'https://chat.deepseek.com' };
+
+function createActionMessage(source, overrides = {}, origin = PROVIDER_ORIGINS[overrides.provider || 'grok']) {
   return new MessageEvent('message', {
     source,
+    origin,
     data: {
       type: PANELIZE_ACTION_RESULT,
       context: PANEL_ACTION_RESULT_CONTEXT,
@@ -71,6 +75,34 @@ describe('panel action result protocol', () => {
       'request-current'
     )).toBe(false);
   });
+
+  it.each([
+    ['another site', 'https://evil.example'],
+    ['another provider', 'https://chat.deepseek.com'],
+    ['plain http', 'http://grok.com'],
+    ['the extension itself', 'chrome-extension://panelize-test-extension-id'],
+    ['an opaque origin', 'null'],
+    ['no origin', ''],
+  ])('ignores a result from the panel frame on %s', (_label, origin) => {
+    const { panel, contentWindow } = createPanel();
+    expect(isMatchingPanelActionResult(
+      createActionMessage(contentWindow, {}, origin),
+      panel,
+      'request-current'
+    )).toBe(false);
+  });
+
+  it.each(['https://chatgpt.com', 'https://chat.openai.com'])(
+    'accepts a ChatGPT result from %s, either origin its frame may be on',
+    (origin) => {
+      const { panel, contentWindow } = createPanel('panel-chatgpt', 'chatgpt');
+      expect(isMatchingPanelActionResult(
+        createActionMessage(contentWindow, { provider: 'chatgpt' }, origin),
+        panel,
+        'request-current'
+      )).toBe(true);
+    }
+  );
 
   it('ignores stale request IDs until the active result arrives', async () => {
     const target = new EventTarget();

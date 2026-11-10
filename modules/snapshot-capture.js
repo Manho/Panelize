@@ -110,7 +110,7 @@ function watchLayout(grid, panels) {
 
 /**
  * Request/response over postMessage with the provider frames. Replies are
- * accepted only from the frame that was asked.
+ * accepted only from the frame that was asked, on one of its target origins.
  * @param {Window} [host]
  */
 export function createSnapshotBridge(host = window) {
@@ -124,7 +124,7 @@ export function createSnapshotBridge(host = window) {
       return;
     }
     const entry = pending.get(data.requestId);
-    if (!entry || event.source !== entry.target) {
+    if (!entry || event.source !== entry.target || !entry.targetOrigins.includes(event.origin)) {
       return;
     }
     pending.delete(data.requestId);
@@ -155,7 +155,7 @@ export function createSnapshotBridge(host = window) {
           pending.delete(requestId);
           resolve(null);
         }, timeoutMs);
-        pending.set(requestId, { target, resolve, timer });
+        pending.set(requestId, { target, targetOrigins, resolve, timer });
         try {
           const message = { ...data, type, context: HOST_CONTEXT, requestId, sessionId };
           targetOrigins.forEach((origin) => target.postMessage(message, origin));

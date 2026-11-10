@@ -17,6 +17,7 @@ import {
 } from '../modules/google-mode.js';
 import {
   getProviderFrameOrigins,
+  findMessageSourcePanel,
   getProviderOpenUrl,
   isProviderAllowedUrl,
   isProviderCurrentUrl
@@ -915,7 +916,7 @@ function handleProviderStatusMessage(event) {
     return;
   }
 
-  const panel = panels.find(candidate => candidate.iframe?.contentWindow === event.source);
+  const panel = findMessageSourcePanel(panels, event);
   if (!panel || data.provider !== panel.providerId) {
     return;
   }

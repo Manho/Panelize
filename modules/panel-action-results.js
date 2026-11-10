@@ -1,3 +1,5 @@
+import { isProviderFrameOrigin } from './provider-open-url.js';
+
 export const PANELIZE_ACTION_RESULT = 'PANELIZE_ACTION_RESULT';
 export const PANEL_ACTION_RESULT_CONTEXT = 'multi-panel-action-result';
 export const PANEL_ACTION_RESULT_TIMEOUT_MS = 8000;
@@ -38,6 +40,7 @@ export function isMatchingPanelActionResult(event, panel, requestId, action = 'f
     data.provider === panel.providerId &&
     data.action === action &&
     panel.iframe?.contentWindow === event.source &&
+    isProviderFrameOrigin(panel.providerId, event.origin) &&
     (data.status === 'succeeded' || data.status === 'failed')
   );
 }

@@ -178,6 +178,7 @@ describe('parent page sendToPanel & broadcastMessage production implementation w
             succeededImageIds: [],
           },
           source: iframe.contentWindow,
+          origin: 'https://grok.com',
         })
       );
 

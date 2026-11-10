@@ -14,20 +14,30 @@ import {
 
 const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 
-function messageEvent(data, source) {
+// Panels in these tests show ChatGPT unless a test says otherwise.
+function messageEvent(data, source, origin = 'https://chatgpt.com') {
   const event = new Event('message');
   Object.defineProperty(event, 'data', { value: data });
   Object.defineProperty(event, 'source', { value: source });
+  Object.defineProperty(event, 'origin', { value: origin });
   return event;
 }
 
 describe('createSnapshotBridge', () => {
-  function createFrame(host, reply, targetOrigins = ['https://chatgpt.com']) {
+  // The frame answers from the origin it is on: by default the last one it
+  // may be on, as if it had moved there.
+  function createFrame(host, reply, targetOrigins = ['https://chatgpt.com'], frameOrigin = targetOrigins.at(-1)) {
     const contentWindow = {
-      postMessage: vi.fn((message) => {
+      postMessage: vi.fn((message, targetOrigin) => {
+        // The browser drops messages whose target origin is not the frame's.
+        if (targetOrigin !== frameOrigin) {
+          return;
+        }
         const answer = reply(message);
         if (answer) {
-          queueMicrotask(() => host.dispatchEvent(messageEvent(answer, answer.source || contentWindow)));
+          queueMicrotask(() => host.dispatchEvent(messageEvent(
+            answer, answer.source || contentWindow, 'origin' in answer ? answer.origin : frameOrigin
+          )));
         }
       })
     };
@@ -100,6 +110,47 @@ describe('createSnapshotBridge', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it.each([
+    ['another site', 'https://evil.example'],
+    ['the extension itself', 'chrome-extension://panelize-test-extension-id'],
+    ['an opaque origin', 'null'],
+    ['no origin', ''],
+  ])('ignores replies from the asked frame on %s and times out', async (_label, origin) => {
+    vi.useFakeTimers();
+    try {
+      const host = new EventTarget();
+      const bridge = createSnapshotBridge(host);
+      const frame = createFrame(host, (message) => ({
+        type: SNAPSHOT_MESSAGES.STATE,
+        context: 'multi-panel-snapshot',
+        requestId: message.requestId,
+        origin
+      }));
+      const pending = bridge.request(frame, SNAPSHOT_MESSAGES.SCROLL, { scrollTop: 10 }, 500);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(await pending).toBeNull();
+      bridge.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts a reply from any origin the provider page may be on', async () => {
+    const host = new EventTarget();
+    const bridge = createSnapshotBridge(host);
+    const origins = ['https://chatgpt.com', 'https://chat.openai.com'];
+    for (const frameOrigin of origins) {
+      const frame = createFrame(host, (message) => ({
+        type: SNAPSHOT_MESSAGES.STATE,
+        context: 'multi-panel-snapshot',
+        requestId: message.requestId,
+        scrollTop: 3
+      }), origins, frameOrigin);
+      expect((await bridge.request(frame, SNAPSHOT_MESSAGES.PREPARE))?.scrollTop).toBe(3);
+    }
+    bridge.dispose();
   });
 
   it('resolves null for frames without a window', async () => {
