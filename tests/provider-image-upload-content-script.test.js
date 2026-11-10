@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
+import { EXTENSION_ORIGIN, dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -355,7 +355,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: ['sample-one-id'],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('keeps Grok text and does not submit when the attachment preview times out', async () => {
@@ -423,7 +423,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: ['sample-one-id'],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('keeps DeepSeek text and does not submit when the attachment preview times out', async () => {
@@ -512,7 +512,7 @@ describe('provider image upload adapters', () => {
       status: 'failed',
       reason: 'preview-timeout',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
@@ -536,7 +536,7 @@ describe('provider image upload adapters', () => {
       status: 'failed',
       reason: 'preview-timeout',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('reconciles a Kimi upload that succeeds after the first fill times out', async () => {
@@ -564,7 +564,7 @@ describe('provider image upload adapters', () => {
       status: 'failed',
       reason: 'preview-timeout',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
 
     window.parent.postMessage.mockClear();
     dispatchImageInjection({
@@ -585,7 +585,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: ['sample-one-id'],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('isolates Kimi unrelated existing upload and retries current image after completion', async () => {
@@ -613,7 +613,7 @@ describe('provider image upload adapters', () => {
       status: 'failed',
       reason: 'preview-timeout',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
 
     // Wait for existing.png to finish uploading
     await vi.advanceTimersByTimeAsync(600);
@@ -634,7 +634,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: ['sample-one-id'],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('keeps Kimi text and does not submit when the attachment preview times out', async () => {
@@ -676,7 +676,7 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: ['sample-one-id'],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('acknowledges an unsupported Kimi image fill without claiming success', async () => {
@@ -695,7 +695,7 @@ describe('provider image upload adapters', () => {
       status: 'failed',
       reason: 'unsupported',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('acknowledges a preview timeout and keeps the failed fill unsent', async () => {
@@ -720,7 +720,7 @@ describe('provider image upload adapters', () => {
       status: 'failed',
       reason: 'preview-timeout',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
@@ -745,6 +745,6 @@ describe('provider image upload adapters', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 });

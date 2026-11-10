@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
+import { EXTENSION_ORIGIN, dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -247,7 +247,7 @@ describe('Qwen content script integration', () => {
       action: 'fill',
       status: 'succeeded',
       succeededImageIds: [],
-    }, '*');
+    }, EXTENSION_ORIGIN);
   });
 
   it('uploads an image to Qwen Global through its verified composer paste path', async () => {

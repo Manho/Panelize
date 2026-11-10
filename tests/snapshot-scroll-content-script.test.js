@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
+import { EXTENSION_ORIGIN, dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
 
 const contentScriptSource = readFileSync(
   resolve(process.cwd(), 'content-scripts/text-injection-all-providers.js'),
@@ -83,7 +83,20 @@ function createConversation(messages, { stickyHeader = true, composer = true } =
 
 let nextRequestId = 0;
 
-function sendSnapshotMessage(data, { source = window } = {}) {
+/**
+ * Stands in for the Multi-Panel page embedding the frame: replies posted to
+ * it on the extension origin come back as window messages the tests await.
+ */
+const multiPanelHost = {
+  postMessage(message, targetOrigin) {
+    if (targetOrigin === EXTENSION_ORIGIN) {
+      window.dispatchEvent(new MessageEvent('message', { data: message }));
+    }
+  },
+};
+Object.defineProperty(window, 'parent', { configurable: true, value: multiPanelHost });
+
+function sendSnapshotMessage(data, { source = multiPanelHost } = {}) {
   const requestId = `request-${nextRequestId += 1}`;
   const reply = new Promise((resolvePromise) => {
     const listener = (event) => {

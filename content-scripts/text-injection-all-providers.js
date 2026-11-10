@@ -611,13 +611,13 @@
       return;
     }
 
-    window.parent.postMessage({
+    postToMultiPanelHost({
       type,
       requestId,
       provider,
       phase,
       context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
-    }, '*');
+    });
   }
 
   function postMultiPanelActionResult(requestId, provider, result) {
@@ -642,7 +642,7 @@
       message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
     }
 
-    window.parent.postMessage(message, '*');
+    postToMultiPanelHost(message);
   }
 
   function postTemporaryChatEnabled(provider = detectProvider()) {
@@ -650,11 +650,11 @@
       return;
     }
 
-    window.parent.postMessage({
+    postToMultiPanelHost({
       type: PANELIZE_TEMP_CHAT_ENABLED,
       provider,
       context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
-    }, '*');
+    });
   }
 
   function postProviderLocation(provider = detectProvider()) {
@@ -662,12 +662,12 @@
       return;
     }
 
-    window.parent.postMessage({
+    postToMultiPanelHost({
       type: PANELIZE_PROVIDER_LOCATION,
       provider,
       url: window.location.href,
       context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
-    }, '*');
+    });
   }
 
   function setupProviderLocationReporting() {
@@ -728,6 +728,18 @@
     return EXTENSION_ORIGIN !== null
       && event.origin === EXTENSION_ORIGIN
       && event.source === window.parent;
+  }
+
+  /**
+   * Posts to the Multi-Panel page embedding this frame. Targets the extension
+   * origin, never '*', so a third-party page framing the provider learns
+   * nothing (conversation URL, status); nothing is posted without that origin.
+   */
+  function postToMultiPanelHost(message) {
+    if (EXTENSION_ORIGIN === null || window.parent === window) {
+      return;
+    }
+    window.parent.postMessage(message, EXTENSION_ORIGIN);
   }
 
   function isMultiPanelFrame() {
@@ -817,12 +829,12 @@
         return;
       }
       lastReported = neededWidth;
-      window.parent.postMessage({
+      postToMultiPanelHost({
         type: PANELIZE_PAGE_WIDTH,
         provider,
         neededWidth,
         context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
-      }, '*');
+      });
     };
 
     function schedule() {
@@ -4468,7 +4480,7 @@
 
   function postSnapshotState(requestId, session, extra = {}) {
     const container = session?.container || null;
-    window.parent.postMessage({
+    postToMultiPanelHost({
       type: PANELIZE_SNAPSHOT_STATE,
       context: MULTI_PANEL_SNAPSHOT_CONTEXT,
       requestId,
@@ -4483,7 +4495,7 @@
       clip: session?.clip || null,
       viewport: getSnapshotViewport(),
       ...extra
-    }, '*');
+    });
   }
 
   /** Captures this container: remembers where it was, un-sticks its content and measures its clip. */
