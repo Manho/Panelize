@@ -115,6 +115,28 @@ const MESSAGE_CASES = [
     },
     untouched: { text: 'Draft the user is writing' },
   },
+  {
+    type: 'PANELIZE_RESTORE_USER_FOCUS',
+    async run(_dom, sender) {
+      const chosen = document.createElement('button');
+      const elsewhere = document.createElement('button');
+      document.body.append(chosen, elsewhere);
+      // A send from Multi-Panel starts watching for the user's own input.
+      dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', requestId: 'focus-request', context: 'multi-panel' });
+      await wait(300);
+      // The user presses inside the panel (a trusted event), and focus lands
+      // on the control they chose; then focus is pulled away.
+      const pointerdown = new Event('pointerdown', { bubbles: true });
+      Object.defineProperty(pointerdown, 'isTrusted', { value: true });
+      chosen.dispatchEvent(pointerdown);
+      chosen.focus();
+      elsewhere.focus();
+      dispatchMultiPanelMessage({ type: 'PANELIZE_RESTORE_USER_FOCUS', context: 'multi-panel' }, sender);
+      await wait(50);
+      return { focusRestored: document.activeElement === chosen };
+    },
+    untouched: { focusRestored: false },
+  },
   ...['PANELIZE_SNAPSHOT_PREPARE', 'PANELIZE_SNAPSHOT_SCROLL', 'PANELIZE_SNAPSHOT_RESTORE'].map(type => ({
     type,
     async run(_dom, sender) {

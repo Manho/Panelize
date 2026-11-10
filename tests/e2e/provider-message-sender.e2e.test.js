@@ -110,3 +110,35 @@ test('a third-party page cannot type or send prompts in a ChatGPT frame it embed
     await extension.close();
   }
 });
+
+test('Send All reaches a ChatGPT panel once after it moves to the other ChatGPT origin', async () => {
+  const extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+  try {
+    await routeFixtures(extension.context);
+    await extension.context.route('https://chat.openai.com/**', route => route.fulfill({
+      contentType: 'text/html', body: renderChatgptFixture({ composer: 'current' }),
+    }));
+    const multiPanel = await openMultiPanel(extension, { providers: ['chatgpt'] });
+    const panel = multiPanel.frameLocator('#panel-grid iframe');
+    await expect(panel.locator('[data-composer-placement="thread"] [data-composer-markdown]')).toBeVisible();
+
+    const frameOn = (origin) => multiPanel.frames().find(frame => frame.url().startsWith(`${origin}/`));
+    await frameOn('https://chatgpt.com').evaluate(() => { window.location.href = 'https://chat.openai.com/'; });
+    await expect.poll(() => Boolean(frameOn('https://chat.openai.com'))).toBe(true);
+    await expect(panel.locator('[data-composer-placement="thread"] [data-composer-markdown]')).toBeVisible();
+
+    await multiPanel.locator('#unified-input').fill('Prompt after redirect');
+    await multiPanel.locator('#send-all-btn').click();
+    await expect.poll(async () => (await readFixture(frameOn('https://chat.openai.com')))?.sentTexts)
+      .toEqual(['Prompt after redirect']);
+    await multiPanel.waitForTimeout(SETTLE_MS);
+    const state = await readFixture(frameOn('https://chat.openai.com'));
+    expect(state.sentTexts).toEqual(['Prompt after redirect']);
+    // Multi-Panel posts to both ChatGPT origins; the browser delivers only
+    // the one matching the frame, so the prompt is sent exactly once.
+    expect(state.sends).toBe(1);
+    expect(state.straySends).toEqual([]);
+  } finally {
+    await extension.close();
+  }
+});
