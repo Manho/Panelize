@@ -2724,10 +2724,8 @@ function createImagePreviewItem(img) {
   removeButton.type = 'button';
   removeButton.className = 'remove-image';
   removeButton.title = 'Remove';
-  const icon = document.createElement('span');
-  icon.className = 'material-symbols-outlined';
-  icon.textContent = 'close';
-  removeButton.appendChild(icon);
+  // Constant markup (no user data), kept as markup so icon-name tooling can find it.
+  removeButton.innerHTML = '<span class="material-symbols-outlined">close</span>';
   removeButton.addEventListener('click', () => removeImage(img.id));
 
   item.append(preview, removeButton);
