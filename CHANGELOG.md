@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.3 - 2026-11-10
+- Fixed the remove button on images attached in the Multi-Panel page.
+- Icons are now bundled with the extension, so they display even when Google Fonts cannot be reached.
+- Hardened how provider panels are framed and how messages from panels are checked.
+
 ## 2.0.2 - 2026-11-10
 - Hardened messaging between the Multi-Panel page and provider panels.
 
