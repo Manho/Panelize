@@ -141,9 +141,10 @@ export async function launchExtension({
     })
   );
 
-  let serviceWorker = context.serviceWorkers().at(-1);
+  const isExtensionWorker = (worker) => worker.url().startsWith('chrome-extension://');
+  let serviceWorker = context.serviceWorkers().filter(isExtensionWorker).at(-1);
   if (!serviceWorker) {
-    serviceWorker = await context.waitForEvent('serviceworker');
+    serviceWorker = await context.waitForEvent('serviceworker', isExtensionWorker);
   }
 
   const extensionId = new URL(serviceWorker.url()).host;
