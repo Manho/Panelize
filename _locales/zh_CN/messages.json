@@ -958,5 +958,77 @@
   },
   "msgImagesSkippedForPanels": {
     "message": "未向以下面板发送图片：$1"
+  },
+  "headingAddCustomProvider": {
+    "message": "添加自定义AI"
+  },
+  "labelCustomProviderName": {
+    "message": "名称（最多40个字符）"
+  },
+  "placeholderCustomProviderName": {
+    "message": "我的AI助手"
+  },
+  "labelCustomProviderUrl": {
+    "message": "网址（URL）"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com或http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "添加"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize将请求访问$1的权限"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "添加或启用自定义AI网站需要Chrome 145或更高版本。"
+  },
+  "errCustomNameRequired": {
+    "message": "请输入自定义AI的名称。"
+  },
+  "errCustomNameTooLong": {
+    "message": "名称不能超过40个字符。"
+  },
+  "errCustomUrlInvalid": {
+    "message": "请输入有效的网址（例如https://chat.example.com或http://localhost:3000）。"
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "仅支持https://和本地http://网址。"
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "网址必须包含主机名。"
+  },
+  "errCustomUrlCredentials": {
+    "message": "请移除网址中的用户名和密码。"
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "明文http://仅允许用于localhost和局域网私有IP，请改用https://。"
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "该网站已作为内置服务商提供。"
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "该来源（Origin）的自定义AI已存在。"
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "未授予对$1的网站访问权限。"
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "保存自定义AI失败，请重试。"
+  },
+  "msgCustomProviderAdded": {
+    "message": "已添加自定义AI：$1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "已移除自定义AI：$1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "确定移除？"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "确认"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "删除$1"
   }
 }

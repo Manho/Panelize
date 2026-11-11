@@ -962,5 +962,77 @@
   },
   "msgImagesSkippedForPanels": {
     "message": "Les images n'ont pas été envoyées à : $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "Ajouter une IA personnalisée"
+  },
+  "labelCustomProviderName": {
+    "message": "Nom (max. 40 caractères)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "Mon assistant IA"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com ou http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "Ajouter"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize demandera l’accès à $1"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "L’ajout ou l’activation de sites d’IA personnalisés nécessite Chrome 145 ou une version ultérieure."
+  },
+  "errCustomNameRequired": {
+    "message": "Saisissez un nom pour cette IA personnalisée."
+  },
+  "errCustomNameTooLong": {
+    "message": "Le nom ne doit pas dépasser 40 caractères."
+  },
+  "errCustomUrlInvalid": {
+    "message": "Saisissez une URL valide (par exemple, https://chat.example.com ou http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "Seules les URL https:// et http:// locales sont prises en charge."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "L’URL doit comporter un nom d’hôte."
+  },
+  "errCustomUrlCredentials": {
+    "message": "Supprimez le nom d’utilisateur et le mot de passe de l’URL."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "Le protocole http:// en clair n’est autorisé que pour localhost et les IP privées. Utilisez https:// à la place."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "Ce site est déjà disponible comme fournisseur intégré."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "Une IA personnalisée pour cette origine a déjà été ajoutée."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "L’accès au site $1 n’a pas été accordé."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "Impossible d’enregistrer l’IA personnalisée. Veuillez réessayer."
+  },
+  "msgCustomProviderAdded": {
+    "message": "IA personnalisée ajoutée : $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "IA personnalisée supprimée : $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "Supprimer ?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "Confirmer"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "Supprimer $1"
   }
 }

@@ -962,5 +962,77 @@
   },
   "msgImagesSkippedForPanels": {
     "message": "다음 패널에는 이미지가 전송되지 않았습니다: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "커스텀 AI 추가"
+  },
+  "labelCustomProviderName": {
+    "message": "이름 (최대 40자)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "내 AI 어시스턴트"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com 또는 http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "추가"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize가 $1 에 대한 접근 권한을 요청합니다"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "커스텀 AI 사이트를 추가하거나 활성화하려면 Chrome 145 이상이 필요합니다."
+  },
+  "errCustomNameRequired": {
+    "message": "이 커스텀 AI의 이름을 입력하세요."
+  },
+  "errCustomNameTooLong": {
+    "message": "이름은 40자 이하여야 합니다."
+  },
+  "errCustomUrlInvalid": {
+    "message": "올바른 URL을 입력하세요 (예: https://chat.example.com 또는 http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "https:// 및 로컬 http:// URL만 지원됩니다."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "URL에 호스트 이름이 포함되어야 합니다."
+  },
+  "errCustomUrlCredentials": {
+    "message": "URL에서 사용자 이름과 비밀번호를 제거하세요."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "일반 http:// 는 localhost 및 사설 네트워크 IP에만 허용됩니다. https:// 를 사용하세요."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "이 사이트는 이미 기본 제공자 목록에 있습니다."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "이 출처(Origin)에 대한 커스텀 AI가 이미 추가되어 있습니다."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "$1 에 대한 사이트 접근 권한이 허용되지 않았습니다."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "커스텀 AI를 저장하지 못했습니다. 다시 시도해 주세요."
+  },
+  "msgCustomProviderAdded": {
+    "message": "커스텀 AI 추가됨: $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "커스텀 AI 삭제됨: $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "삭제할까요?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "확인"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "$1 삭제"
   }
 }

@@ -127,8 +127,13 @@ export async function resetSettings() {
   } catch (error) {
     console.warn('chrome.storage.sync unavailable, using local', error);
     try {
+      const preserved = await chrome.storage.local.get({ customProviders: undefined });
       await chrome.storage.local.clear();
-      await chrome.storage.local.set(DEFAULT_SETTINGS);
+      const nextLocal = { ...DEFAULT_SETTINGS };
+      if (preserved?.customProviders !== undefined) {
+        nextLocal.customProviders = preserved.customProviders;
+      }
+      await chrome.storage.local.set(nextLocal);
     } catch (localError) {
       console.warn('chrome.storage.local also unavailable');
     }
@@ -140,8 +145,9 @@ export async function exportSettings() {
 }
 
 export async function importSettings(settings) {
-  // Validate settings
-  const validKeys = Object.keys(DEFAULT_SETTINGS);
+  // Validate settings (customProviders definitions live in storage.local and are not imported in M2,
+  // while custom provider IDs inside synced lists enabledProviders/providerOrder/multiPanelProviders stay intact)
+  const validKeys = [...Object.keys(DEFAULT_SETTINGS), 'multiPanelProviders'];
   const imported = {};
   const skipped = [];
   const errors = {};

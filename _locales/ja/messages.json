@@ -962,5 +962,77 @@
   },
   "msgImagesSkippedForPanels": {
     "message": "画像は次のパネルには送信されませんでした: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "カスタムAIを追加"
+  },
+  "labelCustomProviderName": {
+    "message": "名前（最大40文字）"
+  },
+  "placeholderCustomProviderName": {
+    "message": "マイAIアシスタント"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com または http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "追加"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelizeは $1 へのアクセス権をリクエストします"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "カスタムAIサイトの追加・有効化にはChrome 145以降が必要です。"
+  },
+  "errCustomNameRequired": {
+    "message": "カスタムAIの名前を入力してください。"
+  },
+  "errCustomNameTooLong": {
+    "message": "名前は40文字以内で入力してください。"
+  },
+  "errCustomUrlInvalid": {
+    "message": "有効なURLを入力してください（例：https://chat.example.com または http://localhost:3000）。"
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "https:// およびローカルの http:// URLのみ対応しています。"
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "URLにはホスト名を含めてください。"
+  },
+  "errCustomUrlCredentials": {
+    "message": "URLからユーザー名とパスワードを削除してください。"
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "暗号化されていない http:// は localhost とプライベートIPにのみ許可されています。https:// を使用してください。"
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "このサイトは組み込みプロバイダーとして既に利用可能です。"
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "このオリジンのカスタムAIは既に追加されています。"
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "$1 へのサイトアクセスが許可されませんでした。"
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "カスタムAIを保存できませんでした。もう一度お試しください。"
+  },
+  "msgCustomProviderAdded": {
+    "message": "カスタムAIを追加しました：$1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "カスタムAIを削除しました：$1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "削除しますか？"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "確認"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "$1 を削除"
   }
 }

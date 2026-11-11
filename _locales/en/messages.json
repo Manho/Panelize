@@ -979,5 +979,77 @@
   },
   "msgImagesSkippedForPanels": {
     "message": "Images were not sent to: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "Add custom AI"
+  },
+  "labelCustomProviderName": {
+    "message": "Name (max 40 chars)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "My AI Assistant"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com or http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "Add"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize will ask for access to $1"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "Adding or activating custom AI sites requires Chrome 145 or newer."
+  },
+  "errCustomNameRequired": {
+    "message": "Enter a name for this custom AI."
+  },
+  "errCustomNameTooLong": {
+    "message": "Name must be 40 characters or fewer."
+  },
+  "errCustomUrlInvalid": {
+    "message": "Enter a valid URL (for example, https://chat.example.com or http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "Only https:// and local http:// URLs are supported."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "The URL must include a hostname."
+  },
+  "errCustomUrlCredentials": {
+    "message": "Remove the username and password from the URL."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "Plain http:// is only allowed for localhost and private network IPs. Use https:// instead."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "This site is already available as a built-in provider."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "A custom AI for this origin has already been added."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "Site access to $1 was not granted."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "Failed to save custom AI. Please try again."
+  },
+  "msgCustomProviderAdded": {
+    "message": "Added custom AI: $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "Removed custom AI: $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "Remove?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "Confirm"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "Delete $1"
   }
 }
