@@ -87,19 +87,31 @@ function getGoogleProviderModeOrDefault(settings) {
   return normalizeGoogleProviderMode(settings.googleProviderMode || DEFAULT_GOOGLE_PROVIDER_MODE);
 }
 
-function renderGoogleModeSelectMarkup(currentMode, isEnabled) {
+function createGoogleModeSelectElement(currentMode, isEnabled) {
   const normalizedMode = normalizeGoogleProviderMode(currentMode);
-  return `
-    <select
-      class="google-mode-select"
-      data-google-mode-select="true"
-      ${isEnabled ? '' : 'disabled'}
-      title="Google provider mode"
-    >
-      <option value="${GOOGLE_PROVIDER_MODE_AI}" ${normalizedMode === GOOGLE_PROVIDER_MODE_AI ? 'selected' : ''}>AI Mode</option>
-      <option value="${GOOGLE_PROVIDER_MODE_SEARCH}" ${normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH ? 'selected' : ''}>Search</option>
-    </select>
-  `;
+  const select = document.createElement('select');
+  select.className = 'google-mode-select';
+  select.dataset.googleModeSelect = 'true';
+  select.disabled = !isEnabled;
+  select.title = 'Google provider mode';
+
+  const aiOption = document.createElement('option');
+  aiOption.value = GOOGLE_PROVIDER_MODE_AI;
+  aiOption.textContent = 'AI Mode';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_AI) {
+    aiOption.selected = true;
+  }
+
+  const searchOption = document.createElement('option');
+  searchOption.value = GOOGLE_PROVIDER_MODE_SEARCH;
+  searchOption.textContent = 'Search';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH) {
+    searchOption.selected = true;
+  }
+
+  select.append(aiOption, searchOption);
+  select.value = normalizedMode;
+  return select;
 }
 
 // Helper function to get browser's current language in our supported format
@@ -330,7 +342,58 @@ function hideIconOnLoadError(image) {
   image.addEventListener('error', () => { image.style.display = 'none'; }, { once: true });
 }
 
-async function renderProviderList() {
+function createProviderListItemElement(provider, { isEnabledPreference, hasAccess, googleProviderMode }) {
+  const isEnabled = isEnabledPreference && hasAccess;
+
+  const item = document.createElement('div');
+  item.className = isEnabled ? 'provider-item draggable' : 'provider-item';
+  item.dataset.providerId = provider.id;
+  item.dataset.enabledPreference = String(isEnabledPreference);
+  item.dataset.hasAccess = String(hasAccess);
+  item.setAttribute('draggable', String(isEnabled));
+
+  const info = document.createElement('div');
+  info.className = 'provider-info';
+
+  if (isEnabled) {
+    const dragHandleTemplate = document.createElement('template');
+    dragHandleTemplate.innerHTML = '<span class="drag-handle material-symbols-outlined">drag_indicator</span>';
+    info.appendChild(dragHandleTemplate.content.firstElementChild);
+  }
+
+  const iconWrapper = document.createElement('div');
+  iconWrapper.className = 'provider-icon';
+  const iconImg = document.createElement('img');
+  // Inline onerror handlers are blocked by the extension CSP.
+  hideIconOnLoadError(iconImg);
+  iconImg.setAttribute('src', getProviderIcon(provider));
+  iconImg.setAttribute('alt', provider.name);
+  iconImg.setAttribute('width', '24');
+  iconImg.setAttribute('height', '24');
+  iconWrapper.appendChild(iconImg);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'provider-name';
+  nameSpan.textContent = provider.name;
+
+  info.append(iconWrapper, nameSpan);
+
+  const controls = document.createElement('div');
+  controls.className = 'provider-controls';
+  if (provider.id === 'google') {
+    controls.appendChild(createGoogleModeSelectElement(googleProviderMode, isEnabled));
+  }
+
+  const toggle = document.createElement('div');
+  toggle.className = isEnabled ? 'toggle-switch active' : 'toggle-switch';
+  toggle.dataset.providerId = provider.id;
+  controls.appendChild(toggle);
+
+  item.append(info, controls);
+  return item;
+}
+
+export async function renderProviderList() {
   const settings = await getSettings();
   const enabledProviders = getEnabledProvidersOrDefault(settings);
   const googleProviderMode = getGoogleProviderModeOrDefault(settings);
@@ -347,37 +410,14 @@ async function renderProviderList() {
     return (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0);
   });
 
-  listContainer.innerHTML = sortedProviders.map(provider => {
-    const isEnabledPreference = enabledProviders.includes(provider.id);
-    const hasAccess = providerAccess.get(provider.id) !== false;
-    const isEnabled = isEnabledPreference && hasAccess;
-    const googleModeControl = provider.id === 'google'
-      ? renderGoogleModeSelectMarkup(googleProviderMode, isEnabled)
-      : '';
-
-    return `
-      <div class="provider-item ${isEnabled ? 'draggable' : ''}"
-           data-provider-id="${provider.id}"
-           data-enabled-preference="${isEnabledPreference}"
-           data-has-access="${hasAccess}"
-           draggable="${isEnabled}">
-        <div class="provider-info">
-          ${isEnabled ? '<span class="drag-handle material-symbols-outlined">drag_indicator</span>' : ''}
-          <div class="provider-icon">
-            <img src="${getProviderIcon(provider)}" alt="${provider.name}" width="24" height="24" />
-          </div>
-          <span class="provider-name">${provider.name}</span>
-        </div>
-        <div class="provider-controls">
-          ${googleModeControl}
-          <div class="toggle-switch ${isEnabled ? 'active' : ''}" data-provider-id="${provider.id}"></div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Inline onerror handlers are blocked by the extension CSP.
-  listContainer.querySelectorAll('.provider-icon img').forEach(hideIconOnLoadError);
+  const providerItems = sortedProviders.map((provider) =>
+    createProviderListItemElement(provider, {
+      isEnabledPreference: enabledProviders.includes(provider.id),
+      hasAccess: providerAccess.get(provider.id) !== false,
+      googleProviderMode,
+    })
+  );
+  listContainer.replaceChildren(...providerItems);
 
   // Add click listeners to toggles
   listContainer.querySelectorAll('.toggle-switch').forEach(toggle => {
@@ -925,7 +965,7 @@ function showStatus(type, message) {
 }
 
 // Toast notification helper - lightweight, non-intrusive notifications
-function showToast(type, messageKey, params = []) {
+export function showToast(type, messageKey, params = []) {
   const container = document.getElementById('toast-container');
   if (!container) return;
 
@@ -943,10 +983,15 @@ function showToast(type, messageKey, params = []) {
     info: 'ℹ'
   };
 
-  toast.innerHTML = `
-    <span class="toast-icon">${icons[type] || '•'}</span>
-    <span class="toast-message">${message}</span>
-  `;
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'toast-icon';
+  iconSpan.textContent = icons[type] || '•';
+
+  const messageSpan = document.createElement('span');
+  messageSpan.className = 'toast-message';
+  messageSpan.textContent = message;
+
+  toast.append(iconSpan, messageSpan);
 
   container.appendChild(toast);
 

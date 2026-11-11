@@ -389,14 +389,48 @@ function getProviderFrameUrl(providerId) {
     : provider.url;
 }
 
-function getGoogleModeSelectHtml(mode = currentGoogleProviderMode) {
+function createProviderIconImage(provider, className = '') {
+  const img = document.createElement('img');
+  img.setAttribute('src', getThemeAwareProviderIcon(provider));
+  img.setAttribute('alt', provider.name);
+  if (className) {
+    img.className = className;
+  }
+  img.dataset.providerId = provider.id;
+  return img;
+}
+
+function createIconButtonWithMarkup(className, title, staticIconMarkup) {
+  const button = document.createElement('button');
+  button.className = className;
+  button.title = title;
+  button.innerHTML = staticIconMarkup;
+  return button;
+}
+
+function createGoogleModeSelectElement(mode = currentGoogleProviderMode) {
   const normalizedMode = normalizeGoogleProviderMode(mode);
-  return `
-    <select class="panel-google-mode-select" title="Google mode">
-      <option value="${GOOGLE_PROVIDER_MODE_AI}" ${normalizedMode === GOOGLE_PROVIDER_MODE_AI ? 'selected' : ''}>AI Mode</option>
-      <option value="${GOOGLE_PROVIDER_MODE_SEARCH}" ${normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH ? 'selected' : ''}>Search</option>
-    </select>
-  `;
+  const select = document.createElement('select');
+  select.className = 'panel-google-mode-select';
+  select.title = 'Google mode';
+
+  const aiOption = document.createElement('option');
+  aiOption.value = GOOGLE_PROVIDER_MODE_AI;
+  aiOption.textContent = 'AI Mode';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_AI) {
+    aiOption.selected = true;
+  }
+
+  const searchOption = document.createElement('option');
+  searchOption.value = GOOGLE_PROVIDER_MODE_SEARCH;
+  searchOption.textContent = 'Search';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH) {
+    searchOption.selected = true;
+  }
+
+  select.append(aiOption, searchOption);
+  select.value = normalizedMode;
+  return select;
 }
 
 function fitPanelSelectWidth(select) {
@@ -434,25 +468,29 @@ function fitPanelSelectWidth(select) {
   )}px`;
 }
 
-function getPanelHeaderRightHtml(providerId) {
-  const googleModeSelect = isGoogleProvider(providerId)
-    ? getGoogleModeSelectHtml()
-    : '';
-
-  const openTopLevelBtn = `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open in new tab')}">
-      <span class="material-symbols-outlined">open_in_new</span>
-    </button>`;
-
-  return `
-    ${googleModeSelect}
-    ${openTopLevelBtn}
-    <button class="refresh-panel-btn" title="Refresh">
-      <span class="material-symbols-outlined">refresh</span>
-    </button>
-    <button class="switch-provider-btn" title="Switch Provider">
-      <span class="material-symbols-outlined">swap_horiz</span>
-    </button>
-  `;
+function populatePanelHeaderRight(headerRightEl, providerId) {
+  const children = [];
+  if (isGoogleProvider(providerId)) {
+    children.push(createGoogleModeSelectElement());
+  }
+  children.push(
+    createIconButtonWithMarkup(
+      'open-provider-top-level-btn',
+      getLocalizedText('openProviderTopLevelTitle', 'Open in new tab'),
+      '<span class="material-symbols-outlined">open_in_new</span>'
+    ),
+    createIconButtonWithMarkup(
+      'refresh-panel-btn',
+      'Refresh',
+      '<span class="material-symbols-outlined">refresh</span>'
+    ),
+    createIconButtonWithMarkup(
+      'switch-provider-btn',
+      'Switch Provider',
+      '<span class="material-symbols-outlined">swap_horiz</span>'
+    )
+  );
+  headerRightEl.replaceChildren(...children);
 }
 
 function syncGoogleModeControls() {
@@ -464,6 +502,14 @@ function syncGoogleModeControls() {
   });
 }
 
+function renderPanelLoadingContent(loadingEl, provider, messageText) {
+  const icon = createProviderIconImage(provider, 'loading-icon');
+  const textSpan = document.createElement('span');
+  textSpan.className = 'loading-text';
+  textSpan.textContent = messageText;
+  loadingEl.replaceChildren(icon, textSpan);
+}
+
 function showPanelLoadingState(panelEl, provider) {
   const loadingEl = panelEl.querySelector('.panel-loading');
   if (!loadingEl || !provider) {
@@ -471,7 +517,7 @@ function showPanelLoadingState(panelEl, provider) {
   }
 
   loadingEl.classList.remove('hidden');
-  loadingEl.innerHTML = `<img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}"><span class="loading-text">Loading ${provider.name}...</span>`;
+  renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
 }
 
 function reloadPanelIframe(panel, overrideUrl = null) {
@@ -1305,32 +1351,42 @@ async function addPanel(providerId) {
   const panelEl = document.createElement('div');
   panelEl.className = 'panel-item';
   panelEl.id = panelId;
-  panelEl.innerHTML = `
-    <div class="panel-header">
-      <div class="panel-header-left">
-        <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="provider-icon" data-provider-id="${provider.id}">
-        <span>${provider.name}</span>
-      </div>
-      <div class="panel-header-right">${getPanelHeaderRightHtml(providerId)}</div>
-    </div>
-    <div class="panel-iframe-container">
-      <div class="panel-loading">
-        <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}">
-        <span class="loading-text">Loading ${provider.name}...</span>
-      </div>
-      <iframe
-        src="${getProviderFrameUrl(providerId)}"
-        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-        allow="clipboard-read; clipboard-write"
-      ></iframe>
-    </div>
-  `;
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'panel-header';
+
+  const headerLeftEl = document.createElement('div');
+  headerLeftEl.className = 'panel-header-left';
+  const headerIconEl = createProviderIconImage(provider, 'provider-icon');
+  const headerNameEl = document.createElement('span');
+  headerNameEl.textContent = provider.name;
+  headerLeftEl.append(headerIconEl, headerNameEl);
+
+  const headerRightEl = document.createElement('div');
+  headerRightEl.className = 'panel-header-right';
+  populatePanelHeaderRight(headerRightEl, providerId);
+
+  headerEl.append(headerLeftEl, headerRightEl);
+
+  const iframeContainerEl = document.createElement('div');
+  iframeContainerEl.className = 'panel-iframe-container';
+
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'panel-loading';
+  renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('src', getProviderFrameUrl(providerId));
+  iframe.setAttribute(
+    'sandbox',
+    'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
+  );
+  iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+
+  iframeContainerEl.append(loadingEl, iframe);
+  panelEl.append(headerEl, iframeContainerEl);
 
   panelGrid.appendChild(panelEl);
-
-  // Get iframe reference
-  const iframe = panelEl.querySelector('iframe');
-  const loadingEl = panelEl.querySelector('.panel-loading');
 
   // Handle iframe load
   // Grace period after load to catch AI pages that auto-focus after JS init
@@ -1348,7 +1404,9 @@ async function addPanel(providerId) {
   });
 
   iframe.addEventListener('error', () => {
-    loadingEl.innerHTML = `<img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}"><span class="loading-text">Failed to load ${provider.name}</span>`;
+    const currentPanel = panels.find(p => p.id === panelId);
+    const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
+    renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
     loadingPanelIds.delete(panelId);
   });
 
@@ -1442,11 +1500,11 @@ async function switchPanelProvider(panelId, newProviderId) {
   const headerIcon = panelEl.querySelector('.panel-header-left img');
   const headerName = panelEl.querySelector('.panel-header-left span');
   const headerRight = panelEl.querySelector('.panel-header-right');
-  headerIcon.src = getThemeAwareProviderIcon(provider);
+  headerIcon.setAttribute('src', getThemeAwareProviderIcon(provider));
   headerIcon.dataset.providerId = provider.id;
-  headerIcon.alt = provider.name;
+  headerIcon.setAttribute('alt', provider.name);
   headerName.textContent = provider.name;
-  headerRight.innerHTML = getPanelHeaderRightHtml(newProviderId);
+  populatePanelHeaderRight(headerRight, newProviderId);
 
   // Update iframe
   const iframe = panelEl.querySelector('iframe');
@@ -1467,7 +1525,7 @@ async function switchPanelProvider(panelId, newProviderId) {
 
 function updatePanelSelectors() {
   const selectorsContainer = document.getElementById('panel-selectors');
-  selectorsContainer.innerHTML = '';
+  selectorsContainer.replaceChildren();
 
   panels.forEach(panel => {
     const provider = getProviderById(panel.providerId);
@@ -1476,16 +1534,19 @@ function updatePanelSelectors() {
     const selector = document.createElement('div');
     selector.className = 'panel-selector';
     selector.dataset.panelId = panel.id;
-    selector.innerHTML = `
-      <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="provider-icon" data-provider-id="${provider.id}">
-      <span>${provider.name}</span>
-      <button class="remove-panel" title="Remove panel">
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    `;
+
+    const icon = createProviderIconImage(provider, 'provider-icon');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = provider.name;
+    const removeBtn = createIconButtonWithMarkup(
+      'remove-panel',
+      'Remove panel',
+      '<span class="material-symbols-outlined">close</span>'
+    );
+
+    selector.append(icon, nameSpan, removeBtn);
 
     // Remove button handler
-    const removeBtn = selector.querySelector('.remove-panel');
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (panels.length > 1) {
@@ -3417,21 +3478,30 @@ async function showProviderSwitcher(panelId) {
     padding: 8px 0;
   `;
 
-  menu.innerHTML = enabledProviders.map(provider => `
-    <div class="provider-switcher-item" data-provider-id="${provider.id}" style="
+  enabledProviders.forEach(provider => {
+    const isSelected = provider.id === panel.providerId;
+    const item = document.createElement('div');
+    item.className = 'provider-switcher-item';
+    item.dataset.providerId = provider.id;
+    item.style.cssText = `
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
       cursor: pointer;
       font-size: 14px;
-      color: ${provider.id === panel.providerId ? palette.selectedText : palette.menuText};
-      ${provider.id === panel.providerId ? `background: ${palette.selectedBackground};` : ''}
-    ">
-      <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" style="width: 20px; height: 20px;" data-provider-id="${provider.id}">
-      <span>${provider.name}</span>
-    </div>
-  `).join('');
+      color: ${isSelected ? palette.selectedText : palette.menuText};
+      ${isSelected ? `background: ${palette.selectedBackground};` : ''}
+    `;
+
+    const icon = createProviderIconImage(provider);
+    icon.style.cssText = 'width: 20px; height: 20px;';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = provider.name;
+
+    item.append(icon, nameSpan);
+    menu.appendChild(item);
+  });
 
   // Position menu near the panel
   const panelEl = document.getElementById(panelId);
@@ -3513,8 +3583,11 @@ async function showAddPanelMenu() {
     padding: 8px 0;
   `;
 
-  menu.innerHTML = availableProviders.map(provider => `
-    <div class="add-panel-item" data-provider-id="${provider.id}" style="
+  availableProviders.forEach(provider => {
+    const item = document.createElement('div');
+    item.className = 'add-panel-item';
+    item.dataset.providerId = provider.id;
+    item.style.cssText = `
       display: flex;
       align-items: center;
       gap: 8px;
@@ -3522,11 +3595,16 @@ async function showAddPanelMenu() {
       cursor: pointer;
       font-size: 14px;
       color: ${palette.menuText};
-    ">
-      <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" style="width: 20px; height: 20px;" data-provider-id="${provider.id}">
-      <span>${provider.name}</span>
-    </div>
-  `).join('');
+    `;
+
+    const icon = createProviderIconImage(provider);
+    icon.style.cssText = 'width: 20px; height: 20px;';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = provider.name;
+
+    item.append(icon, nameSpan);
+    menu.appendChild(item);
+  });
 
   document.body.appendChild(menu);
 
