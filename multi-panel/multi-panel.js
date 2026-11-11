@@ -224,7 +224,8 @@ const TEMP_CHAT_NORMAL_URLS = {
   gemini: 'https://gemini.google.com/',
   grok: 'https://grok.com/',
   yuanbao: getProviderById('yuanbao').url,
-  aistudio: 'https://aistudio.google.com/prompts/new_chat'
+  // AI Studio keeps temporary mode sticky; only ?temporary=false turns it off.
+  aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=false'
 };
 let isInitialized = false;
 

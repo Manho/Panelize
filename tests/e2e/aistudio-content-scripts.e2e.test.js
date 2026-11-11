@@ -13,9 +13,19 @@ const SAMPLE_IMAGE = {
   dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII=',
 };
 
+// Live AI Studio persists temporary mode in aiStudioUserPreference: ?temporary=true turns it on,
+// a bare /prompts/new_chat keeps the last mode, and only ?temporary=false turns it off.
+let aiStudioStickyTemporary = false;
+
 function renderAiStudioFixture(requestUrl) {
   const url = new URL(requestUrl);
-  const isTemporary = url.searchParams.get('temporary') === 'true';
+  const temporaryParam = url.searchParams.get('temporary');
+  if (temporaryParam === 'true') {
+    aiStudioStickyTemporary = true;
+  } else if (temporaryParam === 'false') {
+    aiStudioStickyTemporary = false;
+  }
+  const isTemporary = aiStudioStickyTemporary;
   return `<!doctype html>
 <html>
   <head>
@@ -199,6 +209,7 @@ test.describe('Google AI Studio production content scripts', () => {
 
   test.beforeEach(async () => {
     requestedUrls = [];
+    aiStudioStickyTemporary = false;
     await ensureAiStudioEnabledAndRegistered(extension, ['aistudio']);
     await extension.serviceWorker.evaluate(async () => {
       await chrome.storage.sync.set({
@@ -262,18 +273,18 @@ test.describe('Google AI Studio production content scripts', () => {
     await page.close();
   });
 
-  test('loads normal URL /prompts/new_chat and switches to /prompts/new_chat?temporary=true and back on Privacy Mode toggle', async () => {
+  test('loads normal URL /prompts/new_chat?temporary=false and switches to ?temporary=true and back on Privacy Mode toggle', async () => {
     const page = await openMultiPanel(extension, { providers: ['aistudio'] });
     const tempBtn = page.locator('#temporary-chat-btn');
 
     await expect.poll(() => requestedUrls).toEqual([
-      'https://aistudio.google.com/prompts/new_chat',
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
     ]);
 
     const panelFrame = () => page.frames().find(
       (frame) => URL.canParse(frame.url()) && new URL(frame.url()).host === 'aistudio.google.com'
     );
-    await expect.poll(() => panelFrame()?.url()).toBe('https://aistudio.google.com/prompts/new_chat');
+    await expect.poll(() => panelFrame()?.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
 
     // Toggle Privacy Mode ON -> switches iframe to ?temporary=true
     await tempBtn.click();
@@ -282,10 +293,10 @@ test.describe('Google AI Studio production content scripts', () => {
     await expect(page.frameLocator('#panel-grid iframe').locator('ms-incognito-mode-indicator')).toBeVisible();
     await expect(tempBtn).toBeEnabled();
 
-    // Toggle Privacy Mode OFF -> switches iframe back to /prompts/new_chat
+    // Toggle Privacy Mode OFF -> must opt out explicitly because AI Studio keeps temporary mode sticky
     await tempBtn.click();
     await expect(tempBtn).toHaveAttribute('aria-pressed', 'false');
-    await expect.poll(() => panelFrame()?.url()).toBe('https://aistudio.google.com/prompts/new_chat');
+    await expect.poll(() => panelFrame()?.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
     await expect(page.frameLocator('#panel-grid iframe').locator('ms-incognito-mode-indicator')).toHaveCount(0);
 
     await page.close();
@@ -369,12 +380,12 @@ test.describe('Google AI Studio production content scripts', () => {
       'https://aistudio.google.com/prompts/saved-conversation-123'
     );
 
-    // Normal mode NEW_CHAT -> /prompts/new_chat without clicking clear button modal trigger
+    // Normal mode NEW_CHAT -> /prompts/new_chat?temporary=false without clicking clear button modal trigger
     await postPanelMessage(page, {
       type: 'NEW_CHAT',
       temporaryChat: false,
     });
-    await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat');
+    await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
     await frame.waitForSelector('ms-prompt-box textarea[formcontrolname="promptText"]');
     expect(await frame.evaluate(() => window.__clearButtonClicks)).toBe(0);
 
@@ -394,12 +405,13 @@ test.describe('Google AI Studio production content scripts', () => {
     await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=true');
     await frame.waitForSelector('ms-incognito-mode-indicator');
 
-    // Explicit temporaryChat: false returns to normal /prompts/new_chat
+    // Explicit temporaryChat: false opts out of sticky temporary mode
     await postPanelMessage(page, {
       type: 'NEW_CHAT',
       temporaryChat: false,
     });
-    await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat');
+    await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
+    await expect.poll(() => frame.locator('ms-incognito-mode-indicator').count()).toBe(0);
 
     await page.close();
   });

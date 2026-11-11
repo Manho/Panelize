@@ -174,6 +174,48 @@ describe('temporary chat content script', () => {
     ]);
   });
 
+  it('clicks the current Gemini "Turn on temporary chat" control without data-test-id', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <button aria-label="Listen">Listen</button>
+      <button aria-label="Turn on temporary chat" class="mdc-icon-button mat-mdc-icon-button mat-badge mat-unthemed mat-badge-hidden"></button>
+    `;
+    const button = document.querySelector('button[aria-label="Turn on temporary chat"]');
+    markVisible(button);
+    markVisible(document.querySelector('button[aria-label="Listen"]'));
+
+    const clickSpy = vi.fn();
+    button.addEventListener('click', clickSpy);
+
+    dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT', context: 'multi-panel' });
+    await wait(50);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(getTemporaryChatEnabledCalls(window.parent.postMessage)).toEqual([
+      expect.objectContaining({ provider: 'gemini' })
+    ]);
+  });
+
+  it('does not click Gemini when the current control already reads "Turn off temporary chat"', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <button aria-label="Turn off temporary chat" class="mdc-icon-button mat-mdc-icon-button mat-badge mat-unthemed mat-badge-hidden"></button>
+    `;
+    const button = document.querySelector('button');
+    markVisible(button);
+
+    const clickSpy = vi.fn();
+    button.addEventListener('click', clickSpy);
+
+    dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT', context: 'multi-panel' });
+    await wait(50);
+
+    expect(clickSpy).not.toHaveBeenCalled();
+    expect(getTemporaryChatEnabledCalls(window.parent.postMessage)).toEqual([
+      expect.objectContaining({ provider: 'gemini' })
+    ]);
+  });
+
   it('enables incognito for Claude', async () => {
     window.happyDOM.setURL('https://claude.ai/new');
     document.body.innerHTML = '<button aria-label="Use incognito">Incognito</button>';

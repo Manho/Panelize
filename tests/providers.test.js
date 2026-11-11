@@ -67,7 +67,7 @@ describe('providers module', () => {
       });
       expect(getProviderById('aistudio')).toMatchObject({
         name: 'Google AI Studio',
-        url: 'https://aistudio.google.com/prompts/new_chat',
+        url: 'https://aistudio.google.com/prompts/new_chat?temporary=false',
         topLevelUrl: 'https://aistudio.google.com/prompts/new_chat',
         icon: '/icons/providers/aistudio.svg',
         iconDark: '/icons/providers/dark/aistudio.svg',

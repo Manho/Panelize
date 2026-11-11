@@ -93,7 +93,7 @@ test.describe('Temporary chat E2E', () => {
 
   async function geminiTemporaryChatOn() {
     return providerFrame('gemini').evaluate(() => (
-      document.querySelector('[data-test-id="temp-chat-button"]')?.classList.contains('temp-chat-on') === true
+      Boolean(document.querySelector('button[aria-label="Turn off temporary chat"]'))
     ));
   }
 
@@ -201,7 +201,7 @@ test.describe('Temporary chat E2E', () => {
 
     await temporaryChatButton().click();
     await expect.poll(() => requestedUrls).toEqual([
-      'https://aistudio.google.com/prompts/new_chat',
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
       'https://aistudio.google.com/prompts/new_chat?temporary=true',
     ]);
     await expect(page.locator('#new-chat-btn')).toBeEnabled();
@@ -209,7 +209,7 @@ test.describe('Temporary chat E2E', () => {
     await page.click('#new-chat-btn');
 
     await expect.poll(() => requestedUrls).toEqual([
-      'https://aistudio.google.com/prompts/new_chat',
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
       'https://aistudio.google.com/prompts/new_chat?temporary=true',
       'https://aistudio.google.com/prompts/new_chat?temporary=true',
     ]);
@@ -220,10 +220,10 @@ test.describe('Temporary chat E2E', () => {
 
     await expect(temporaryChatButton()).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(() => requestedUrls).toEqual([
-      'https://aistudio.google.com/prompts/new_chat',
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
       'https://aistudio.google.com/prompts/new_chat?temporary=true',
       'https://aistudio.google.com/prompts/new_chat?temporary=true',
-      'https://aistudio.google.com/prompts/new_chat',
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
     ]);
   });
 

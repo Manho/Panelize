@@ -102,7 +102,9 @@
     'ms-run-button button[aria-label*="Cancel generation" i]',
     'ms-run-button button[aria-label*="Stop" i]'
   ];
-  const AISTUDIO_NEW_CHAT_URL = 'https://aistudio.google.com/prompts/new_chat';
+  // AI Studio remembers temporary mode across visits (aiStudioUserPreference), so a bare
+  // /prompts/new_chat stays temporary after ?temporary=true. Normal mode must opt out explicitly.
+  const AISTUDIO_NEW_CHAT_URL = 'https://aistudio.google.com/prompts/new_chat?temporary=false';
   const AISTUDIO_TEMP_CHAT_URL = 'https://aistudio.google.com/prompts/new_chat?temporary=true';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
   const CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS = 2000;
@@ -478,7 +480,7 @@
     'zai-global': 'https://chat.z.ai/',
     // Keep this in sync with YUANBAO_DEFAULT_URL in modules/providers.js.
     yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
-    aistudio: 'https://aistudio.google.com/prompts/new_chat',
+    aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=false',
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -487,7 +489,10 @@
     claude: ['button[aria-label="Use incognito"]'],
     gemini: [
       'button[data-test-id="temp-chat-button"]',
-      'button[aria-label="Temporary chat"]'
+      'button[aria-label="Temporary chat"]',
+      // Current Gemini header exposes a stateful aria-label instead of data-test-id.
+      'button[aria-label="Turn on temporary chat"]',
+      'button[aria-label="Turn off temporary chat"]'
     ],
     grok: ['a[href="/c#private"][aria-label="Switch to Private Chat"]'],
     yuanbao: [
@@ -1753,6 +1758,10 @@
   }
 
   function isGeminiTemporaryChatEnabled(control = null) {
+    if (document.querySelector('button[aria-label="Turn off temporary chat"]')) {
+      return true;
+    }
+
     const button = control ||
       document.querySelector('button[data-test-id="temp-chat-button"]') ||
       document.querySelector('button[aria-label="Temporary chat"]');
@@ -1761,7 +1770,11 @@
       return false;
     }
 
-    return button.classList.contains('temp-chat-on') || isTemporaryChatControlActive(button);
+    return (
+      button.getAttribute('aria-label') === 'Turn off temporary chat' ||
+      button.classList.contains('temp-chat-on') ||
+      isTemporaryChatControlActive(button)
+    );
   }
 
   function isAiStudioTemporaryChatEnabled(control = null) {

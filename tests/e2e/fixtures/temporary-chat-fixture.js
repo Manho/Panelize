@@ -56,14 +56,15 @@ export function renderTemporaryChatFixture(provider, { tempButtonDelayMs = 0 } =
       slot.innerHTML = '';
       clearTimeout(tempButtonTimerId);
       tempButtonTimerId = setTimeout(() => {
+        // Mirrors the live Gemini header: no data-test-id, only a stateful aria-label.
         const button = document.createElement('button');
         button.type = 'button';
-        button.dataset.testId = 'temp-chat-button';
-        button.setAttribute('aria-label', 'Temporary chat');
-        button.textContent = 'Temporary chat';
+        button.className = 'mdc-icon-button mat-mdc-icon-button mat-badge mat-unthemed mat-badge-hidden';
+        button.setAttribute('aria-label', 'Turn on temporary chat');
         button.addEventListener('click', () => {
           window.__fixture.tempChatClicks += 1;
-          button.classList.toggle('temp-chat-on');
+          const isOn = button.getAttribute('aria-label') === 'Turn off temporary chat';
+          button.setAttribute('aria-label', isOn ? 'Turn on temporary chat' : 'Turn off temporary chat');
         });
         slot.appendChild(button);
       }, tempButtonDelayMs);

@@ -393,7 +393,21 @@ describe('Google AI Studio content script integration', () => {
       });
 
       expect(clearClickSpy).not.toHaveBeenCalled();
-      expect(window.location.href).toBe('https://aistudio.google.com/prompts/new_chat');
+      // AI Studio keeps temporary mode sticky, so normal mode must opt out explicitly.
+      expect(window.location.href).toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
+    });
+
+    it('opts out of sticky AI Studio temporary mode on NEW_CHAT with temporaryChat false', () => {
+      window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat');
+      createAiStudioComposerDom({ incognitoActive: true });
+
+      dispatchMultiPanelMessage({
+        type: 'NEW_CHAT',
+        context: 'multi-panel',
+        temporaryChat: false
+      });
+
+      expect(window.location.href).toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
     });
 
     it('navigates directly to /prompts/new_chat?temporary=true when temporaryChat is true', () => {
@@ -559,7 +573,7 @@ describe('Google AI Studio content script integration', () => {
         expect(table.aistudio).toBeTruthy();
       }
       expect(readContentScriptSelectorTable('NEW_CHAT_URLS').aistudio)
-        .toBe('https://aistudio.google.com/prompts/new_chat');
+        .toBe('https://aistudio.google.com/prompts/new_chat?temporary=false');
     });
   });
 });
