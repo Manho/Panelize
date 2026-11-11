@@ -8,6 +8,24 @@
 
 const YUANBAO_DEFAULT_URL = 'https://yuanbao.tencent.com/chat/naQivTmsDa';
 
+export const CUSTOM_PROVIDER_ID_PATTERN = /^custom-[0-9a-f]{10}$/;
+export const CUSTOM_FRAME_RULE_ID_MIN = 10000;
+export const CUSTOM_FRAME_RULE_ID_MAX = 19999;
+
+const DEFAULT_BUILTIN_CAPABILITIES = Object.freeze({
+  imageUpload: true,
+  inPageNewChat: true,
+  snapshotStitch: true
+});
+
+const DEFAULT_CUSTOM_CAPABILITIES = Object.freeze({
+  imageUpload: false,
+  inPageNewChat: false,
+  snapshotStitch: false
+});
+
+const frozenDescriptors = new WeakSet();
+
 function createOptionalContentScriptSpec(matchPattern, enterBehaviorScript) {
   return Object.freeze({
     matches: Object.freeze([matchPattern]),
@@ -46,8 +64,15 @@ function freezeDescriptor(descriptor) {
         retry: Boolean(descriptor.tempChat.retry)
       })
     : null;
+  const rawCapabilities = descriptor.capabilities
+    ?? (descriptor.access === 'custom' ? DEFAULT_CUSTOM_CAPABILITIES : DEFAULT_BUILTIN_CAPABILITIES);
+  const frozenCapabilities = Object.freeze({
+    imageUpload: Boolean(rawCapabilities.imageUpload),
+    inPageNewChat: Boolean(rawCapabilities.inPageNewChat),
+    snapshotStitch: Boolean(rawCapabilities.snapshotStitch)
+  });
 
-  return Object.freeze({
+  const frozen = Object.freeze({
     id: descriptor.id,
     name: descriptor.name,
     url: descriptor.url,
@@ -61,8 +86,11 @@ function freezeDescriptor(descriptor) {
     permissionOrigins: frozenPermissionOrigins,
     contentScript: frozenContentScript,
     frameRule: frozenFrameRule,
-    tempChat: frozenTempChat
+    tempChat: frozenTempChat,
+    capabilities: frozenCapabilities
   });
+  frozenDescriptors.add(frozen);
+  return frozen;
 }
 
 function isHttpOrHttpsUrl(rawUrl) {
@@ -143,13 +171,21 @@ export function validateProviderDescriptor(
   }
 
   const { id } = descriptor;
+  const isCustom = descriptor.access === 'custom';
   if (typeof id !== 'string' || id.trim().length === 0 || id !== id.trim()) {
     errors.push('Descriptor id must be a non-empty trimmed string');
-  } else if (seenIds instanceof Set) {
-    if (seenIds.has(id)) {
-      errors.push(`Duplicate provider id: "${id}"`);
-    } else {
-      seenIds.add(id);
+  } else {
+    if (isCustom && !CUSTOM_PROVIDER_ID_PATTERN.test(id)) {
+      errors.push(`Provider "${id}": custom provider id must match /^custom-[0-9a-f]{10}$/`);
+    } else if (!isCustom && id.startsWith('custom-')) {
+      errors.push(`Provider "${id}": non-custom provider id must not start with "custom-"`);
+    }
+    if (seenIds instanceof Set) {
+      if (seenIds.has(id)) {
+        errors.push(`Duplicate provider id: "${id}"`);
+      } else {
+        seenIds.add(id);
+      }
     }
   }
 
@@ -177,13 +213,23 @@ export function validateProviderDescriptor(
     errors.push(`Provider "${id || '<unnamed>'}": enabled must be a boolean`);
   }
 
-  if (descriptor.access !== 'builtin' && descriptor.access !== 'optional') {
-    errors.push(`Provider "${id || '<unnamed>'}": access must be "builtin" or "optional"`);
+  if (
+    descriptor.access !== 'builtin' &&
+    descriptor.access !== 'optional' &&
+    descriptor.access !== 'custom'
+  ) {
+    errors.push(
+      `Provider "${id || '<unnamed>'}": access must be "builtin", "optional", or "custom"`
+    );
   }
 
+  let customOrigin = null;
   if (!Array.isArray(descriptor.frameOrigins) || descriptor.frameOrigins.length === 0) {
     errors.push(`Provider "${id || '<unnamed>'}": frameOrigins must be a non-empty array`);
   } else {
+    if (isCustom && descriptor.frameOrigins.length !== 1) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom provider frameOrigins must contain exactly one origin`);
+    }
     for (const origin of descriptor.frameOrigins) {
       if (!isExactHttpOrigin(origin)) {
         errors.push(
@@ -191,9 +237,25 @@ export function validateProviderDescriptor(
         );
       }
     }
+    if (isCustom && isExactHttpOrigin(descriptor.frameOrigins[0])) {
+      customOrigin = descriptor.frameOrigins[0];
+      if (isHttpOrHttpsUrl(descriptor.url) && new URL(descriptor.url).origin !== customOrigin) {
+        errors.push(`Provider "${id || '<unnamed>'}": custom provider url origin must match frameOrigins[0]`);
+      }
+      if (
+        isHttpOrHttpsUrl(descriptor.topLevelUrl) &&
+        new URL(descriptor.topLevelUrl).origin !== customOrigin
+      ) {
+        errors.push(`Provider "${id || '<unnamed>'}": custom provider topLevelUrl origin must match frameOrigins[0]`);
+      }
+    }
   }
 
-  if (!Array.isArray(descriptor.allowedHosts) || descriptor.allowedHosts.length === 0) {
+  if (isCustom) {
+    if (!Array.isArray(descriptor.allowedHosts) || descriptor.allowedHosts.length !== 0) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom provider allowedHosts must be an empty array`);
+    }
+  } else if (!Array.isArray(descriptor.allowedHosts) || descriptor.allowedHosts.length === 0) {
     errors.push(`Provider "${id || '<unnamed>'}": allowedHosts must be a non-empty array`);
   } else {
     for (const host of descriptor.allowedHosts) {
@@ -215,10 +277,25 @@ export function validateProviderDescriptor(
         `Provider "${id || '<unnamed>'}": optional provider permissionOrigins must be a non-empty array of http(s) origin/* patterns`
       );
     }
+  } else if (isCustom) {
+    if (
+      !Array.isArray(descriptor.permissionOrigins) ||
+      descriptor.permissionOrigins.length !== 1 ||
+      !isOriginMatchPattern(descriptor.permissionOrigins[0]) ||
+      (customOrigin !== null && descriptor.permissionOrigins[0] !== `${customOrigin}/*`)
+    ) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": custom provider permissionOrigins must be ["<origin>/*"]`
+      );
+    }
   } else if (descriptor.permissionOrigins !== null && descriptor.permissionOrigins !== undefined) {
     errors.push(
       `Provider "${id || '<unnamed>'}": builtin provider permissionOrigins must be null`
     );
+  }
+
+  if (isCustom && (descriptor.contentScript === null || descriptor.contentScript === undefined)) {
+    errors.push(`Provider "${id || '<unnamed>'}": custom provider contentScript is required`);
   }
 
   if (descriptor.contentScript !== null && descriptor.contentScript !== undefined) {
@@ -235,7 +312,19 @@ export function validateProviderDescriptor(
       errors.push(
         `Provider "${id || '<unnamed>'}": contentScript must specify non-empty matches and js arrays`
       );
+    } else if (
+      isCustom &&
+      customOrigin !== null &&
+      (cs.matches.length !== 1 || cs.matches[0] !== `${customOrigin}/*`)
+    ) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": custom provider contentScript.matches must be ["<origin>/*"]`
+      );
     }
+  }
+
+  if (isCustom && (descriptor.frameRule === null || descriptor.frameRule === undefined)) {
+    errors.push(`Provider "${id || '<unnamed>'}": custom provider frameRule is required`);
   }
 
   if (descriptor.frameRule !== null && descriptor.frameRule !== undefined) {
@@ -250,16 +339,36 @@ export function validateProviderDescriptor(
       errors.push(
         `Provider "${id || '<unnamed>'}": frameRule must have a positive integer id and non-empty urlFilter`
       );
-    } else if (seenFrameRuleIds instanceof Set) {
-      if (seenFrameRuleIds.has(rule.id)) {
-        errors.push(`Duplicate frameRule id: ${rule.id}`);
-      } else {
-        seenFrameRuleIds.add(rule.id);
+    } else {
+      if (isCustom) {
+        if (rule.id < CUSTOM_FRAME_RULE_ID_MIN || rule.id > CUSTOM_FRAME_RULE_ID_MAX) {
+          errors.push(
+            `Provider "${id || '<unnamed>'}": custom provider frameRule.id must be in ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX}`
+          );
+        }
+        if (customOrigin !== null && rule.urlFilter !== `|${customOrigin}/`) {
+          errors.push(
+            `Provider "${id || '<unnamed>'}": custom provider frameRule.urlFilter must be "|${customOrigin}/"`
+          );
+        }
+      } else if (rule.id >= CUSTOM_FRAME_RULE_ID_MIN && rule.id <= CUSTOM_FRAME_RULE_ID_MAX) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": non-custom frameRule.id must not fall in reserved custom range ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX}`
+        );
+      }
+      if (seenFrameRuleIds instanceof Set) {
+        if (seenFrameRuleIds.has(rule.id)) {
+          errors.push(`Duplicate frameRule id: ${rule.id}`);
+        } else {
+          seenFrameRuleIds.add(rule.id);
+        }
       }
     }
   }
 
-  if (descriptor.tempChat !== null && descriptor.tempChat !== undefined) {
+  if (isCustom && descriptor.tempChat !== null) {
+    errors.push(`Provider "${id || '<unnamed>'}": custom provider tempChat must be null`);
+  } else if (descriptor.tempChat !== null && descriptor.tempChat !== undefined) {
     const tc = descriptor.tempChat;
     if (
       typeof tc !== 'object' ||
@@ -269,6 +378,25 @@ export function validateProviderDescriptor(
     ) {
       errors.push(
         `Provider "${id || '<unnamed>'}": tempChat must have nullable http(s) url, http(s) normalUrl, and boolean retry`
+      );
+    }
+  }
+
+  if (isCustom && (descriptor.capabilities === null || descriptor.capabilities === undefined)) {
+    errors.push(`Provider "${id || '<unnamed>'}": custom provider capabilities is required`);
+  }
+
+  if (descriptor.capabilities !== null && descriptor.capabilities !== undefined) {
+    const cap = descriptor.capabilities;
+    if (
+      typeof cap !== 'object' ||
+      Array.isArray(cap) ||
+      typeof cap.imageUpload !== 'boolean' ||
+      typeof cap.inPageNewChat !== 'boolean' ||
+      typeof cap.snapshotStitch !== 'boolean'
+    ) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": capabilities must specify boolean imageUpload, inPageNewChat, and snapshotStitch`
       );
     }
   }
@@ -315,7 +443,9 @@ export function createProviderRegistry(descriptors) {
 
   const byId = new Map();
   for (const rawDescriptor of descriptors) {
-    const frozen = Object.isFrozen(rawDescriptor) ? rawDescriptor : freezeDescriptor(rawDescriptor);
+    const frozen = frozenDescriptors.has(rawDescriptor)
+      ? rawDescriptor
+      : freezeDescriptor(rawDescriptor);
     byId.set(frozen.id, frozen);
   }
 
@@ -353,7 +483,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       url: 'https://chatgpt.com/?temporary-chat=true',
       normalUrl: 'https://chatgpt.com/',
       retry: false
-    }
+    },
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'claude',
@@ -373,7 +504,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       url: 'https://claude.ai/new?incognito',
       normalUrl: 'https://claude.ai/new',
       retry: false
-    }
+    },
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'gemini',
@@ -393,7 +525,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       url: null,
       normalUrl: 'https://gemini.google.com/',
       retry: true
-    }
+    },
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'grok',
@@ -413,7 +546,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       url: 'https://grok.com/c#private',
       normalUrl: 'https://grok.com/',
       retry: true
-    }
+    },
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'deepseek',
@@ -429,7 +563,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
     permissionOrigins: null,
     contentScript: null,
     frameRule: null,
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'kimi',
@@ -445,7 +580,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
     permissionOrigins: null,
     contentScript: null,
     frameRule: null,
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'google',
@@ -461,7 +597,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
     permissionOrigins: null,
     contentScript: null,
     frameRule: null,
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'doubao',
@@ -477,7 +614,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
     permissionOrigins: null,
     contentScript: null,
     frameRule: null,
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'qwen-cn',
@@ -499,7 +637,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       id: 1001,
       urlFilter: 'https://www.qianwen.com/*'
     },
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'qwen-global',
@@ -521,7 +660,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       id: 1002,
       urlFilter: 'https://chat.qwen.ai/*'
     },
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'chatglm',
@@ -543,7 +683,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       id: 1003,
       urlFilter: 'https://chatglm.cn/*'
     },
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'zai-global',
@@ -565,7 +706,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       id: 1004,
       urlFilter: 'https://chat.z.ai/*'
     },
-    tempChat: null
+    tempChat: null,
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'yuanbao',
@@ -588,7 +730,8 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       url: null,
       normalUrl: YUANBAO_DEFAULT_URL,
       retry: true
-    }
+    },
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   }),
   freezeDescriptor({
     id: 'aistudio',
@@ -618,13 +761,26 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
       url: 'https://aistudio.google.com/prompts/new_chat?temporary=true',
       normalUrl: 'https://aistudio.google.com/prompts/new_chat?temporary=false',
       retry: false
-    }
+    },
+    capabilities: DEFAULT_BUILTIN_CAPABILITIES
   })
 ]);
 
 const builtinRegistry = createProviderRegistry(BUILTIN_PROVIDER_DESCRIPTORS);
+let customDescriptors = [];
 let extraDescriptors = [];
 let activeRegistry = builtinRegistry;
+
+function rebuildActiveRegistry(nextCustom, nextExtra) {
+  if (nextCustom.length === 0 && nextExtra.length === 0) {
+    return builtinRegistry;
+  }
+  return createProviderRegistry([
+    ...BUILTIN_PROVIDER_DESCRIPTORS,
+    ...nextCustom,
+    ...nextExtra
+  ]);
+}
 
 export const defaultProviderRegistry = Object.freeze({
   list() {
@@ -671,10 +827,36 @@ export function getTemporaryChatNormalUrl(providerId) {
 }
 
 /**
- * Merges extra provider descriptors after the built-in descriptors in the
- * module-level default registry.
+ * Atomically replaces the custom provider descriptor set in the module-level
+ * default registry.
  *
- * Test-only hook in M1: no shipped product code path may call this function.
+ * @param {object[]} descriptors
+ */
+export function setCustomProviderDescriptors(descriptors) {
+  if (!Array.isArray(descriptors)) {
+    throw new Error('Custom provider descriptors must be an array');
+  }
+  for (const descriptor of descriptors) {
+    if (!descriptor || typeof descriptor !== 'object' || descriptor.access !== 'custom') {
+      throw new Error(
+        'setCustomProviderDescriptors only accepts descriptors with access: "custom"'
+      );
+    }
+  }
+  const nextRegistry = rebuildActiveRegistry(descriptors, extraDescriptors);
+  const allDescriptors = nextRegistry.list();
+  customDescriptors = allDescriptors.slice(
+    BUILTIN_PROVIDER_DESCRIPTORS.length,
+    BUILTIN_PROVIDER_DESCRIPTORS.length + descriptors.length
+  );
+  activeRegistry = nextRegistry;
+}
+
+/**
+ * Merges extra provider descriptors after the built-in and custom descriptors
+ * in the module-level default registry.
+ *
+ * Test-only hook: no shipped product code path may call this function.
  *
  * @param {object[]} descriptors
  */
@@ -683,21 +865,21 @@ export function registerExtraProviderDescriptors(descriptors) {
     throw new Error('Extra provider descriptors must be an array');
   }
   const mergedExtra = [...extraDescriptors, ...descriptors];
-  const nextRegistry = createProviderRegistry([
-    ...BUILTIN_PROVIDER_DESCRIPTORS,
-    ...mergedExtra
-  ]);
-  extraDescriptors = nextRegistry.list().slice(BUILTIN_PROVIDER_DESCRIPTORS.length);
+  const nextRegistry = rebuildActiveRegistry(customDescriptors, mergedExtra);
+  const allDescriptors = nextRegistry.list();
+  extraDescriptors = allDescriptors.slice(
+    BUILTIN_PROVIDER_DESCRIPTORS.length + customDescriptors.length
+  );
   activeRegistry = nextRegistry;
 }
 
 /**
- * Restores the module-level default registry to contain only the built-in
- * provider descriptors.
+ * Removes test-only extra provider descriptors while preserving built-in and
+ * hydrated custom descriptors.
  *
- * Test-only hook in M1: no shipped product code path may call this function.
+ * Test-only hook: no shipped product code path may call this function.
  */
 export function resetExtraProviderDescriptors() {
   extraDescriptors = [];
-  activeRegistry = builtinRegistry;
+  activeRegistry = rebuildActiveRegistry(customDescriptors, []);
 }

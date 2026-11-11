@@ -6,7 +6,6 @@
  */
 
 import {
-  PROVIDERS,
   getProviderById,
   getEnabledProviders,
   getProviderIcon,
@@ -16,6 +15,15 @@ import {
   isUrlDrivenTemporaryChatProvider,
   requiresTemporaryChatActivationRetry
 } from '../modules/providers.js';
+import {
+  getProviderDescriptor,
+  hasProviderDescriptor
+} from '../modules/provider-registry.js';
+import {
+  loadCustomProviders,
+  subscribeCustomProvidersChanged
+} from '../modules/custom-providers.js';
+import { preserveForeignCustomIds } from '../modules/provider-order.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
 import {
@@ -232,6 +240,7 @@ function normalizeLayout(layout) {
 // ===== Initialization =====
 async function init() {
   document.addEventListener('panelize:themechange', refreshThemeAwareProviderIcons);
+  await loadCustomProviders();
   await applyTheme();
   await initializeLanguage();
   translatePage();
@@ -357,8 +366,11 @@ function postToPanelFrame(panel, message) {
   if (!target) {
     return;
   }
+  const payload = getProviderDescriptor(panel.providerId)?.access === 'custom'
+    ? { ...message, providerId: panel.providerId }
+    : message;
   getProviderFrameOrigins(panel.providerId).forEach((origin) => {
-    target.postMessage(message, origin);
+    target.postMessage(payload, origin);
   });
 }
 
@@ -624,6 +636,11 @@ function registerStorageChangeListener() {
   if (!chrome?.storage?.onChanged?.addListener) {
     return;
   }
+
+  subscribeCustomProvidersChanged(() => {
+    updatePanelSelectors();
+    refreshThemeAwareProviderIcons();
+  });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'sync' && areaName !== 'local') {
@@ -1248,7 +1265,13 @@ async function restoreStateIfNeeded() {
       // 恢复面板配置（保存到 multiPanelProviders）
       if (state.panels && state.panels.length > 0) {
         const providerIds = state.panels.map(p => p.providerId);
-        await chrome.storage.sync.set({ multiPanelProviders: providerIds });
+        const existing = await chrome.storage.sync.get({ multiPanelProviders: null });
+        const nextMultiPanelProviders = preserveForeignCustomIds(
+          providerIds,
+          existing?.multiPanelProviders,
+          hasProviderDescriptor
+        );
+        await chrome.storage.sync.set({ multiPanelProviders: nextMultiPanelProviders });
       }
 
       if (state.googleProviderMode) {
@@ -1294,7 +1317,11 @@ async function initializePanels() {
 
     // Create all panels and load in parallel for fastest total time
     for (let i = 0; i < count; i++) {
-      await addPanel(providerIds[i]);
+      await addPanel(providerIds[i], { saveConfig: false });
+    }
+
+    if (count > 0) {
+      await saveProviderConfiguration();
     }
 
     // Update panel selectors in toolbar
@@ -1306,7 +1333,7 @@ async function initializePanels() {
 
 // ===== Panel Management =====
 
-async function addPanel(providerId) {
+async function addPanel(providerId, { saveConfig = true } = {}) {
   // Sync before the capacity check so no await separates the check from the
   // panel being added.
   if (providerId === 'grok') {
@@ -1427,7 +1454,9 @@ async function addPanel(providerId) {
   bindPanelHeaderActions(panelId);
 
   // Save provider configuration
-  await saveProviderConfiguration();
+  if (saveConfig) {
+    await saveProviderConfiguration();
+  }
 
   // Update panel selectors to show logo and name
   updatePanelSelectors();
@@ -1563,8 +1592,14 @@ function updatePanelSelectors() {
 async function saveProviderConfiguration() {
   const providerIds = panels.map(p => p.providerId);
   try {
+    const existing = await chrome.storage.sync.get({ multiPanelProviders: null });
+    const nextMultiPanelProviders = preserveForeignCustomIds(
+      providerIds,
+      existing?.multiPanelProviders,
+      hasProviderDescriptor
+    );
     await chrome.storage.sync.set({
-      multiPanelProviders: providerIds,
+      multiPanelProviders: nextMultiPanelProviders,
       multiPanelLayout: currentLayout
     });
   } catch (error) {

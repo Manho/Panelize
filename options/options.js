@@ -1,7 +1,16 @@
 // T050-T064: Settings Page Implementation
-import { PROVIDERS, getProviderIcon } from '../modules/providers.js';
+import { listProviders, getProviderIcon } from '../modules/providers.js';
+import { hasProviderDescriptor } from '../modules/provider-registry.js';
+import {
+  loadCustomProviders,
+  subscribeCustomProvidersChanged
+} from '../modules/custom-providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
-import { appendProviderToOrder, normalizeProviderOrder } from '../modules/provider-order.js';
+import {
+  appendProviderToOrder,
+  normalizeProviderOrder,
+  preserveForeignCustomIds
+} from '../modules/provider-order.js';
 import {
   hasOptionalProviderPermission,
   requestOptionalProviderPermission
@@ -135,7 +144,7 @@ function getEnabledProvidersOrDefault(settings) {
 }
 
 function getProviderDisplayOrder(settings) {
-  const allIds = PROVIDERS.map(provider => provider.id);
+  const allIds = listProviders().map(provider => provider.id);
   return normalizeProviderOrder(settings.providerOrder, allIds);
 }
 
@@ -254,6 +263,7 @@ function updateShortcutHelperVisibility(isEnabled) {
 
 // T050: Initialize settings page
 async function init() {
+  await loadCustomProviders();
   await applyTheme();  // Apply theme first
   await initializeLanguage();  // Initialize language from user settings
   translatePage();  // Translate all static text
@@ -399,14 +409,15 @@ export async function renderProviderList() {
   const googleProviderMode = getGoogleProviderModeOrDefault(settings);
   const displayOrder = getProviderDisplayOrder(settings);
   const listContainer = document.getElementById('provider-list');
-  const providerAccessEntries = await Promise.all(PROVIDERS.map(async (provider) => [
+  const providers = listProviders();
+  const providerAccessEntries = await Promise.all(providers.map(async (provider) => [
     provider.id,
     await hasOptionalProviderPermission(provider.id)
   ]));
   const providerAccess = new Map(providerAccessEntries);
 
   const orderIndex = new Map(displayOrder.map((id, index) => [id, index]));
-  const sortedProviders = [...PROVIDERS].sort((a, b) => {
+  const sortedProviders = [...providers].sort((a, b) => {
     return (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0);
   });
 
@@ -429,7 +440,7 @@ export async function renderProviderList() {
       const providerId = providerItem?.dataset.providerId || toggle.dataset.providerId;
       if (!providerId) return;
 
-      const provider = PROVIDERS.find(({ id }) => id === providerId);
+      const provider = listProviders().find(({ id }) => id === providerId);
       const hasAccess = providerItem?.dataset.hasAccess !== 'false';
       const isEnabledPreference = providerItem?.dataset.enabledPreference === 'true';
 
@@ -484,6 +495,12 @@ function setupStorageChangeListener() {
   if (!chrome?.storage?.onChanged?.addListener) {
     return;
   }
+
+  subscribeCustomProvidersChanged(() => {
+    renderProviderList().catch((error) => {
+      console.error('Error syncing custom providers:', error);
+    });
+  });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'sync' && areaName !== 'local') {
@@ -544,12 +561,24 @@ function setupProviderDragAndDrop(container) {
 }
 
 // Save the new provider order
-async function saveProviderOrder(container) {
+export async function saveProviderOrder(container) {
   const settings = await getSettings();
   const enabledProviders = getEnabledProvidersOrDefault(settings);
   const items = container.querySelectorAll('.provider-item');
-  const newOrder = Array.from(items).map(item => item.dataset.providerId);
-  const newEnabledOrder = newOrder.filter(id => enabledProviders.includes(id));
+  const domOrder = Array.from(items).map(item => item.dataset.providerId);
+  const previousOrder = Array.isArray(settings.providerOrder)
+    ? settings.providerOrder
+    : enabledProviders;
+  const newOrder = preserveForeignCustomIds(
+    domOrder,
+    previousOrder,
+    hasProviderDescriptor
+  );
+  const newEnabledOrder = preserveForeignCustomIds(
+    domOrder.filter(id => enabledProviders.includes(id)),
+    enabledProviders,
+    hasProviderDescriptor
+  );
 
   await saveSetting('providerOrder', newOrder);
   // Also update enabledProviders to match the new order among enabled items
@@ -557,18 +586,21 @@ async function saveProviderOrder(container) {
   showStatus('success', t('msgProviderSettingsUpdated'));
 }
 
-async function toggleProvider(providerId) {
+export async function toggleProvider(providerId) {
   const settings = await getSettings();
-  let enabledProviders = getEnabledProvidersOrDefault(settings);
-  const provider = PROVIDERS.find(({ id }) => id === providerId);
+  const previousEnabledProviders = getEnabledProvidersOrDefault(settings);
+  let enabledProviders = [...previousEnabledProviders];
+  const providers = listProviders();
+  const provider = providers.find(({ id }) => id === providerId);
 
   if (!provider) {
     return;
   }
 
   if (enabledProviders.includes(providerId)) {
-    // Disable - but ensure at least one provider remains enabled
-    if (enabledProviders.length === 1) {
+    // Disable - but ensure at least one locally known provider remains enabled
+    const localEnabledCount = enabledProviders.filter(id => hasProviderDescriptor(id)).length;
+    if (localEnabledCount <= 1) {
       showStatus('error', t('msgOneProviderRequired'));
       return;
     }
@@ -579,11 +611,24 @@ async function toggleProvider(providerId) {
     enabledProviders.push(providerId);
   }
 
-  const providerOrder = appendProviderToOrder(
-    settings.providerOrder,
-    getEnabledProvidersOrDefault(settings),
-    providerId,
-    PROVIDERS.map(({ id }) => id)
+  enabledProviders = preserveForeignCustomIds(
+    enabledProviders,
+    previousEnabledProviders,
+    hasProviderDescriptor
+  );
+
+  const previousOrder = Array.isArray(settings.providerOrder)
+    ? settings.providerOrder
+    : previousEnabledProviders;
+  const providerOrder = preserveForeignCustomIds(
+    appendProviderToOrder(
+      settings.providerOrder,
+      previousEnabledProviders,
+      providerId,
+      providers.map(({ id }) => id)
+    ),
+    previousOrder,
+    hasProviderDescriptor
   );
 
   await saveSettings({ enabledProviders, providerOrder });

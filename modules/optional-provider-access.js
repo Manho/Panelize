@@ -1,3 +1,4 @@
+import { loadCustomProviders } from './custom-providers.js';
 import { syncFrameHeaderRules } from './frame-header-rules.js';
 import {
   BUILTIN_PROVIDER_DESCRIPTORS,
@@ -134,6 +135,7 @@ export async function syncOptionalProviderAccess(enabledProviderIds) {
  */
 export async function reconcileOptionalProviderAccess() {
   try {
+    await loadCustomProviders();
     const settings = await chrome.storage.sync.get({ enabledProviders: [] });
     const enabledProviderIds = Array.isArray(settings.enabledProviders)
       ? settings.enabledProviders
