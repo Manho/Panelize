@@ -28,52 +28,58 @@ function renderAiStudioFixture(requestUrl) {
       <button type="button" data-test-clear="outside" aria-label="New chat" mattooltip="New chat">Clear</button>
     </div>
     ${isTemporary ? '<ms-incognito-mode-indicator><div class="incognito-banner">You\'re in a temporary chat</div></ms-incognito-mode-indicator>' : ''}
-    <ms-chat-turn>
-      <ms-autosize-textarea>
-        <textarea
-          id="turn-edit-textarea"
-          class="textarea"
-          placeholder="Edit prompt"
-          rows="2"
-          style="width:320px;height:48px"
-        ></textarea>
-      </ms-autosize-textarea>
-    </ms-chat-turn>
-    <ms-prompt-box>
-      <div class="prompt-box-container" msfilecopypaste>
-        <div class="text-wrapper">
+    <ms-chunk-editor class="ng-star-inserted">
+      <section class="chunk-editor-main">
+        <ms-chat-turn>
           <ms-autosize-textarea>
             <textarea
+              id="turn-edit-textarea"
               class="textarea"
-              formcontrolname="promptText"
-              aria-label="Enter a prompt"
-              placeholder="Start typing a prompt"
-              rows="3"
-              style="width:320px;height:64px"
+              placeholder="Edit prompt"
+              rows="2"
+              style="width:320px;height:48px"
             ></textarea>
           </ms-autosize-textarea>
-        </div>
-        <div id="previews"></div>
-        <ms-add-media-button>
-          <button type="button" aria-label="Insert assets such as images, videos, files, or audio" mattooltip="Insert assets such as images, videos, files, or audio">Add</button>
-        </ms-add-media-button>
-        <ms-run-button>
-          <button
-            id="aistudio-run-btn"
-            ms-button
-            type="submit"
-            class="ms-button-primary ctrl-enter-submits"
-            aria-disabled="false"
-            mattooltip="Send prompt (⌘ + Enter)"
-            aria-label="Run"
-            style="width:88px;height:36px"
-          >
-            <span class="run-button-label">Run</span>
-            <span class="material-symbols-outlined">arrow_upward</span>
-          </button>
-        </ms-run-button>
-      </div>
-    </ms-prompt-box>
+        </ms-chat-turn>
+        <footer class="ng-star-inserted">
+          <ms-prompt-box>
+            <div class="prompt-box-container" msfilecopypaste>
+              <div class="text-wrapper">
+                <ms-autosize-textarea>
+                  <textarea
+                    class="textarea"
+                    formcontrolname="promptText"
+                    aria-label="Enter a prompt"
+                    placeholder="Start typing a prompt"
+                    rows="3"
+                    style="width:320px;height:64px"
+                  ></textarea>
+                </ms-autosize-textarea>
+              </div>
+              <div id="previews"></div>
+              <ms-add-media-button>
+                <button type="button" aria-label="Insert assets such as images, videos, files, or audio" mattooltip="Insert assets such as images, videos, files, or audio">Add</button>
+              </ms-add-media-button>
+              <ms-run-button>
+                <button
+                  id="aistudio-run-btn"
+                  ms-button
+                  type="submit"
+                  class="ms-button-primary ctrl-enter-submits"
+                  aria-disabled="false"
+                  mattooltip="Send prompt (⌘ + Enter)"
+                  aria-label="Run"
+                  style="width:88px;height:36px"
+                >
+                  <span class="run-button-label">Run</span>
+                  <span class="material-symbols-outlined">arrow_upward</span>
+                </button>
+              </ms-run-button>
+            </div>
+          </ms-prompt-box>
+        </footer>
+      </section>
+    </ms-chunk-editor>
     <script>
       window.__sendCount = 0;
       window.__clearButtonClicks = 0;

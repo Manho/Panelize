@@ -101,6 +101,10 @@ function createHarness({
       if (selector.includes('ms-chat-turn')) {
         return isPromptInput === 'turn-edit' ? {} : null;
       }
+      // Live AI Studio wraps both turns and the footer <ms-prompt-box> inside <ms-chunk-editor>.
+      if (selector.includes('ms-chunk-editor')) {
+        return isPromptInput === true || isPromptInput === 'turn-edit' ? {} : null;
+      }
       if (selector.includes('ms-prompt-box')) {
         return isPromptInput === true ? {} : null;
       }

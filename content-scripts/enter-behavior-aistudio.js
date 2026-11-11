@@ -25,7 +25,9 @@ function isAiStudioInput(element) {
     return false;
   }
 
-  if (element.closest?.('ms-system-instructions, ms-chat-turn, ms-chunk-editor')) {
+  // Live AI Studio nests <ms-prompt-box> inside <ms-chunk-editor>, so only
+  // exclude system instructions and historical chat-turn editors.
+  if (element.closest?.('ms-system-instructions, ms-chat-turn')) {
     return false;
   }
 

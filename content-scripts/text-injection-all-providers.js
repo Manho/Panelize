@@ -478,7 +478,7 @@
     'zai-global': 'https://chat.z.ai/',
     // Keep this in sync with YUANBAO_DEFAULT_URL in modules/providers.js.
     yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
-    aistudio: AISTUDIO_NEW_CHAT_URL,
+    aistudio: 'https://aistudio.google.com/prompts/new_chat',
     google: 'https://www.google.com/search?udm=50'
   };
 

@@ -141,10 +141,11 @@ export async function launchExtension({
     })
   );
 
-  let [serviceWorker] = context.serviceWorkers();
+  let serviceWorker = context.serviceWorkers().at(-1);
   if (!serviceWorker) {
     serviceWorker = await context.waitForEvent('serviceworker');
   }
+
   const extensionId = new URL(serviceWorker.url()).host;
 
   return {

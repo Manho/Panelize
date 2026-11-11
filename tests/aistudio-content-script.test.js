@@ -3,6 +3,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTENSION_ORIGIN, dispatchMultiPanelMessage } from './helpers/multi-panel-messages.js';
+import { readContentScriptSelectorTable } from './live/live-harness.js';
 
 const buttonFinderUtilsPath = path.resolve(process.cwd(), 'content-scripts/button-finder-utils.js');
 const buttonFinderUtilsCode = fs.readFileSync(buttonFinderUtilsPath, 'utf8');
@@ -543,6 +544,22 @@ describe('Google AI Studio content script integration', () => {
         }),
         EXTENSION_ORIGIN
       );
+    });
+  });
+
+  describe('live harness selector table compatibility', () => {
+    it('keeps all live-harness selector and URL tables parseable as standalone literals', () => {
+      for (const tableName of [
+        'PROVIDER_SELECTORS',
+        'SEND_BUTTON_SELECTORS',
+        'NEW_CHAT_BUTTON_SELECTORS',
+        'NEW_CHAT_URLS'
+      ]) {
+        const table = readContentScriptSelectorTable(tableName);
+        expect(table.aistudio).toBeTruthy();
+      }
+      expect(readContentScriptSelectorTable('NEW_CHAT_URLS').aistudio)
+        .toBe('https://aistudio.google.com/prompts/new_chat');
     });
   });
 });
