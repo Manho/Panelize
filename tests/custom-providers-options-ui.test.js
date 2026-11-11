@@ -767,8 +767,8 @@ describe('B3.2 custom web providers in Options', () => {
     await resetSettings();
     expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toEqual([customRecord]);
 
-    // 2) importSettings preserves custom IDs in enabledProviders, providerOrder, and multiPanelProviders,
-    //    while skipping customProviders definitions in M2
+    // 2) importSettings preserves custom IDs in enabledProviders and providerOrder,
+    //    while skipping customProviders definitions and keys that export does not produce
     const importResult = await importSettings({
       theme: 'dark',
       enabledProviders: ['chatgpt', 'custom-0123456789', 'custom-aaaaaaaaaa'],
@@ -789,7 +789,8 @@ describe('B3.2 custom web providers in Options', () => {
       'chatgpt',
       'custom-0123456789',
     ]);
-    expect(areas.sync.multiPanelProviders).toEqual(['custom-0123456789', 'chatgpt']);
+    expect(importResult.skipped).toContain('multiPanelProviders');
+    expect(areas.sync.multiPanelProviders).toBeUndefined();
     expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toEqual([customRecord]);
   });
 });

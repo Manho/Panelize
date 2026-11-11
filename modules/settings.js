@@ -145,9 +145,9 @@ export async function exportSettings() {
 }
 
 export async function importSettings(settings) {
-  // Validate settings (customProviders definitions live in storage.local and are not imported in M2,
-  // while custom provider IDs inside synced lists enabledProviders/providerOrder/multiPanelProviders stay intact)
-  const validKeys = [...Object.keys(DEFAULT_SETTINGS), 'multiPanelProviders'];
+  // Validate settings. Custom provider definitions live in storage.local and are not
+  // imported; custom IDs inside the imported synced lists are kept as they are.
+  const validKeys = Object.keys(DEFAULT_SETTINGS);
   const imported = {};
   const skipped = [];
   const errors = {};
