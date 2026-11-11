@@ -39,7 +39,9 @@
     "https://chat.z.ai/*",
     "https://yuanbao.tencent.com/*",
     "https://aistudio.google.com/*",
-    "https://alkalimakersuite-pa.clients6.google.com/*"
+    "https://alkalimakersuite-pa.clients6.google.com/*",
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",
