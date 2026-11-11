@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.0 - 2026-11-11
+- Added Google AI Studio as an optional provider with text fill, Enter to send, new chat, image upload and temporary chat.
+- Fixed Temporary Chat for All on Gemini with its current header toggle.
+- Fixed New Chat for All leaving persisted drafts in the ChatGPT composer.
+
 ## 2.0.3 - 2026-11-10
 - Fixed the remove button on images attached in the Multi-Panel page.
 - Icons are now bundled with the extension, so they display even when Google Fonts cannot be reached.
