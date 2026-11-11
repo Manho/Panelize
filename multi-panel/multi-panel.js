@@ -210,19 +210,22 @@ const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
 const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
-const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao']);
+const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao', 'aistudio']);
 const TEMP_CHAT_RETRY_PROVIDERS = new Set(['gemini', 'grok', 'yuanbao']);
 const TEMP_CHAT_URLS = {
   chatgpt: 'https://chatgpt.com/?temporary-chat=true',
   claude: 'https://claude.ai/new?incognito',
-  grok: 'https://grok.com/c#private'
+  grok: 'https://grok.com/c#private',
+  aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=true'
 };
 const TEMP_CHAT_NORMAL_URLS = {
   chatgpt: 'https://chatgpt.com/',
   claude: 'https://claude.ai/new',
   gemini: 'https://gemini.google.com/',
   grok: 'https://grok.com/',
-  yuanbao: getProviderById('yuanbao').url
+  yuanbao: getProviderById('yuanbao').url,
+  // AI Studio keeps temporary mode sticky; only ?temporary=false turns it off.
+  aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=false'
 };
 let isInitialized = false;
 
@@ -315,8 +318,8 @@ function isGoogleProvider(providerId) {
   return providerId === 'google';
 }
 
-function isChatgptProvider(providerId) {
-  return providerId === 'chatgpt';
+export function isSendFocusTrackedProvider(providerId) {
+  return providerId === 'chatgpt' || providerId === 'aistudio';
 }
 
 // The service worker owns the forwarding rule and serializes updates to it;
@@ -812,9 +815,9 @@ function maybeStopSendFocusRestore() {
   cancelUnifiedInputFocusRestoreAfterSend();
 }
 
-function getChatgptPanelsWithFrames() {
+function getSendFocusTrackedPanelsWithFrames() {
   return panels.filter(panel => (
-    isChatgptProvider(panel.providerId) &&
+    isSendFocusTrackedProvider(panel.providerId) &&
     panel.iframe &&
     panel.iframe.contentWindow
   ));
@@ -936,13 +939,13 @@ function handleProviderStatusMessage(event) {
       updatePanelFit(panel);
       break;
     case PANELIZE_PROVIDER_BUSY:
-      if (!isChatgptProvider(panel.providerId)) {
+      if (!isSendFocusTrackedProvider(panel.providerId)) {
         return;
       }
       handleSendFocusProviderBusy(panel, data.requestId);
       break;
     case PANELIZE_PROVIDER_IDLE:
-      if (!isChatgptProvider(panel.providerId)) {
+      if (!isSendFocusTrackedProvider(panel.providerId)) {
         return;
       }
       handleSendFocusProviderIdle(panel, data.requestId);
@@ -1615,7 +1618,7 @@ export async function broadcastMessage(text, autoSubmit = true) {
     // focused, or the next Enter lands in one panel and sends only there.
     const fillActionRequestId = isFillAction ? createFillActionRequestId() : null;
     const requestId = restoreUnifiedInputFocusAfterSend(
-      shouldAutoSubmit ? getChatgptPanelsWithFrames() : [],
+      shouldAutoSubmit ? getSendFocusTrackedPanelsWithFrames() : [],
       fillActionRequestId || createSendFocusRequestId()
     );
     const payloadRevisionAtStart = fillPayloadRevision;
@@ -2814,7 +2817,7 @@ async function triggerSendButtons() {
   const sendBtn = document.getElementById('send-all-btn');
   const fillBtn = document.getElementById('fill-input-btn');
   const statusEl = document.getElementById('send-status');
-  const sendFocusRequestId = restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames());
+  const sendFocusRequestId = restoreUnifiedInputFocusAfterSend(getSendFocusTrackedPanelsWithFrames());
 
   try {
     sendBtn.disabled = true;

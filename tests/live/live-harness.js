@@ -92,6 +92,7 @@ export async function configureLiveProviders(serviceWorker, providerIds, {
   layout = '1x1',
 } = {}) {
   await serviceWorker.evaluate(async (settings) => {
+    await chrome.storage.sync.remove('enabledProviders');
     await chrome.storage.sync.set(settings);
   }, {
     enabledProviders: providerIds,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { broadcastMessage, sendToPanel } from '../multi-panel/multi-panel.js';
+import { broadcastMessage, isSendFocusTrackedProvider, sendToPanel } from '../multi-panel/multi-panel.js';
 import { getPanelBroadcastActionParams } from '../modules/panel-action-results.js';
 
 describe('parent page sendToPanel & broadcastMessage production implementation workflow', () => {
@@ -213,6 +213,13 @@ describe('parent page sendToPanel & broadcastMessage production implementation w
 
       expect(document.getElementById('send-all-btn').disabled).toBe(false);
       expect(statusEl.textContent).not.toBe('Error occurred');
+    });
+
+    it('tracks send-focus busy/idle lifecycle for both chatgpt and aistudio only', () => {
+      expect(isSendFocusTrackedProvider('chatgpt')).toBe(true);
+      expect(isSendFocusTrackedProvider('aistudio')).toBe(true);
+      expect(isSendFocusTrackedProvider('claude')).toBe(false);
+      expect(isSendFocusTrackedProvider('gemini')).toBe(false);
     });
   });
 });

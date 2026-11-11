@@ -128,6 +128,17 @@ export const PROVIDERS = [
     iconDark: '/icons/providers/dark/yuanbao.png',
     enabled: true,
     optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.yuanbao.origins
+  },
+  {
+    id: 'aistudio',
+    name: 'Google AI Studio',
+    // Explicit opt-out: AI Studio keeps temporary mode sticky after ?temporary=true.
+    url: 'https://aistudio.google.com/prompts/new_chat?temporary=false',
+    topLevelUrl: 'https://aistudio.google.com/prompts/new_chat',
+    icon: '/icons/providers/aistudio.svg',
+    iconDark: '/icons/providers/dark/aistudio.svg',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.aistudio.origins
   }
 ];
 

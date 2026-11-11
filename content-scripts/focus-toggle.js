@@ -28,6 +28,15 @@ function findProviderInput() {
            document.querySelector('textarea');
   }
 
+  // Google AI Studio
+  if (host === 'aistudio.google.com') {
+    return document.querySelector('ms-prompt-box textarea[formcontrolname="promptText"]') ||
+           document.querySelector('ms-prompt-box textarea.textarea') ||
+           document.querySelector('ms-prompt-box textarea[aria-label="Enter a prompt"]') ||
+           document.querySelector('ms-prompt-box textarea') ||
+           document.querySelector('textarea[formcontrolname="promptText"]');
+  }
+
   // Google AI Mode
   if (host.includes('google.com')) {
     return document.querySelector('textarea.ITIRGe') ||

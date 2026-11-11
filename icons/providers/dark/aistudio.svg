@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" role="img" aria-label="Google AI Studio">
+  <defs>
+    <linearGradient id="aistudio-sparkle" x1="6.8" y1="6.8" x2="24.6" y2="23.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8AB4F8"/>
+      <stop offset="100%" stop-color="#4285F4"/>
+    </linearGradient>
+  </defs>
+  <path fill="#1E2430" stroke="#FFFFFF" stroke-width="0.6317" d="M24.51 28.51H5.49c-2.21 0-4-1.79-4-4V5.49c0-2.21 1.79-4 4-4h19.03c2.21 0 4 1.79 4 4v19.03c-.01 2.2-1.8 3.99-4.01 3.99Z"/>
+  <path fill="url(#aistudio-sparkle)" d="M13.5 6.8c.35 4.25 2.45 6.35 6.7 6.7-4.25.35-6.35 2.45-6.7 6.7-.35-4.25-2.45-6.35-6.7-6.7 4.25-.35 6.35-2.45 6.7-6.7Z"/>
+  <path fill="#AECBFA" d="M21.2 16.6c.18 2.15 1.25 3.22 3.4 3.4-2.15.18-3.22 1.25-3.4 3.4-.18-2.15-1.25-3.22-3.4-3.4 2.15-.18 3.22-1.25 3.4-3.4Z"/>
+</svg>

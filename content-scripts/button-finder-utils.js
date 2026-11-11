@@ -151,6 +151,120 @@
     );
   };
 
+  const AI_STUDIO_SEND_BUTTON_SELECTORS = [
+    'ms-prompt-box ms-run-button button',
+    'ms-run-button button.run-button',
+    'button[aria-label*="Run" i]',
+    'button[mattooltip*="Send prompt" i]'
+  ];
+
+  /**
+   * Google AI Studio (<ms-run-button>) reuses the same <button ms-button>
+   * element for Run (idle), Stop (running/streaming), and Add (addInsteadOfRun).
+   */
+  window.ButtonFinderUtils.isAiStudioSendControl = function(button) {
+    if (!button) {
+      return false;
+    }
+
+    const disabledAttr = button.getAttribute?.('disabled');
+    const className = String(button.className || '');
+    if (
+      button.disabled === true ||
+      (disabledAttr !== null && disabledAttr !== undefined && disabledAttr !== 'false') ||
+      button.getAttribute?.('aria-disabled') === 'true' ||
+      button.classList?.contains?.('disabled') ||
+      /\bdisabled\b/i.test(className)
+    ) {
+      return false;
+    }
+
+    if (button.querySelector?.('.spin')) {
+      return false;
+    }
+
+    const ariaLabel = String(button.getAttribute?.('aria-label') || '').trim();
+    const matTooltip = String(
+      button.getAttribute?.('mattooltip') ||
+      button.getAttribute?.('matTooltip') ||
+      button.getAttribute?.('title') ||
+      ''
+    ).trim();
+    if (
+      /(cancel generation|\bstop\b)/i.test(ariaLabel) ||
+      /(cancel generation|\bstop\b)/i.test(matTooltip)
+    ) {
+      return false;
+    }
+
+    const labelNode = button.querySelector?.('.run-button-label');
+    const labelText = String(labelNode?.textContent ?? '').trim();
+    const textContent = String(button.textContent ?? '').trim();
+
+    if (/stop/i.test(labelText) || /stop/i.test(textContent)) {
+      return false;
+    }
+
+    if (
+      /^add$/i.test(labelText) ||
+      /^add$/i.test(ariaLabel) ||
+      /^add$/i.test(matTooltip) ||
+      /^add(\s|$)/i.test(textContent)
+    ) {
+      return false;
+    }
+
+    return Boolean(
+      button.closest?.('ms-run-button') ||
+      button.classList?.contains?.('run-button') ||
+      /\brun-button\b/.test(className) ||
+      labelNode ||
+      /\brun\b|send prompt/i.test(ariaLabel) ||
+      /send prompt|\brun\b/i.test(matTooltip) ||
+      /\brun\b/i.test(textContent)
+    );
+  };
+
+  /**
+   * Provider-aware send button finder.
+   */
+  window.ButtonFinderUtils.findSendButton = function(provider) {
+    if (
+      provider === 'aistudio' ||
+      (!provider && typeof window !== 'undefined' && window.location?.hostname === 'aistudio.google.com')
+    ) {
+      for (const selector of AI_STUDIO_SEND_BUTTON_SELECTORS) {
+        try {
+          if (typeof document.querySelectorAll === 'function') {
+            const buttons = document.querySelectorAll(selector);
+            for (const button of buttons) {
+              if (window.ButtonFinderUtils.isAiStudioSendControl(button)) {
+                return button;
+              }
+            }
+          }
+          if (typeof document.querySelector === 'function') {
+            const button = document.querySelector(selector);
+            if (window.ButtonFinderUtils.isAiStudioSendControl(button)) {
+              return button;
+            }
+          }
+        } catch (error) {
+          console.warn('[Button Finder] Error trying AI Studio selector:', selector, error);
+        }
+      }
+      return null;
+    }
+
+    if (Array.isArray(provider)) {
+      return window.ButtonFinderUtils.findButton(provider);
+    }
+
+    return null;
+  };
+
+  window.ButtonFinderUtils.AI_STUDIO_SEND_BUTTON_SELECTORS = AI_STUDIO_SEND_BUTTON_SELECTORS;
+
   /**
    * Try a single selector configuration
    * @private

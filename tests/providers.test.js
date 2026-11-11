@@ -14,7 +14,7 @@ describe('providers module', () => {
 
   describe('PROVIDERS constant', () => {
     it('should contain all expected providers', () => {
-      expect(PROVIDERS).toHaveLength(13);
+      expect(PROVIDERS).toHaveLength(14);
       const providerIds = PROVIDERS.map((p) => p.id);
       expect(providerIds).toEqual([
         'chatgpt',
@@ -30,6 +30,7 @@ describe('providers module', () => {
         'chatglm',
         'zai-global',
         'yuanbao',
+        'aistudio',
       ]);
     });
 
@@ -63,6 +64,17 @@ describe('providers module', () => {
         url: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
         icon: '/icons/providers/yuanbao.png',
         optionalOrigins: ['https://yuanbao.tencent.com/*'],
+      });
+      expect(getProviderById('aistudio')).toMatchObject({
+        name: 'Google AI Studio',
+        url: 'https://aistudio.google.com/prompts/new_chat?temporary=false',
+        topLevelUrl: 'https://aistudio.google.com/prompts/new_chat',
+        icon: '/icons/providers/aistudio.svg',
+        iconDark: '/icons/providers/dark/aistudio.svg',
+        optionalOrigins: [
+          'https://aistudio.google.com/*',
+          'https://alkalimakersuite-pa.clients6.google.com/*',
+        ],
       });
     });
 

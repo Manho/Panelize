@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { launchExtension, openMultiPanel } from './extension-harness.js';
+import { OPTIONAL_PROVIDER_CONFIGS } from '../../modules/optional-provider-access.js';
+import { createPatchedExtensionCopy, launchExtension, openMultiPanel } from './extension-harness.js';
 import { renderChatgptFixture } from './fixtures/chatgpt-fixture.js';
 import { renderTemporaryChatFixture } from './fixtures/temporary-chat-fixture.js';
 
@@ -8,6 +9,7 @@ const PROVIDER_HOSTS = {
   gemini: 'gemini.google.com',
   grok: 'grok.com',
   kimi: 'www.kimi.com',
+  aistudio: 'aistudio.google.com',
 };
 
 // Mirrors TEMP_CHAT_RETRY_DELAYS in multi-panel.js.
@@ -23,12 +25,19 @@ test.describe('Temporary chat E2E', () => {
   test.setTimeout(45000);
 
   let extension;
+  let extensionCopy;
   let page;
   let requestedUrls = [];
   let fixtureOptions = {};
 
   test.beforeAll(async () => {
-    extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+    extensionCopy = await createPatchedExtensionCopy((manifest) => {
+      manifest.host_permissions.push(...OPTIONAL_PROVIDER_CONFIGS.aistudio.origins);
+    });
+    extension = await launchExtension({
+      extensionPath: extensionCopy.extensionPath,
+      viewport: { width: 1280, height: 800 },
+    });
     for (const [providerId, host] of Object.entries(PROVIDER_HOSTS)) {
       await extension.context.route(`https://${host}/**`, (route) => {
         requestedUrls.push(route.request().url());
@@ -51,6 +60,7 @@ test.describe('Temporary chat E2E', () => {
 
   test.afterAll(async () => {
     await extension?.close();
+    await extensionCopy?.cleanup();
   });
 
   async function openPanel(providerId, options = {}) {
@@ -83,7 +93,7 @@ test.describe('Temporary chat E2E', () => {
 
   async function geminiTemporaryChatOn() {
     return providerFrame('gemini').evaluate(() => (
-      document.querySelector('[data-test-id="temp-chat-button"]')?.classList.contains('temp-chat-on') === true
+      Boolean(document.querySelector('button[aria-label="Turn off temporary chat"]'))
     ));
   }
 
@@ -184,6 +194,37 @@ test.describe('Temporary chat E2E', () => {
       'https://chatgpt.com/?temporary-chat=true',
     ]);
     await expect(temporaryChatButton()).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('toggles Google AI Studio between normal and temporary chat URLs and keeps temporary=true on new chat', async () => {
+    await openPanel('aistudio');
+
+    await temporaryChatButton().click();
+    await expect.poll(() => requestedUrls).toEqual([
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
+      'https://aistudio.google.com/prompts/new_chat?temporary=true',
+    ]);
+    await expect(page.locator('#new-chat-btn')).toBeEnabled();
+
+    await page.click('#new-chat-btn');
+
+    await expect.poll(() => requestedUrls).toEqual([
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
+      'https://aistudio.google.com/prompts/new_chat?temporary=true',
+      'https://aistudio.google.com/prompts/new_chat?temporary=true',
+    ]);
+    await expect(temporaryChatButton()).toHaveAttribute('aria-pressed', 'true');
+    await expect(temporaryChatButton()).toBeEnabled();
+
+    await temporaryChatButton().click();
+
+    await expect(temporaryChatButton()).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => requestedUrls).toEqual([
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
+      'https://aistudio.google.com/prompts/new_chat?temporary=true',
+      'https://aistudio.google.com/prompts/new_chat?temporary=true',
+      'https://aistudio.google.com/prompts/new_chat?temporary=false',
+    ]);
   });
 
   test('new chat re-activates Grok private mode in page', async () => {
