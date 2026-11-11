@@ -20,6 +20,7 @@ import {
   hasProviderDescriptor
 } from '../modules/provider-registry.js';
 import {
+  isCustomProviderId,
   loadCustomProviders,
   subscribeCustomProvidersChanged
 } from '../modules/custom-providers.js';
@@ -654,9 +655,30 @@ function registerStorageChangeListener() {
     return;
   }
 
-  subscribeCustomProvidersChanged(() => {
+  subscribeCustomProvidersChanged((result) => {
+    if (!result?.ok) {
+      return;
+    }
+
+    const staleCustomPanelIds = panels
+      .filter((panel) => isCustomProviderId(panel.providerId) && !hasProviderDescriptor(panel.providerId))
+      .map((panel) => panel.id);
+    for (const stalePanelId of staleCustomPanelIds) {
+      removePanel(stalePanelId, { saveConfig: false });
+    }
+
     updatePanelSelectors();
     refreshThemeAwareProviderIcons();
+
+    if (document.querySelector('.add-panel-menu')) {
+      document.querySelectorAll('.add-panel-menu').forEach((menu) => menu.remove());
+      showAddPanelMenu().catch((error) => {
+        console.error('Error refreshing add-panel menu:', error);
+      });
+    }
+    if (document.querySelector('.provider-switcher-menu')) {
+      document.querySelectorAll('.provider-switcher-menu').forEach((menu) => menu.remove());
+    }
   });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -1355,6 +1377,51 @@ async function initializePanels() {
 
 // ===== Panel Management =====
 
+function getCustomProviderOrigin(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access !== 'custom') {
+    return null;
+  }
+  return descriptor.frameOrigins[0] || null;
+}
+
+function syncPanelCustomOriginBadge(panelEl, headerLeftEl, headerNameEl, providerId) {
+  const customOrigin = getCustomProviderOrigin(providerId);
+  const existingBadge = headerLeftEl.querySelector('.panel-origin-badge');
+
+  if (!customOrigin) {
+    delete panelEl.dataset.customProvider;
+    headerNameEl.removeAttribute('class');
+    existingBadge?.remove();
+    return;
+  }
+
+  panelEl.dataset.customProvider = 'true';
+  headerNameEl.className = 'panel-provider-name';
+
+  const badgeEl = existingBadge || document.createElement('span');
+  badgeEl.className = 'panel-origin-badge';
+  badgeEl.textContent = customOrigin;
+  badgeEl.title = customOrigin;
+  if (!existingBadge) {
+    headerLeftEl.appendChild(badgeEl);
+  }
+}
+
+function appendMenuOriginBadgeIfCustom(itemEl, nameSpan, providerId) {
+  const customOrigin = getCustomProviderOrigin(providerId);
+  if (!customOrigin) {
+    return;
+  }
+
+  itemEl.dataset.customProvider = 'true';
+  nameSpan.className = 'menu-provider-name';
+  const originBadgeEl = document.createElement('span');
+  originBadgeEl.className = 'menu-origin-badge';
+  originBadgeEl.textContent = customOrigin;
+  itemEl.appendChild(originBadgeEl);
+}
+
 async function addPanel(providerId, { saveConfig = true } = {}) {
   // Sync before the capacity check so no await separates the check from the
   // panel being added.
@@ -1410,6 +1477,7 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   const headerNameEl = document.createElement('span');
   headerNameEl.textContent = provider.name;
   headerLeftEl.append(headerIconEl, headerNameEl);
+  syncPanelCustomOriginBadge(panelEl, headerLeftEl, headerNameEl, providerId);
 
   const headerRightEl = document.createElement('div');
   headerRightEl.className = 'panel-header-right';
@@ -1484,9 +1552,11 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   updatePanelSelectors();
 }
 
-function removePanel(panelId) {
+function removePanel(panelId, { saveConfig = true } = {}) {
   const panelIndex = panels.findIndex(p => p.id === panelId);
   if (panelIndex === -1) return;
+
+  clearTemporaryChatRetriesForPanel(panelId);
 
   const fitContainer = panels[panelIndex].iframe?.parentElement;
   if (fitContainer) {
@@ -1517,14 +1587,18 @@ function removePanel(panelId) {
     });
 
     // Save configuration with the new layout
-    saveProviderConfiguration();
+    if (saveConfig) {
+      saveProviderConfiguration();
+    }
   }
 
   // Update selectors
   updatePanelSelectors();
 
   // Save configuration
-  saveProviderConfiguration();
+  if (saveConfig) {
+    saveProviderConfiguration();
+  }
 }
 
 async function switchPanelProvider(panelId, newProviderId) {
@@ -1548,13 +1622,15 @@ async function switchPanelProvider(panelId, newProviderId) {
   }
 
   // Update panel header
-  const headerIcon = panelEl.querySelector('.panel-header-left img');
-  const headerName = panelEl.querySelector('.panel-header-left span');
+  const headerLeft = panelEl.querySelector('.panel-header-left');
+  const headerIcon = headerLeft.querySelector('img');
+  const headerName = headerLeft.querySelector('span:not(.panel-origin-badge)');
   const headerRight = panelEl.querySelector('.panel-header-right');
   headerIcon.setAttribute('src', getThemeAwareProviderIcon(provider));
   headerIcon.dataset.providerId = provider.id;
   headerIcon.setAttribute('alt', provider.name);
   headerName.textContent = provider.name;
+  syncPanelCustomOriginBadge(panelEl, headerLeft, headerName, newProviderId);
   populatePanelHeaderRight(headerRight, newProviderId);
 
   // Update iframe
@@ -3586,6 +3662,7 @@ async function showProviderSwitcher(panelId) {
     nameSpan.textContent = provider.name;
 
     item.append(icon, nameSpan);
+    appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
     menu.appendChild(item);
   });
 
@@ -3689,6 +3766,7 @@ async function showAddPanelMenu() {
     nameSpan.textContent = provider.name;
 
     item.append(icon, nameSpan);
+    appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
     menu.appendChild(item);
   });
 
