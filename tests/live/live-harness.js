@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createPatchedExtensionCopy, REPO_EXTENSION_PATH } from '../e2e/extension-harness.js';
+import {
+  createPatchedExtensionCopy,
+  filterNonWildcardHostPermissions,
+  REPO_EXTENSION_PATH,
+} from '../e2e/extension-harness.js';
 import { PROVIDERS } from '../../modules/providers.js';
 import { OPTIONAL_PROVIDER_CONFIGS } from '../../modules/optional-provider-access.js';
 
@@ -71,7 +75,7 @@ function getCopyBuildNumber() {
  */
 export async function prepareLiveExtension() {
   const { extensionPath } = await createPatchedExtensionCopy((manifest) => {
-    manifest.host_permissions.push(...(manifest.optional_host_permissions || []));
+    manifest.host_permissions.push(...filterNonWildcardHostPermissions(manifest.optional_host_permissions));
     const [major = 0, minor = 0, patch = 0] = manifest.version.split('.');
     manifest.version = [major, minor, patch, getCopyBuildNumber()].join('.');
   }, { destination: LIVE_EXTENSION_PATH });

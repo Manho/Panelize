@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import http from 'node:http';
 import {
   createPatchedExtensionCopy,
+  filterNonWildcardHostPermissions,
   launchExtension,
   openMultiPanel,
 } from './extension-harness.js';
@@ -156,7 +157,7 @@ async function launchGrokFixture({ grantOptionalProviders = false } = {}) {
   const extensionCopy = await createPatchedExtensionCopy((manifest) => {
     if (grantOptionalProviders) {
       // Optional providers need a user gesture to grant; grant them up front.
-      manifest.host_permissions.push(...manifest.optional_host_permissions);
+      manifest.host_permissions.push(...filterNonWildcardHostPermissions(manifest.optional_host_permissions));
     }
     // Map the wss:// permission to ws:// for the loopback fixture server.
     manifest.host_permissions.push('ws://grok.com/*');
