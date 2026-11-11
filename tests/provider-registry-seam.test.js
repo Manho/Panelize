@@ -14,6 +14,7 @@ import {
   isProviderAllowedUrl,
   isProviderFrameOrigin,
 } from '../modules/provider-open-url.js';
+import { getOptionalProviderConfig } from '../modules/optional-provider-access.js';
 
 function createTestLocalDescriptor(overrides = {}) {
   return {
@@ -141,5 +142,68 @@ describe('provider registry live seam integration', () => {
       expect(() => isProviderAllowedUrl(protoKey, 'https://chatgpt.com/')).not.toThrow();
       expect(isProviderAllowedUrl(protoKey, 'https://chatgpt.com/')).toBe(false);
     }
+  });
+
+  it('derives live optional provider access config (registration id, matches, and frameRule) from an extra optional descriptor', () => {
+    registerExtraProviderDescriptors([
+      createTestLocalDescriptor({
+        access: 'optional',
+        permissionOrigins: ['http://localhost:43110/*'],
+        contentScript: {
+          matches: ['http://localhost:43110/*'],
+          js: [
+            'content-scripts/button-finder-utils.js',
+            'content-scripts/enter-behavior-utils.js',
+            'content-scripts/text-injection-all-providers.js',
+            'content-scripts/focus-toggle.js',
+          ],
+        },
+        frameRule: {
+          id: 1999,
+          urlFilter: 'http://localhost:43110/*',
+        },
+      }),
+    ]);
+
+    const config = getOptionalProviderConfig('test-local');
+    expect(config).toEqual({
+      origins: ['http://localhost:43110/*'],
+      contentScript: {
+        id: 'test-local-scripts',
+        matches: ['http://localhost:43110/*'],
+        js: [
+          'content-scripts/button-finder-utils.js',
+          'content-scripts/enter-behavior-utils.js',
+          'content-scripts/text-injection-all-providers.js',
+          'content-scripts/focus-toggle.js',
+        ],
+        runAt: 'document_start',
+        allFrames: true,
+        persistAcrossSessions: true,
+      },
+      frameRule: {
+        id: 1999,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'X-Frame-Options', operation: 'remove' },
+            { header: 'Content-Security-Policy', operation: 'remove' },
+          ],
+        },
+        condition: {
+          urlFilter: 'http://localhost:43110/*',
+          resourceTypes: ['sub_frame'],
+        },
+      },
+    });
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.origins)).toBe(true);
+    expect(Object.isFrozen(config.contentScript)).toBe(true);
+    expect(Object.isFrozen(config.frameRule)).toBe(true);
+
+    resetExtraProviderDescriptors();
+
+    expect(getOptionalProviderConfig('test-local')).toBeNull();
   });
 });
