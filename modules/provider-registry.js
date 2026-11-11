@@ -650,6 +650,26 @@ export function hasProviderDescriptor(id) {
   return activeRegistry.has(id);
 }
 
+export function isTemporaryChatSupportedProvider(providerId) {
+  return Boolean(getProviderDescriptor(providerId)?.tempChat);
+}
+
+export function requiresTemporaryChatActivationRetry(providerId) {
+  return Boolean(getProviderDescriptor(providerId)?.tempChat?.retry);
+}
+
+export function isUrlDrivenTemporaryChatProvider(providerId) {
+  return Boolean(getProviderDescriptor(providerId)?.tempChat?.url);
+}
+
+export function getTemporaryChatUrl(providerId) {
+  return getProviderDescriptor(providerId)?.tempChat?.url || null;
+}
+
+export function getTemporaryChatNormalUrl(providerId) {
+  return getProviderDescriptor(providerId)?.tempChat?.normalUrl || null;
+}
+
 /**
  * Merges extra provider descriptors after the built-in descriptors in the
  * module-level default registry.

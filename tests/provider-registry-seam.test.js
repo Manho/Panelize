@@ -7,6 +7,11 @@ import {
   PROVIDERS,
   getProviderById,
   getProviderByIdWithSettings,
+  getTemporaryChatNormalUrl,
+  getTemporaryChatUrl,
+  isTemporaryChatSupportedProvider,
+  isUrlDrivenTemporaryChatProvider,
+  requiresTemporaryChatActivationRetry,
 } from '../modules/providers.js';
 import {
   findMessageSourcePanel,
@@ -205,5 +210,31 @@ describe('provider registry live seam integration', () => {
     resetExtraProviderDescriptors();
 
     expect(getOptionalProviderConfig('test-local')).toBeNull();
+  });
+
+  it('reads temporary chat support, URLs, and retry flags live from extra provider descriptors', () => {
+    registerExtraProviderDescriptors([
+      createTestLocalDescriptor({
+        tempChat: {
+          url: 'http://localhost:43110/?temp=1',
+          normalUrl: 'http://localhost:43110/',
+          retry: true,
+        },
+      }),
+    ]);
+
+    expect(isTemporaryChatSupportedProvider('test-local')).toBe(true);
+    expect(requiresTemporaryChatActivationRetry('test-local')).toBe(true);
+    expect(isUrlDrivenTemporaryChatProvider('test-local')).toBe(true);
+    expect(getTemporaryChatUrl('test-local')).toBe('http://localhost:43110/?temp=1');
+    expect(getTemporaryChatNormalUrl('test-local')).toBe('http://localhost:43110/');
+
+    resetExtraProviderDescriptors();
+
+    expect(isTemporaryChatSupportedProvider('test-local')).toBe(false);
+    expect(requiresTemporaryChatActivationRetry('test-local')).toBe(false);
+    expect(isUrlDrivenTemporaryChatProvider('test-local')).toBe(false);
+    expect(getTemporaryChatUrl('test-local')).toBeNull();
+    expect(getTemporaryChatNormalUrl('test-local')).toBeNull();
   });
 });

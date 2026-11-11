@@ -5,7 +5,17 @@
  * allowing users to compare responses from multiple AI providers side by side.
  */
 
-import { PROVIDERS, getProviderById, getEnabledProviders, getProviderIcon } from '../modules/providers.js';
+import {
+  PROVIDERS,
+  getProviderById,
+  getEnabledProviders,
+  getProviderIcon,
+  getTemporaryChatNormalUrl as getProviderTemporaryChatNormalUrl,
+  getTemporaryChatUrl,
+  isTemporaryChatSupportedProvider,
+  isUrlDrivenTemporaryChatProvider,
+  requiresTemporaryChatActivationRetry
+} from '../modules/providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
 import {
@@ -210,23 +220,6 @@ const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
 const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
-const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao', 'aistudio']);
-const TEMP_CHAT_RETRY_PROVIDERS = new Set(['gemini', 'grok', 'yuanbao']);
-const TEMP_CHAT_URLS = {
-  chatgpt: 'https://chatgpt.com/?temporary-chat=true',
-  claude: 'https://claude.ai/new?incognito',
-  grok: 'https://grok.com/c#private',
-  aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=true'
-};
-const TEMP_CHAT_NORMAL_URLS = {
-  chatgpt: 'https://chatgpt.com/',
-  claude: 'https://claude.ai/new',
-  gemini: 'https://gemini.google.com/',
-  grok: 'https://grok.com/',
-  yuanbao: getProviderById('yuanbao').url,
-  // AI Studio keeps temporary mode sticky; only ?temporary=false turns it off.
-  aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=false'
-};
 let isInitialized = false;
 
 function normalizeLayout(layout) {
@@ -335,25 +328,10 @@ async function requestGrokWebSocketCookieSync() {
   }
 }
 
-function isTemporaryChatSupportedProvider(providerId) {
-  return TEMP_CHAT_SUPPORTED_PROVIDERS.has(providerId);
-}
-
-function requiresTemporaryChatActivationRetry(providerId) {
-  return TEMP_CHAT_RETRY_PROVIDERS.has(providerId);
-}
-
-function isUrlDrivenTemporaryChatProvider(providerId) {
-  return Object.prototype.hasOwnProperty.call(TEMP_CHAT_URLS, providerId);
-}
-
-function getTemporaryChatUrl(providerId) {
-  return TEMP_CHAT_URLS[providerId] || null;
-}
-
 function getTemporaryChatNormalUrl(providerId) {
-  if (Object.prototype.hasOwnProperty.call(TEMP_CHAT_NORMAL_URLS, providerId)) {
-    return TEMP_CHAT_NORMAL_URLS[providerId];
+  const configuredNormalUrl = getProviderTemporaryChatNormalUrl(providerId);
+  if (configuredNormalUrl !== null) {
+    return configuredNormalUrl;
   }
 
   const provider = getProviderById(providerId);

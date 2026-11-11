@@ -3,8 +3,21 @@ import { filterProvidersWithGrantedAccess } from './optional-provider-access.js'
 import {
   BUILTIN_PROVIDER_DESCRIPTORS,
   getProviderDescriptor,
-  listProviderDescriptors
+  getTemporaryChatNormalUrl,
+  getTemporaryChatUrl,
+  isTemporaryChatSupportedProvider,
+  isUrlDrivenTemporaryChatProvider,
+  listProviderDescriptors,
+  requiresTemporaryChatActivationRetry
 } from './provider-registry.js';
+
+export {
+  getTemporaryChatNormalUrl,
+  getTemporaryChatUrl,
+  isTemporaryChatSupportedProvider,
+  isUrlDrivenTemporaryChatProvider,
+  requiresTemporaryChatActivationRetry
+};
 
 const providerObjectCache = new WeakMap();
 
