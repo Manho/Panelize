@@ -1932,6 +1932,49 @@
     return true;
   }
 
+  // ChatGPT persists the new-chat composer draft (it survives the New chat button,
+  // reloads, and is restored with the last sent prompt), so a Multi-Panel New Chat
+  // must clear it explicitly. The composer re-renders after navigation and may
+  // restore the draft late, so clear a few times, stopping once the user types.
+  const CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS = [0, 250, 600, 1200, 2000];
+  let chatgptNewChatClearTimerIds = [];
+
+  function cancelChatgptNewChatComposerClear() {
+    chatgptNewChatClearTimerIds.forEach(timerId => clearTimeout(timerId));
+    chatgptNewChatClearTimerIds = [];
+    document.removeEventListener('keydown', handleChatgptNewChatUserInput, true);
+    document.removeEventListener('beforeinput', handleChatgptNewChatUserInput, true);
+  }
+
+  function handleChatgptNewChatUserInput(event) {
+    if (event.isTrusted) {
+      cancelChatgptNewChatComposerClear();
+    }
+  }
+
+  function scheduleChatgptNewChatComposerClear() {
+    cancelChatgptNewChatComposerClear();
+    document.addEventListener('keydown', handleChatgptNewChatUserInput, true);
+    document.addEventListener('beforeinput', handleChatgptNewChatUserInput, true);
+    CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.forEach((delay, index) => {
+      const timerId = setTimeout(() => {
+        const editor = findProviderInput('chatgpt');
+        if (editor && editor.textContent.trim().length > 0) {
+          if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+            setFormControlValue(editor, '');
+          } else {
+            clearRichTextInput('chatgpt', editor);
+          }
+          console.log('[Text Injection] Cleared persisted ChatGPT draft after new chat');
+        }
+        if (index === CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.length - 1) {
+          cancelChatgptNewChatComposerClear();
+        }
+      }, delay);
+      chatgptNewChatClearTimerIds.push(timerId);
+    });
+  }
+
   // Find and click new chat button
   function clickNewChatButton(provider, providerMode = null, options = {}) {
     // Special handling for Google
@@ -3787,6 +3830,9 @@
         clickNewChatButton(provider, providerMode, {
           temporaryChat: event.data.temporaryChat
         });
+        if (provider === 'chatgpt') {
+          scheduleChatgptNewChatComposerClear();
+        }
       } else {
         console.warn('[Text Injection] Provider not detected for NEW_CHAT');
       }
@@ -3804,6 +3850,8 @@
     // Handle INJECT_TEXT_WITH_IMAGES messages
     if (event.data.type === 'INJECT_TEXT_WITH_IMAGES' && event.data.context === 'multi-panel') {
       const provider = detectProvider();
+      // A fill right after New Chat must not be wiped by the pending draft clear.
+      cancelChatgptNewChatComposerClear();
       void handleImageInjection(event)
         .then(result => {
           postMultiPanelActionResult(event.data.requestId, provider, result);
@@ -3823,6 +3871,7 @@
     if (event.data.type !== 'INJECT_TEXT') {
       return;
     }
+    cancelChatgptNewChatComposerClear();
 
     // Validate text payload
     const text = event.data.text;

@@ -302,4 +302,52 @@ describe('chatgpt content script provider status', () => {
     expect(prompt.textContent).toBe('Legacy prompt');
     expect(click).toHaveBeenCalledOnce();
   });
+
+  describe('New Chat clears the persisted composer draft', () => {
+    function createDraftDom() {
+      document.body.innerHTML = `
+        <button aria-label="New chat">New chat</button>
+        <form data-chatgpt-composer data-composer-placement="home">
+          <div data-composer-markdown contenteditable="true" class="ProseMirror"><p>just testhow are you</p></div>
+          <button type="submit" aria-label="Send">Send</button>
+        </form>
+      `;
+      const newChatButton = document.querySelector('button[aria-label="New chat"]');
+      Object.defineProperty(newChatButton, 'offsetParent', { configurable: true, get: () => document.body });
+      newChatButton.getBoundingClientRect = () => ({ x: 0, y: 0, width: 32, height: 32, top: 0, left: 0, right: 32, bottom: 32 });
+      const newChatClick = vi.fn();
+      newChatButton.addEventListener('click', newChatClick);
+      return { editor: document.querySelector('[data-composer-markdown]'), newChatClick };
+    }
+
+    it('clears the draft ChatGPT keeps after its own New chat button', async () => {
+      window.happyDOM.setURL('https://chatgpt.com/');
+      const { editor, newChatClick } = createDraftDom();
+
+      dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+      await wait(50);
+
+      expect(newChatClick).toHaveBeenCalledOnce();
+      expect(editor.textContent).toBe('');
+
+      // ChatGPT restores the draft after re-rendering; the retry clears it again.
+      editor.innerHTML = '<p>just testhow are you</p>';
+      await wait(400);
+      expect(editor.textContent).toBe('');
+    });
+
+    it('does not wipe a fill sent right after New Chat', async () => {
+      window.happyDOM.setURL('https://chatgpt.com/');
+      const { editor } = createDraftDom();
+
+      dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+      await wait(20);
+      dispatchMultiPanelMessage({
+        type: 'INJECT_TEXT', text: 'Fresh prompt', autoSubmit: false, context: 'multi-panel',
+      });
+      await wait(700);
+
+      expect(editor.textContent).toBe('Fresh prompt');
+    });
+  });
 });
