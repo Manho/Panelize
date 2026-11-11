@@ -830,9 +830,18 @@ function createProviderListItemElement(
   info.append(iconWrapper, nameSpan);
 
   if (isCustom && descriptor.frameOrigins?.[0]) {
+    const origin = descriptor.frameOrigins[0];
     const originBadge = document.createElement('span');
     originBadge.className = 'provider-origin-badge';
-    originBadge.textContent = descriptor.frameOrigins[0];
+    const shadow = originBadge.attachShadow({ mode: 'open' });
+    const bdiEl = document.createElement('bdi');
+    bdiEl.dir = 'ltr';
+    bdiEl.style.direction = 'ltr';
+    bdiEl.style.unicodeBidi = 'isolate';
+    bdiEl.appendChild(document.createElement('slot'));
+    shadow.appendChild(bdiEl);
+    originBadge.textContent = origin;
+    originBadge.title = origin;
     info.appendChild(originBadge);
   }
 

@@ -556,8 +556,9 @@ body {
 }
 
 .panel-item[data-custom-provider="true"] .panel-header-left .panel-provider-name {
-  flex: 0 1000 auto;
+  flex: 0 100000000 auto;
   min-width: 0;
+  min-inline-size: 0;
 }
 
 .panel-item[data-custom-provider="true"] .panel-header-right {
@@ -567,6 +568,7 @@ body {
 .panel-header-left .panel-origin-badge,
 .menu-origin-badge {
   display: inline-block;
+  box-sizing: border-box;
   padding: 1px 6px;
   border-radius: 4px;
   border: 1px solid #d0d7de;
@@ -579,16 +581,30 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  direction: rtl;
 }
 
 .panel-header-left .panel-origin-badge {
   flex: 0 1 auto;
   min-width: 0;
+  min-inline-size: 0;
+}
+
+.provider-switcher-menu,
+.add-panel-menu {
+  box-sizing: border-box;
+  max-width: min(420px, calc(100vw - 16px));
+}
+
+.provider-switcher-item[data-custom-provider="true"] > img,
+.add-panel-item[data-custom-provider="true"] > img {
+  flex-shrink: 0;
 }
 
 .menu-provider-name {
-  flex: 0 1 auto;
+  flex: 0 100000000 auto;
   min-width: 0;
+  min-inline-size: 0;
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -596,7 +612,9 @@ body {
 }
 
 .menu-origin-badge {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-inline-size: 0;
   margin-left: auto;
 }
 

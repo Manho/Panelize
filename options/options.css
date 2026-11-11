@@ -347,7 +347,25 @@ select:focus {
   max-width: 100%;
 }
 
+.provider-item[data-custom-provider="true"] .provider-info {
+  min-width: 0;
+}
+
+.provider-item[data-custom-provider="true"] .provider-icon {
+  flex-shrink: 0;
+}
+
+.provider-item[data-custom-provider="true"] .provider-name {
+  flex: 0 100000000 auto;
+  min-width: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .provider-origin-badge {
+  box-sizing: border-box;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   color: #4a5568;
@@ -359,6 +377,10 @@ select:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  direction: rtl;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-inline-size: 0;
   max-width: 280px;
 }
 

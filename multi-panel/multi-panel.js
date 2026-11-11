@@ -1385,6 +1385,20 @@ function getCustomProviderOrigin(providerId) {
   return descriptor.frameOrigins[0] || null;
 }
 
+function setOriginBadgeText(badgeEl, origin) {
+  if (!badgeEl.shadowRoot) {
+    const shadow = badgeEl.attachShadow({ mode: 'open' });
+    const bdiEl = document.createElement('bdi');
+    bdiEl.dir = 'ltr';
+    bdiEl.style.direction = 'ltr';
+    bdiEl.style.unicodeBidi = 'isolate';
+    bdiEl.appendChild(document.createElement('slot'));
+    shadow.appendChild(bdiEl);
+  }
+  badgeEl.textContent = origin;
+  badgeEl.title = origin;
+}
+
 function syncPanelCustomOriginBadge(panelEl, headerLeftEl, headerNameEl, providerId) {
   const customOrigin = getCustomProviderOrigin(providerId);
   const existingBadge = headerLeftEl.querySelector('.panel-origin-badge');
@@ -1401,8 +1415,7 @@ function syncPanelCustomOriginBadge(panelEl, headerLeftEl, headerNameEl, provide
 
   const badgeEl = existingBadge || document.createElement('span');
   badgeEl.className = 'panel-origin-badge';
-  badgeEl.textContent = customOrigin;
-  badgeEl.title = customOrigin;
+  setOriginBadgeText(badgeEl, customOrigin);
   if (!existingBadge) {
     headerLeftEl.appendChild(badgeEl);
   }
@@ -1418,7 +1431,7 @@ function appendMenuOriginBadgeIfCustom(itemEl, nameSpan, providerId) {
   nameSpan.className = 'menu-provider-name';
   const originBadgeEl = document.createElement('span');
   originBadgeEl.className = 'menu-origin-badge';
-  originBadgeEl.textContent = customOrigin;
+  setOriginBadgeText(originBadgeEl, customOrigin);
   itemEl.appendChild(originBadgeEl);
 }
 
