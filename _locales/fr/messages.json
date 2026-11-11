@@ -959,5 +959,8 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Filigrane des images partagées désactivé"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Les images n'ont pas été envoyées à : $1"
   }
 }

@@ -374,8 +374,25 @@ function postToPanelFrame(panel, message) {
   });
 }
 
-function postNewChatToPanel(panel) {
-  if (!panel || !panel.iframe || !panel.iframe.contentWindow) {
+function supportsInPageNewChat(providerId) {
+  return getProviderDescriptor(providerId)?.capabilities?.inPageNewChat !== false;
+}
+
+function supportsImageUpload(providerId) {
+  return getProviderDescriptor(providerId)?.capabilities?.imageUpload !== false;
+}
+
+function postNewChatToPanel(panel, { reloadUrl = null } = {}) {
+  if (!panel) {
+    return;
+  }
+
+  if (!supportsInPageNewChat(panel.providerId)) {
+    reloadPanelIframe(panel, reloadUrl || getProviderFrameUrl(panel.providerId));
+    return;
+  }
+
+  if (!panel.iframe || !panel.iframe.contentWindow) {
     return;
   }
 
@@ -765,6 +782,11 @@ function startFreshChatForPanel(panel, options = {}) {
   const preferInPageNewChat = options.preferInPageNewChat === true;
 
   if (!panel) {
+    return;
+  }
+
+  if (!supportsInPageNewChat(panel.providerId)) {
+    reloadPanelIframe(panel, getProviderFrameUrl(panel.providerId));
     return;
   }
 
@@ -1708,6 +1730,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
     const targetPanels = hasImages
       ? getFillTargetPanels(panels, failedFillPanelIds)
       : panels;
+    const imageSkippedPanels = hasImages
+      ? targetPanels.filter(panel => !supportsImageUpload(panel.providerId))
+      : [];
     const previousFailedPanelIds = new Set(failedFillPanelIds);
     const attemptedImagesByPanel = new Map();
     if (waitForActionResult) {
@@ -1718,8 +1743,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
     const panelResults = await Promise.allSettled(
       targetPanels.map(panel => {
         const isPanelRetry = previousFailedPanelIds.has(panel.id);
+        const panelSupportsImages = supportsImageUpload(panel.providerId);
         let panelImages = [];
-        if (hasImages) {
+        if (hasImages && panelSupportsImages) {
           if (isPanelRetry && pendingFillImageIdsByPanel.has(panel.id)) {
             const pendingIds = new Set(pendingFillImageIdsByPanel.get(panel.id));
             panelImages = uploadedImages.filter(img => pendingIds.has(img.id));
@@ -1728,6 +1754,23 @@ export async function broadcastMessage(text, autoSubmit = true) {
           }
         }
         attemptedImagesByPanel.set(panel.id, panelImages);
+
+        const releaseFocusTracking = () => {
+          // Uploads can outlast the restore timers; hold focus until each
+          // panel has finished filling.
+          if (activeSendFocusRequestId === requestId && sendFocusFillingPanelIds.delete(panel.id)) {
+            maybeStopSendFocusRestore();
+          }
+        };
+
+        if (hasImages && !panelSupportsImages && !text.trim()) {
+          return Promise.resolve({
+            ok: true,
+            panelId: panel.id,
+            provider: panel.providerId,
+            succeededImageIds: []
+          }).finally(releaseFocusTracking);
+        }
 
         const imageCount = panelImages.length;
         const panelTimeoutMs = isFillAction
@@ -1746,13 +1789,7 @@ export async function broadcastMessage(text, autoSubmit = true) {
             isFillAction,
             waitForActionResult
           }
-        ).finally(() => {
-          // Uploads can outlast the restore timers; hold focus until each
-          // panel has finished filling.
-          if (activeSendFocusRequestId === requestId && sendFocusFillingPanelIds.delete(panel.id)) {
-            maybeStopSendFocusRestore();
-          }
-        });
+        ).finally(releaseFocusTracking);
       })
     );
     const normalizedResults = normalizePanelResults(panelResults, targetPanels);
@@ -1766,6 +1803,19 @@ export async function broadcastMessage(text, autoSubmit = true) {
           statusEl.className = 'send-status';
         }, 3000);
         return;
+      }
+
+      if (imageSkippedPanels.length > 0) {
+        const skippedNames = imageSkippedPanels.map(
+          panel => getProviderById(panel.providerId)?.name || panel.providerId
+        );
+        showToast(
+          getLocalizedText(
+            'msgImagesSkippedForPanels',
+            'Images were not sent to: $1',
+            [formatProviderList(skippedNames, getSnapshotLocale())]
+          )
+        );
       }
 
       normalizedResults.forEach(result => {
@@ -2229,7 +2279,8 @@ function getSnapshotPanels() {
     name: getProviderById(panel.providerId)?.name || panel.providerId,
     iframe: panel.iframe,
     targetOrigins: getProviderFrameOrigins(panel.providerId),
-    element: document.getElementById(panel.id)
+    element: document.getElementById(panel.id),
+    snapshotStitch: getProviderDescriptor(panel.providerId)?.capabilities?.snapshotStitch !== false
   })).filter(panel => panel.element && panel.iframe);
 }
 
@@ -2864,7 +2915,7 @@ async function temporaryChatAllProviders() {
         return;
       }
 
-      postNewChatToPanel(panel);
+      postNewChatToPanel(panel, { reloadUrl: getTemporaryChatNormalUrl(panel.providerId) });
     });
 
     restoreUnifiedInputFocusAfterNewChat();

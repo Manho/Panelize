@@ -959,5 +959,8 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "共有画像の透かしを無効にしました"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "画像は次のパネルには送信されませんでした: $1"
   }
 }

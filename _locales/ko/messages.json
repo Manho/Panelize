@@ -959,5 +959,8 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "공유 이미지 워터마크가 꺼졌습니다"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "다음 패널에는 이미지가 전송되지 않았습니다: $1"
   }
 }

@@ -955,5 +955,8 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "已關閉分享圖片浮水印"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "未向以下面板傳送圖片：$1"
   }
 }

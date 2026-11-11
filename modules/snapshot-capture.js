@@ -346,6 +346,10 @@ function sampleFillColor(bitmap) {
   return getDominantColor(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
 }
 
+function supportsSnapshotStitch(panel) {
+  return panel?.snapshotStitch !== false && panel?.capabilities?.snapshotStitch !== false;
+}
+
 /**
  * Lines the panels up and hides floating buttons, fades and overlay
  * scrollbars. Stitching also un-sticks headings and always starts from the
@@ -357,22 +361,30 @@ function sampleFillColor(bitmap) {
  *   sharing can draw into the frames.
  */
 async function prepareAll(bridge, panels, { prompt, stitch = false, hideCursor = false }, signal) {
-  const states = await Promise.all(panels.map((panel) => bridge.request(
-    panel,
-    SNAPSHOT_MESSAGES.PREPARE,
-    { align: Boolean(prompt), prompt: prompt || '', stitch, hideFloating: true, hideCursor },
-    PREPARE_TIMEOUT_MS
+  const states = await Promise.all(panels.map((panel) => (
+    supportsSnapshotStitch(panel)
+      ? bridge.request(
+        panel,
+        SNAPSHOT_MESSAGES.PREPARE,
+        { align: Boolean(prompt), prompt: prompt || '', stitch, hideFloating: true, hideCursor },
+        PREPARE_TIMEOUT_MS
+      )
+      : Promise.resolve(null)
   )));
   throwIfAborted(signal);
   return states;
 }
 
 function restoreAll(bridge, panels) {
-  return Promise.all(panels.map((panel) => bridge.request(
-    panel,
-    SNAPSHOT_MESSAGES.RESTORE,
-    {},
-    RESTORE_TIMEOUT_MS
+  return Promise.all(panels.map((panel) => (
+    supportsSnapshotStitch(panel)
+      ? bridge.request(
+        panel,
+        SNAPSHOT_MESSAGES.RESTORE,
+        {},
+        RESTORE_TIMEOUT_MS
+      )
+      : Promise.resolve(null)
   )));
 }
 

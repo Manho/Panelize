@@ -976,5 +976,8 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Watermark on shared images disabled"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Images were not sent to: $1"
   }
 }

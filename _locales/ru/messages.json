@@ -959,5 +959,8 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Водяной знак на изображениях выключен"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Изображения не были отправлены в: $1"
   }
 }
