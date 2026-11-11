@@ -21,6 +21,7 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('chatglm', 'https://chatglm.cn/main/alltoolsdetail?lang=zh&cid=abc123')).toBe(true);
     expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/agent123/chat456')).toBe(true);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/1abcDEF234')).toBe(true);
   });
 
   it('accepts current Google pages for both AI Mode and Search', () => {
@@ -54,6 +55,13 @@ describe('provider open URL helpers', () => {
       'https://yuanbao.tencent.com/chat/agent123/chat456?chatMode=temp'
     )).toBe(false);
     expect(isProviderAllowedUrl('yuanbao', 'https://evil.example/chat/agent123/chat456')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/new_chat')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/new_multiturn')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/new_chunk')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/new_chat?temporary=true')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/1abcDEF234?temporary=true')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/welcome')).toBe(false);
+    expect(isProviderAllowedUrl('aistudio', 'https://evil.example/prompts/1abcDEF234')).toBe(false);
   });
 
   it('opens the reported current URL when it is valid', () => {
@@ -73,5 +81,11 @@ describe('provider open URL helpers', () => {
     expect(getProviderOpenUrl(getProviderById('yuanbao'), 'https://yuanbao.tencent.com/chat/naQivTmsDa')).toBe(
       'https://yuanbao.tencent.com/chat/naQivTmsDa'
     );
+    expect(
+      getProviderOpenUrl(
+        getProviderById('aistudio'),
+        'https://aistudio.google.com/prompts/new_chat?temporary=true'
+      )
+    ).toBe('https://aistudio.google.com/prompts/new_chat');
   });
 });

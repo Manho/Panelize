@@ -75,6 +75,17 @@ describe('optional provider access', () => {
       },
     });
     expect(OPTIONAL_PROVIDER_CONFIGS.yuanbao.frameRule).toBeUndefined();
+    expect(OPTIONAL_PROVIDER_CONFIGS.aistudio).toMatchObject({
+      origins: [
+        'https://aistudio.google.com/*',
+        'https://alkalimakersuite-pa.clients6.google.com/*',
+      ],
+      contentScript: {
+        id: 'aistudio-scripts',
+        matches: ['https://aistudio.google.com/*'],
+      },
+      frameRule: { id: 1005 },
+    });
   });
 
   it('places each provider-specific Enter behavior script explicitly in registration order', () => {
@@ -110,6 +121,13 @@ describe('optional provider access', () => {
       'content-scripts/button-finder-utils.js',
       'content-scripts/enter-behavior-utils.js',
       'content-scripts/enter-behavior-yuanbao.js',
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/focus-toggle.js',
+    ]);
+    expect(OPTIONAL_PROVIDER_CONFIGS.aistudio.contentScript.js).toEqual([
+      'content-scripts/button-finder-utils.js',
+      'content-scripts/enter-behavior-utils.js',
+      'content-scripts/enter-behavior-aistudio.js',
       'content-scripts/text-injection-all-providers.js',
       'content-scripts/focus-toggle.js',
     ]);
@@ -179,6 +197,7 @@ describe('optional provider access', () => {
       'chatglm',
       'zai-global',
       'yuanbao',
+      'aistudio',
     ])).resolves.toEqual(['chatgpt', 'qwen-global']);
   });
 
@@ -244,6 +263,7 @@ describe('optional provider access', () => {
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
+      { id: 'aistudio-scripts' },
       { id: 'unrelated-script' },
     ]);
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue([
@@ -251,6 +271,7 @@ describe('optional provider access', () => {
       { id: 1002 },
       { id: 1003 },
       { id: 1004 },
+      { id: 1005 },
       { id: 9999 },
     ]);
 
@@ -263,10 +284,11 @@ describe('optional provider access', () => {
         'chatglm-scripts',
         'zai-global-scripts',
         'yuanbao-scripts',
+        'aistudio-scripts',
       ],
     });
     expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith({
-      removeRuleIds: [1001, 1002, 1003, 1004],
+      removeRuleIds: [1001, 1002, 1003, 1004, 1005],
       addRules: [],
     });
   });
@@ -281,6 +303,7 @@ describe('optional provider access', () => {
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
+      { id: 'aistudio-scripts' },
     ]);
     // getDynamicRules returns each installed rule in full.
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue(installedOptionalFrameRules());
@@ -291,6 +314,7 @@ describe('optional provider access', () => {
       'chatglm',
       'zai-global',
       'yuanbao',
+      'aistudio',
     ]);
 
     expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
@@ -311,6 +335,7 @@ describe('optional provider access', () => {
       { id: 'chatglm-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
+      { id: 'aistudio-scripts' },
     ]);
     // getDynamicRules returns each installed rule in full.
     chrome.declarativeNetRequest.getDynamicRules.mockResolvedValue(installedOptionalFrameRules());
@@ -321,6 +346,7 @@ describe('optional provider access', () => {
       'chatglm',
       'zai-global',
       'yuanbao',
+      'aistudio',
     ]);
 
     expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();

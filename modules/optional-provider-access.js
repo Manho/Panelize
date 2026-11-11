@@ -83,6 +83,18 @@ export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze({
       ['https://yuanbao.tencent.com/*'],
       'content-scripts/enter-behavior-yuanbao.js'
     ))
+  }),
+  aistudio: Object.freeze({
+    origins: Object.freeze([
+      'https://aistudio.google.com/*',
+      'https://alkalimakersuite-pa.clients6.google.com/*'
+    ]),
+    contentScript: Object.freeze(createContentScript(
+      'aistudio-scripts',
+      ['https://aistudio.google.com/*'],
+      'content-scripts/enter-behavior-aistudio.js'
+    )),
+    frameRule: Object.freeze(createFrameRule(1005, 'https://aistudio.google.com/*'))
   })
 });
 

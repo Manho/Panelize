@@ -210,19 +210,21 @@ const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
 const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
-const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao']);
+const TEMP_CHAT_SUPPORTED_PROVIDERS = new Set(['chatgpt', 'gemini', 'claude', 'grok', 'yuanbao', 'aistudio']);
 const TEMP_CHAT_RETRY_PROVIDERS = new Set(['gemini', 'grok', 'yuanbao']);
 const TEMP_CHAT_URLS = {
   chatgpt: 'https://chatgpt.com/?temporary-chat=true',
   claude: 'https://claude.ai/new?incognito',
-  grok: 'https://grok.com/c#private'
+  grok: 'https://grok.com/c#private',
+  aistudio: 'https://aistudio.google.com/prompts/new_chat?temporary=true'
 };
 const TEMP_CHAT_NORMAL_URLS = {
   chatgpt: 'https://chatgpt.com/',
   claude: 'https://claude.ai/new',
   gemini: 'https://gemini.google.com/',
   grok: 'https://grok.com/',
-  yuanbao: getProviderById('yuanbao').url
+  yuanbao: getProviderById('yuanbao').url,
+  aistudio: 'https://aistudio.google.com/prompts/new_chat'
 };
 let isInitialized = false;
 

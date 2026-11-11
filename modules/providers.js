@@ -128,6 +128,16 @@ export const PROVIDERS = [
     iconDark: '/icons/providers/dark/yuanbao.png',
     enabled: true,
     optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.yuanbao.origins
+  },
+  {
+    id: 'aistudio',
+    name: 'Google AI Studio',
+    url: 'https://aistudio.google.com/prompts/new_chat',
+    topLevelUrl: 'https://aistudio.google.com/prompts/new_chat',
+    icon: '/icons/providers/aistudio.svg',
+    iconDark: '/icons/providers/dark/aistudio.svg',
+    enabled: true,
+    optionalOrigins: OPTIONAL_PROVIDER_CONFIGS.aistudio.origins
   }
 ];
 
