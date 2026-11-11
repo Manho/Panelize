@@ -102,6 +102,11 @@ function installStatefulLocalStorage(initial = {}) {
 describe('custom providers: registry, id rules, URL validation, and storage hydration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    chrome.permissions = {
+      contains: vi.fn(() => Promise.resolve(true)),
+      request: vi.fn(() => Promise.resolve(true)),
+      remove: vi.fn(() => Promise.resolve(true)),
+    };
     setCustomProviderDescriptors([]);
     resetExtraProviderDescriptors();
   });

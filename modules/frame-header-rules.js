@@ -26,6 +26,10 @@ export function isScopedStaticRuleId(id) {
   return Number.isInteger(id) && id > SCOPED_RULE_ID_OFFSET && id <= SCOPED_RULE_ID_MAX;
 }
 
+export function supportsScopedFrameRules() {
+  return getExtensionTopDomains() !== null;
+}
+
 export function restrictRuleToTopDomains(rule, topDomains) {
   return {
     ...rule,
@@ -96,7 +100,7 @@ async function isStaticFrameRulesetEnabled() {
   return enabledRulesetIds.includes(STATIC_FRAME_RULESET_ID);
 }
 
-async function installScopedFrameRules(optionalRules, isManagedId, topDomains) {
+async function installScopedFrameRules(optionalRules, customRules, isManagedId, topDomains) {
   const scopedStaticRules = (await loadStaticFrameRules()).map((rule) => restrictRuleToTopDomains(
     { ...rule, id: SCOPED_RULE_ID_OFFSET + rule.id },
     topDomains
@@ -105,12 +109,16 @@ async function installScopedFrameRules(optionalRules, isManagedId, topDomains) {
     throw new Error(`${STATIC_FRAME_RULES_PATH} has a rule id outside the scoped range`);
   }
   const scopedOptionalRules = optionalRules.map((rule) => restrictRuleToTopDomains(rule, topDomains));
-  await applyManagedDynamicRules([...scopedStaticRules, ...scopedOptionalRules], isManagedId);
+  const scopedCustomRules = customRules.map((rule) => restrictRuleToTopDomains(rule, topDomains));
+  await applyManagedDynamicRules(
+    [...scopedStaticRules, ...scopedOptionalRules, ...scopedCustomRules],
+    isManagedId
+  );
 
   // Turn the unscoped ruleset off only once every scoped copy is in place, so
   // provider frames are never left without a rule.
   const installedRules = await chrome.declarativeNetRequest.getDynamicRules();
-  const allInstalled = scopedStaticRules.every((desiredRule) => installedRules
+  const allInstalled = [...scopedStaticRules, ...scopedCustomRules].every((desiredRule) => installedRules
     .some((installedRule) => isSameRule(installedRule, desiredRule)));
   if (!allInstalled) {
     throw new Error('Scoped frame header rules are not installed');
@@ -129,34 +137,56 @@ async function installUnscopedFrameRules(optionalRules, isManagedId) {
 }
 
 /**
- * Reconciles the frame header rules: the built-in provider rules plus the
- * rules of enabled optional providers (optionalRules). optionalRuleIds lists
- * every optional rule id this extension manages, enabled or not.
+ * Reconciles the frame header rules and reports whether scoped rules are active.
+ * Custom provider rules are installed ONLY when scoped rules succeed and are
+ * never passed to installUnscopedFrameRules.
  */
-export async function syncFrameHeaderRules({ optionalRules = [], optionalRuleIds = [] } = {}) {
+export async function syncFrameHeaderRulesWithStatus({
+  optionalRules = [],
+  optionalRuleIds = [],
+  customRules = [],
+  isManagedCustomRuleId = () => false
+} = {}) {
   const dnr = typeof chrome === 'undefined' ? null : chrome.declarativeNetRequest;
   if (!dnr?.getDynamicRules || !dnr?.updateDynamicRules) {
-    return;
+    return { scopedInstalled: false };
   }
 
   const managedOptionalIds = new Set(optionalRuleIds);
-  const isManagedId = (id) => managedOptionalIds.has(id) || isScopedStaticRuleId(id);
+  const isManagedId = (id) => (
+    managedOptionalIds.has(id) ||
+    isScopedStaticRuleId(id) ||
+    isManagedCustomRuleId(id)
+  );
   const rulesetControl = Boolean(dnr.getEnabledRulesets && dnr.updateEnabledRulesets);
   const topDomains = getExtensionTopDomains();
 
   if (!rulesetControl) {
-    await applyManagedDynamicRules(optionalRules, (id) => managedOptionalIds.has(id));
-    return;
+    await applyManagedDynamicRules(
+      optionalRules,
+      (id) => managedOptionalIds.has(id) || isManagedCustomRuleId(id)
+    );
+    return { scopedInstalled: false };
   }
 
   if (topDomains) {
     try {
-      await installScopedFrameRules(optionalRules, isManagedId, topDomains);
-      return;
+      await installScopedFrameRules(optionalRules, customRules, isManagedId, topDomains);
+      return { scopedInstalled: true };
     } catch (error) {
       console.warn('[Background] Keeping unscoped frame header rules:', error);
     }
   }
 
   await installUnscopedFrameRules(optionalRules, isManagedId);
+  return { scopedInstalled: false };
+}
+
+/**
+ * Reconciles the frame header rules: the built-in provider rules plus the
+ * rules of enabled optional providers (optionalRules). optionalRuleIds lists
+ * every optional rule id this extension manages, enabled or not.
+ */
+export async function syncFrameHeaderRules(options = {}) {
+  await syncFrameHeaderRulesWithStatus(options);
 }
