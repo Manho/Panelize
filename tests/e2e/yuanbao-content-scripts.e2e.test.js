@@ -159,12 +159,12 @@ test.describe('Yuanbao production content scripts', () => {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/options/options.html`);
     const providers = page.locator('.provider-item');
-    await expect(providers).toHaveCount(13);
+    await expect(providers).toHaveCount(14);
     await expect(page.locator('.provider-item[data-provider-id="yuanbao"]')).toBeVisible();
     expect(await providers.evaluateAll(items => items.map(item => item.dataset.providerId)))
       .toEqual(expect.arrayContaining([
         'chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'kimi', 'google',
-        'doubao', 'qwen-cn', 'qwen-global', 'chatglm', 'zai-global', 'yuanbao',
+        'doubao', 'qwen-cn', 'qwen-global', 'chatglm', 'zai-global', 'yuanbao', 'aistudio',
       ]));
     await page.screenshot({ path: testInfo.outputPath('providers.png'), fullPage: true });
     await page.close();

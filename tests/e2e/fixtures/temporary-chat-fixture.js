@@ -10,7 +10,7 @@
  *   chat link and the private chat link use client-side routing.
  * - kimi: has no temporary chat control at all.
  *
- * @param {'gemini' | 'grok' | 'kimi'} provider
+ * @param {'gemini' | 'grok' | 'kimi' | 'aistudio'} provider
  * @param {object} [options]
  * @param {number} [options.tempButtonDelayMs] - Gemini toggle render delay.
  * @returns {string} HTML document.
@@ -28,6 +28,10 @@ export function renderTemporaryChatFixture(provider, { tempButtonDelayMs = 0 } =
     kimi: `
       <a href="/" class="new-chat-btn" id="new-chat">New chat</a>
       <div class="chat-input-editor" contenteditable="true"></div>`,
+    aistudio: `
+      <button type="button" data-test-clear="outside" aria-label="New chat" id="new-chat">New chat</button>
+      <button type="button" data-test-incognito-toggle aria-label="Toggle temporary chat" id="temp-chat">Temporary chat</button>
+      <ms-prompt-box><textarea class="textarea" formcontrolname="promptText" aria-label="Enter a prompt"></textarea></ms-prompt-box>`,
   }[provider];
 
   return `<!doctype html>
