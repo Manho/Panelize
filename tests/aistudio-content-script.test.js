@@ -103,6 +103,7 @@ function createAiStudioComposerDom({
   const tempToggle = document.querySelector('button[data-test-incognito-toggle]');
   const clearButton = document.querySelector('button[data-test-clear="outside"]');
   const addMediaButton = document.querySelector('ms-add-media-button button');
+  const incognitoIndicator = document.querySelector('ms-incognito-mode-indicator');
 
   makeVisible(textarea);
   makeVisible(runButton, { width: 88, height: 36, top: 18, left: 300, right: 388, bottom: 54 });
@@ -114,6 +115,9 @@ function createAiStudioComposerDom({
   }
   if (addMediaButton) {
     makeVisible(addMediaButton, { width: 36, height: 36, top: 18, left: 256, right: 292, bottom: 54 });
+  }
+  if (incognitoIndicator) {
+    makeVisible(incognitoIndicator, { width: 240, height: 28, top: 0, left: 10, right: 250, bottom: 28 });
   }
 
   if (buttonState === 'stop') {
@@ -406,13 +410,13 @@ describe('Google AI Studio content script integration', () => {
       expect(window.location.href).toBe('https://aistudio.google.com/prompts/new_chat?temporary=true');
     });
 
-    it('preserves temporary=true on PANELIZE_NEW_CHAT when already in temporary chat and temporaryChat is not explicitly false', () => {
+    it('preserves temporary=true on NEW_CHAT when already in temporary chat and temporaryChat is not explicitly false', () => {
       window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat?temporary=true');
       const { clearButton } = createAiStudioComposerDom({ incognitoActive: true });
       const clearClickSpy = vi.spyOn(clearButton, 'click');
 
       dispatchMultiPanelMessage({
-        type: 'PANELIZE_NEW_CHAT',
+        type: 'NEW_CHAT',
         context: 'multi-panel'
       });
 
@@ -443,7 +447,7 @@ describe('Google AI Studio content script integration', () => {
       ]);
     });
 
-    it('reports PANELIZE_TEMP_CHAT_ENABLED without clicking toggle when ms-incognito-mode-indicator is present in DOM', async () => {
+    it('reports PANELIZE_TEMP_CHAT_ENABLED without clicking toggle when visible ms-incognito-mode-indicator has text in DOM', async () => {
       window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat');
       const { tempToggle } = createAiStudioComposerDom({ incognitoActive: true });
       const clickSpy = vi.spyOn(tempToggle, 'click');
@@ -462,6 +466,22 @@ describe('Google AI Studio content script integration', () => {
           provider: 'aistudio'
         })
       ]);
+    });
+
+    it('ignores an empty or hidden ms-incognito-mode-indicator host element and clicks button[data-test-incognito-toggle]', async () => {
+      window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat');
+      const { tempToggle } = createAiStudioComposerDom({ incognitoActive: false });
+      const emptyIndicator = document.createElement('ms-incognito-mode-indicator');
+      document.body.appendChild(emptyIndicator);
+      const clickSpy = vi.spyOn(tempToggle, 'click');
+
+      dispatchMultiPanelMessage({
+        type: 'ENABLE_TEMP_CHAT',
+        context: 'multi-panel'
+      });
+      await wait(50);
+
+      expect(clickSpy).toHaveBeenCalledTimes(1);
     });
 
     it('clicks button[data-test-incognito-toggle] when temporary chat is not yet active', async () => {

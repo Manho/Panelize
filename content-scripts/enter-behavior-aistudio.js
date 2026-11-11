@@ -25,52 +25,23 @@ function isAiStudioInput(element) {
     return false;
   }
 
-  if (element.closest?.('ms-system-instructions')) {
+  if (element.closest?.('ms-system-instructions, ms-chat-turn, ms-chunk-editor')) {
+    return false;
+  }
+
+  if (!element.closest?.('ms-prompt-box')) {
     return false;
   }
 
   const ariaLabel = String(element.getAttribute?.('aria-label') || '');
-  const placeholder = String(element.placeholder || element.getAttribute?.('placeholder') || '');
   const className = String(element.className || '');
 
   return Boolean(
     element.getAttribute?.('formcontrolname') === 'promptText' ||
-    element.classList?.contains?.('textarea') ||
-    /\btextarea\b/.test(className) ||
     ariaLabel === 'Enter a prompt' ||
-    /prompt/i.test(ariaLabel) ||
-    /prompt/i.test(placeholder) ||
-    element.closest?.('ms-prompt-box, ms-autosize-textarea')
+    element.classList?.contains?.('textarea') ||
+    /\btextarea\b/.test(className)
   );
-}
-
-function findRawAiStudioRunButton() {
-  if (typeof document.querySelector === 'function') {
-    const direct =
-      document.querySelector('ms-prompt-box ms-run-button button') ||
-      document.querySelector('ms-run-button button.run-button') ||
-      document.querySelector('ms-run-button button');
-    if (direct) {
-      return direct;
-    }
-  }
-  return window.ButtonFinderUtils?.findButton?.(AI_STUDIO_SEND_BUTTON_SELECTORS) || null;
-}
-
-/**
- * AI Studio defaults to CTRL_ENTER_SUBMITS (marked by .ctrl-enter-submits on
- * <ms-run-button>'s button), where plain Enter inserts a newline and
- * Ctrl+Enter / Cmd+Enter submits. Users can switch AI Studio to ENTER_SUBMITS
- * in preferences, which removes .ctrl-enter-submits.
- */
-function isAiStudioCtrlEnterSubmitsMode(button = findRawAiStudioRunButton()) {
-  if (!button) {
-    return true;
-  }
-  if (typeof button.classList?.contains === 'function') {
-    return button.classList.contains('ctrl-enter-submits');
-  }
-  return /\bctrl-enter-submits\b/.test(String(button.className || ''));
 }
 
 function isAiStudioSendEnabled(sendButton) {
@@ -176,22 +147,17 @@ function handleEnterSwap(event) {
     return;
   }
 
-  if (matchesModifiers(event, enterKeyConfig.sendModifiers)) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-
-    const sendButton = findAiStudioSendButton();
-    if (sendButton) {
-      sendButton.click();
-    }
+  if (!matchesModifiers(event, enterKeyConfig.sendModifiers)) {
     return;
   }
 
-  // Block any unconfigured Enter modifier combinations (such as AI Studio's
-  // native Ctrl+Enter/Cmd+Enter submit in .ctrl-enter-submits mode, plain Enter
-  // submit in non-.ctrl-enter-submits mode, or Alt+Enter stage/append).
   event.preventDefault();
   event.stopImmediatePropagation();
+
+  const sendButton = findAiStudioSendButton();
+  if (sendButton) {
+    sendButton.click();
+  }
 }
 
 applyEnterSwapSetting();

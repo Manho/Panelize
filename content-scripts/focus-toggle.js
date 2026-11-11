@@ -33,8 +33,8 @@ function findProviderInput() {
     return document.querySelector('ms-prompt-box textarea[formcontrolname="promptText"]') ||
            document.querySelector('ms-prompt-box textarea.textarea') ||
            document.querySelector('ms-prompt-box textarea[aria-label="Enter a prompt"]') ||
-           document.querySelector('ms-autosize-textarea textarea') ||
-           document.querySelector('textarea[aria-label*="prompt" i]');
+           document.querySelector('ms-prompt-box textarea') ||
+           document.querySelector('textarea[formcontrolname="promptText"]');
   }
 
   // Google AI Mode

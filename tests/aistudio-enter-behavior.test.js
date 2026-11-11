@@ -95,11 +95,14 @@ function createHarness({
       return null;
     }),
     closest: vi.fn((selector) => {
-      if (selector === 'ms-system-instructions') {
-        return isPromptInput ? null : {};
+      if (selector.includes('ms-system-instructions')) {
+        return isPromptInput === 'system' ? {} : null;
+      }
+      if (selector.includes('ms-chat-turn')) {
+        return isPromptInput === 'turn-edit' ? {} : null;
       }
       if (selector.includes('ms-prompt-box')) {
-        return isPromptInput ? {} : null;
+        return isPromptInput === true ? {} : null;
       }
       return null;
     }),
@@ -207,8 +210,6 @@ describe('Google AI Studio Enter behavior customization', () => {
         ctrlEnterSubmits: true
       });
 
-      expect(context.isAiStudioCtrlEnterSubmitsMode()).toBe(true);
-
       const sendEvent = createEnterEvent();
       context.handleEnterSwap(sendEvent);
 
@@ -254,7 +255,7 @@ describe('Google AI Studio Enter behavior customization', () => {
       expect(sendButton.click).toHaveBeenCalledTimes(1);
     });
 
-    it('supports Ctrl+Enter send preset and blocks unconfigured Alt+Enter stage shortcut', () => {
+    it('supports Ctrl+Enter send preset and lets unconfigured modifier+Enter shortcuts pass through', () => {
       const { context, sendButton } = createHarness({
         ctrlEnterSubmits: true,
         preset: 'ctrl_enter',
@@ -265,8 +266,8 @@ describe('Google AI Studio Enter behavior customization', () => {
       const altEnter = createEnterEvent({ altKey: true });
       context.handleEnterSwap(altEnter);
 
-      expect(altEnter.preventDefault).toHaveBeenCalledTimes(1);
-      expect(altEnter.stopImmediatePropagation).toHaveBeenCalledTimes(1);
+      expect(altEnter.preventDefault).not.toHaveBeenCalled();
+      expect(altEnter.stopImmediatePropagation).not.toHaveBeenCalled();
       expect(sendButton.click).not.toHaveBeenCalled();
 
       const ctrlEnter = createEnterEvent({ ctrlKey: true });
@@ -287,8 +288,6 @@ describe('Google AI Studio Enter behavior customization', () => {
         sendModifiers: { shift: true, ctrl: false, alt: false, meta: false },
         initialValue: 'First line'
       });
-
-      expect(context.isAiStudioCtrlEnterSubmitsMode()).toBe(false);
 
       const plainEnter = createEnterEvent();
       context.handleEnterSwap(plainEnter);
@@ -323,7 +322,7 @@ describe('Google AI Studio Enter behavior customization', () => {
     });
   });
 
-  describe('Stop/Add/disabled guard, IME composition, and disabled toggle', () => {
+  describe('Stop/Add/disabled guard, IME composition, and non-composer inputs', () => {
     it('never clicks ms-run-button when it is in Stop state (.spin / Cancel generation)', () => {
       const { context, sendButton } = createHarness({
         buttonState: 'stop'
@@ -361,18 +360,29 @@ describe('Google AI Studio Enter behavior customization', () => {
       expect(sendButton.click).not.toHaveBeenCalled();
     });
 
-    it('does not intercept Enter when enterKeyBehavior.enabled is false or focus is in system instructions', () => {
+    it('does not intercept Enter when enterKeyBehavior.enabled is false, in system instructions, or in a turn-edit ms-autosize-textarea outside ms-prompt-box', () => {
       const disabledToggle = createHarness({ enabled: false });
       const event = createEnterEvent();
       disabledToggle.context.handleEnterSwap(event);
       expect(event.preventDefault).not.toHaveBeenCalled();
       expect(disabledToggle.sendButton.click).not.toHaveBeenCalled();
 
-      const systemInstructionsInput = createHarness({ isPromptInput: false });
+      const systemInstructionsInput = createHarness({ isPromptInput: 'system' });
       const sysEvent = createEnterEvent();
       systemInstructionsInput.context.handleEnterSwap(sysEvent);
       expect(sysEvent.preventDefault).not.toHaveBeenCalled();
       expect(systemInstructionsInput.sendButton.click).not.toHaveBeenCalled();
+
+      // Turn edit textarea (ms-autosize-textarea with class="textarea" inside ms-chat-turn, outside ms-prompt-box)
+      const turnEditInput = createHarness({ isPromptInput: 'turn-edit' });
+      turnEditInput.editor.className = 'textarea';
+      turnEditInput.editor.classList.contains = vi.fn((token) => token === 'textarea');
+      turnEditInput.editor.placeholder = 'Edit prompt';
+      const turnEvent = createEnterEvent();
+      turnEditInput.context.handleEnterSwap(turnEvent);
+      expect(turnEvent.preventDefault).not.toHaveBeenCalled();
+      expect(turnEvent.stopImmediatePropagation).not.toHaveBeenCalled();
+      expect(turnEditInput.sendButton.click).not.toHaveBeenCalled();
     });
   });
 });

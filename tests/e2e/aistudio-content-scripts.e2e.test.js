@@ -28,6 +28,17 @@ function renderAiStudioFixture(requestUrl) {
       <button type="button" data-test-clear="outside" aria-label="New chat" mattooltip="New chat">Clear</button>
     </div>
     ${isTemporary ? '<ms-incognito-mode-indicator><div class="incognito-banner">You\'re in a temporary chat</div></ms-incognito-mode-indicator>' : ''}
+    <ms-chat-turn>
+      <ms-autosize-textarea>
+        <textarea
+          id="turn-edit-textarea"
+          class="textarea"
+          placeholder="Edit prompt"
+          rows="2"
+          style="width:320px;height:48px"
+        ></textarea>
+      </ms-autosize-textarea>
+    </ms-chat-turn>
     <ms-prompt-box>
       <div class="prompt-box-container" msfilecopypaste>
         <div class="text-wrapper">
@@ -346,40 +357,40 @@ test.describe('Google AI Studio production content scripts', () => {
     await page.close();
   });
 
-  test('navigates directly on PANELIZE_NEW_CHAT to /prompts/new_chat (normal) vs /prompts/new_chat?temporary=true (privacy mode)', async () => {
+  test('navigates directly on NEW_CHAT to /prompts/new_chat (normal) vs /prompts/new_chat?temporary=true (privacy mode)', async () => {
     const { page, frame } = await openFramedFixture(
       extension,
       'https://aistudio.google.com/prompts/saved-conversation-123'
     );
 
-    // Normal mode PANELIZE_NEW_CHAT -> /prompts/new_chat without clicking clear button modal trigger
+    // Normal mode NEW_CHAT -> /prompts/new_chat without clicking clear button modal trigger
     await postPanelMessage(page, {
-      type: 'PANELIZE_NEW_CHAT',
+      type: 'NEW_CHAT',
       temporaryChat: false,
     });
     await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat');
     await frame.waitForSelector('ms-prompt-box textarea[formcontrolname="promptText"]');
     expect(await frame.evaluate(() => window.__clearButtonClicks)).toBe(0);
 
-    // Privacy mode PANELIZE_NEW_CHAT -> /prompts/new_chat?temporary=true
+    // Privacy mode NEW_CHAT -> /prompts/new_chat?temporary=true
     await postPanelMessage(page, {
-      type: 'PANELIZE_NEW_CHAT',
+      type: 'NEW_CHAT',
       temporaryChat: true,
     });
     await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=true');
     await frame.waitForSelector('ms-incognito-mode-indicator');
     expect(await frame.evaluate(() => window.__clearButtonClicks)).toBe(0);
 
-    // Subsequent PANELIZE_NEW_CHAT while already in temporary chat stays in ?temporary=true
+    // Subsequent NEW_CHAT while already in temporary chat stays in ?temporary=true
     await postPanelMessage(page, {
-      type: 'PANELIZE_NEW_CHAT',
+      type: 'NEW_CHAT',
     });
     await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat?temporary=true');
     await frame.waitForSelector('ms-incognito-mode-indicator');
 
     // Explicit temporaryChat: false returns to normal /prompts/new_chat
     await postPanelMessage(page, {
-      type: 'PANELIZE_NEW_CHAT',
+      type: 'NEW_CHAT',
       temporaryChat: false,
     });
     await expect.poll(() => frame.url()).toBe('https://aistudio.google.com/prompts/new_chat');
@@ -387,12 +398,20 @@ test.describe('Google AI Studio production content scripts', () => {
     await page.close();
   });
 
-  test('customizes Enter and Shift+Enter behavior on ms-prompt-box textarea', async () => {
+  test('customizes Enter and Shift+Enter behavior on ms-prompt-box textarea without intercepting turn-edit textareas', async () => {
     const { page, frame } = await openFramedFixture(
       extension,
       'https://aistudio.google.com/prompts/new_chat'
     );
     const editor = frame.locator('ms-prompt-box textarea[formcontrolname="promptText"]');
+    const turnEdit = frame.locator('#turn-edit-textarea');
+
+    // Pressing Enter inside a turn-edit ms-autosize-textarea outside ms-prompt-box must not click Run
+    await turnEdit.fill('Turn line 1');
+    await turnEdit.focus();
+    await page.keyboard.press('Enter');
+    await expect(turnEdit).toHaveValue('Turn line 1\n');
+    expect(await frame.evaluate(() => window.__sendCount)).toBe(0);
 
     await editor.fill('Line 1');
     await editor.focus();

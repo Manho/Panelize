@@ -196,8 +196,8 @@
       'ms-prompt-box textarea[formcontrolname="promptText"]',
       'ms-prompt-box textarea.textarea',
       'ms-prompt-box textarea[aria-label="Enter a prompt"]',
-      'ms-autosize-textarea textarea',
-      'textarea[aria-label*="prompt" i]'
+      'ms-prompt-box textarea',
+      'textarea[formcontrolname="promptText"]'
     ],
     google: [
       'textarea.ITIRGe',
@@ -1774,7 +1774,8 @@
       // Ignore invalid URL parse errors
     }
 
-    if (document.querySelector('ms-incognito-mode-indicator')) {
+    const indicator = document.querySelector('ms-incognito-mode-indicator');
+    if (indicator && isVisibleElement(indicator) && Boolean(indicator.textContent?.trim())) {
       return true;
     }
 
@@ -3756,11 +3757,8 @@
       return;
     }
 
-    // Handle NEW_CHAT / PANELIZE_NEW_CHAT messages (create new chat)
-    if (
-      (event.data.type === 'NEW_CHAT' || event.data.type === 'PANELIZE_NEW_CHAT') &&
-      event.data.context === 'multi-panel'
-    ) {
+    // Handle NEW_CHAT messages (create new chat)
+    if (event.data.type === 'NEW_CHAT' && event.data.context === 'multi-panel') {
       const provider = detectProvider();
       stopMultiPanelUserInteractionTracking();
       if (provider === 'chatgpt' || provider === 'aistudio') {
