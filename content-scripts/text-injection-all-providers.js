@@ -62,6 +62,10 @@
     '[data-message-author-role="user"]', // ChatGPT
     '[data-testid="user-message"]', // Claude
     'user-query', // Gemini
+    'ms-chat-turn .chat-turn-container.user', // Google AI Studio
+    'ms-chat-turn .user-prompt-container', // Google AI Studio
+    'ms-chat-turn [data-turn-role="User"]', // Google AI Studio
+    'ms-chat-turn[data-turn-role="user"]', // Google AI Studio
     '[class*="items-end"] .message-bubble', // Grok
     '[data-role="user"]',
     '[data-author="user"]',
@@ -92,6 +96,14 @@
   const SNAPSHOT_STYLE_ELEMENT_ID = 'panelize-snapshot-style';
   const USER_FOCUS_RESTORE_WINDOW_MS = 2000;
   const CHATGPT_STOP_BUTTON_SELECTOR = 'button[data-testid="stop-button"]';
+  const AISTUDIO_STOP_BUTTON_SELECTORS = [
+    'ms-run-button .spin',
+    'ms-run-button button[mattooltip*="Cancel generation" i]',
+    'ms-run-button button[aria-label*="Cancel generation" i]',
+    'ms-run-button button[aria-label*="Stop" i]'
+  ];
+  const AISTUDIO_NEW_CHAT_URL = 'https://aistudio.google.com/prompts/new_chat';
+  const AISTUDIO_TEMP_CHAT_URL = 'https://aistudio.google.com/prompts/new_chat?temporary=true';
   const CHATGPT_SEND_TRACKING_IDLE_DELAY_MS = 800;
   const CHATGPT_SEND_TRACKING_NO_BUSY_TIMEOUT_MS = 2000;
   const MULTI_PANEL_USER_INTERACTION_TRACKING_TIMEOUT_MS = 90000;
@@ -180,6 +192,13 @@
       '.chat-command-editor-specail .ql-editor[contenteditable="true"]',
       '.ql-editor[contenteditable="true"][data-placeholder]'
     ],
+    aistudio: [
+      'ms-prompt-box textarea[formcontrolname="promptText"]',
+      'ms-prompt-box textarea.textarea',
+      'ms-prompt-box textarea[aria-label="Enter a prompt"]',
+      'ms-autosize-textarea textarea',
+      'textarea[aria-label*="prompt" i]'
+    ],
     google: [
       'textarea.ITIRGe',
       'textarea[aria-label="Ask anything"]',
@@ -214,6 +233,7 @@
     chatglm: true,
     'zai-global': true,
     yuanbao: true,
+    aistudio: true,
     google: true  // Google AI Mode supports images
   };
 
@@ -231,6 +251,7 @@
     chatglm: ['input.el-upload__input[type="file"]'],
     'zai-global': ['input[type="file"][multiple][accept*=".png"]'],
     yuanbao: ['input[type="file"][multiple][accept*="image"]'],
+    aistudio: ['ms-prompt-box input[type="file"]', 'input[type="file"]'],
     google: ['input[type="file"]']
   };
 
@@ -245,6 +266,13 @@
     yuanbao: [
       'button[data-new-input-control="add-tools-trigger"]',
       'button[aria-label="Add"]'
+    ],
+    aistudio: [
+      'ms-prompt-box button[aria-label*="Insert" i]',
+      'ms-prompt-box button[aria-label*="Add" i]',
+      'ms-prompt-box button[aria-label*="Upload" i]',
+      'button[aria-label="Insert assets such as images, videos, files, or audio"]',
+      'button[aria-label*="Upload" i]'
     ],
     google: [
       'button[aria-label="更多输入项"]',
@@ -336,6 +364,12 @@
       '#yuanbao-send-btn[aria-label="Send"]',
       '#yuanbao-send-btn'
     ],
+    aistudio: [
+      'ms-prompt-box ms-run-button button',
+      'ms-run-button button.run-button',
+      'button[aria-label*="Run" i]',
+      'button[mattooltip*="Send prompt" i]'
+    ],
     google: [
       'button[data-xid="input-plate-send-button"]',
       'button[aria-label="Send"]',
@@ -417,6 +451,11 @@
       '[role="button"][aria-label="新建对话"]',
       '[role="button"][aria-label="新建對話"]'
     ],
+    aistudio: [
+      'button[data-test-clear="outside"][aria-label="New chat"]',
+      'button[data-test-clear="outside"]',
+      'button[aria-label="New chat"]'
+    ],
     google: [
       'button[aria-label="New search"]',
       'a[aria-label="Google"]',
@@ -439,6 +478,7 @@
     'zai-global': 'https://chat.z.ai/',
     // Keep this in sync with YUANBAO_DEFAULT_URL in modules/providers.js.
     yuanbao: 'https://yuanbao.tencent.com/chat/naQivTmsDa',
+    aistudio: AISTUDIO_NEW_CHAT_URL,
     google: 'https://www.google.com/search?udm=50'
   };
 
@@ -457,6 +497,11 @@
       '[role="button"][aria-label="退出临时对话"]',
       '[role="button"][aria-label="進入臨時對話"]',
       '[role="button"][aria-label="退出臨時對話"]'
+    ],
+    aistudio: [
+      'button[data-test-incognito-toggle][aria-label="Toggle temporary chat"]',
+      'button[data-test-incognito-toggle]',
+      'button[aria-label="Toggle temporary chat"]'
     ]
   };
 
@@ -490,6 +535,8 @@
       return 'zai-global';
     } else if (hostname === 'yuanbao.tencent.com') {
       return 'yuanbao';
+    } else if (hostname === 'aistudio.google.com') {
+      return 'aistudio';
     } else if (hostname.includes('google.com') || hostname.includes('google.') || hostname === 'www.google.com') {
       // Google Search / AI Mode
       // Always return 'google' for any google.com page
@@ -925,7 +972,7 @@
         tracking.provider
       );
 
-      if (tracking.provider === 'chatgpt' && chatgptSendTracking?.requestId === tracking.requestId) {
+      if ((tracking.provider === 'chatgpt' || tracking.provider === 'aistudio') && chatgptSendTracking?.requestId === tracking.requestId) {
         stopChatgptSendTracking();
       }
 
@@ -950,6 +997,49 @@
     return document.querySelector(CHATGPT_STOP_BUTTON_SELECTOR);
   }
 
+  function findAiStudioBusyButton() {
+    for (const selector of AISTUDIO_STOP_BUTTON_SELECTORS) {
+      const element = document.querySelector(selector);
+      if (element) {
+        return element;
+      }
+    }
+
+    const runButton = document.querySelector('ms-run-button button');
+    if (!runButton) {
+      return null;
+    }
+
+    if (runButton.querySelector('.spin')) {
+      return runButton;
+    }
+
+    const tooltip = (runButton.getAttribute('mattooltip') || '').toLowerCase();
+    const ariaLabel = (runButton.getAttribute('aria-label') || '').toLowerCase();
+    const labelText = (runButton.querySelector('.run-button-label')?.textContent || runButton.textContent || '')
+      .trim()
+      .toLowerCase();
+
+    if (
+      tooltip.includes('cancel generation') ||
+      tooltip.includes('stop') ||
+      ariaLabel.includes('cancel generation') ||
+      ariaLabel.includes('stop') ||
+      labelText === 'stop'
+    ) {
+      return runButton;
+    }
+
+    return null;
+  }
+
+  function findProviderBusyButton(provider = 'chatgpt') {
+    if (provider === 'aistudio') {
+      return findAiStudioBusyButton();
+    }
+    return findChatgptBusyButton();
+  }
+
   function stopChatgptSendTracking({ reportIdle = false } = {}) {
     const tracking = chatgptSendTracking;
     if (!tracking) {
@@ -968,11 +1058,11 @@
       clearTimeout(tracking.noBusyTimerId);
     }
 
-    const { requestId, phase } = tracking;
+    const { requestId, phase, provider = 'chatgpt' } = tracking;
     chatgptSendTracking = null;
 
     if (reportIdle) {
-      postMultiPanelProviderStatus(PANELIZE_PROVIDER_IDLE, requestId, phase, 'chatgpt');
+      postMultiPanelProviderStatus(PANELIZE_PROVIDER_IDLE, requestId, phase, provider);
     }
   }
 
@@ -982,7 +1072,9 @@
       return;
     }
 
-    if (findChatgptBusyButton()) {
+    const provider = tracking.provider || 'chatgpt';
+
+    if (findProviderBusyButton(provider)) {
       if (typeof tracking.noBusyTimerId === 'number') {
         clearTimeout(tracking.noBusyTimerId);
         tracking.noBusyTimerId = null;
@@ -995,7 +1087,7 @@
 
       if (tracking.phase !== 'busy') {
         tracking.phase = 'busy';
-        postMultiPanelProviderStatus(PANELIZE_PROVIDER_BUSY, tracking.requestId, tracking.phase, 'chatgpt');
+        postMultiPanelProviderStatus(PANELIZE_PROVIDER_BUSY, tracking.requestId, tracking.phase, provider);
       }
       return;
     }
@@ -1011,7 +1103,7 @@
       }
 
       currentTracking.idleTimerId = null;
-      if (findChatgptBusyButton()) {
+      if (findProviderBusyButton(provider)) {
         evaluateChatgptSendTrackingState();
         return;
       }
@@ -1021,7 +1113,7 @@
     }, CHATGPT_SEND_TRACKING_IDLE_DELAY_MS);
   }
 
-  function startChatgptSendTracking(requestId) {
+  function startChatgptSendTracking(requestId, provider = 'chatgpt') {
     if (!requestId) {
       return;
     }
@@ -1030,6 +1122,7 @@
 
     const tracking = {
       requestId,
+      provider,
       phase: 'pending',
       observer: null,
       idleTimerId: null,
@@ -1043,7 +1136,7 @@
           return;
         }
 
-        if (typeof tracking.idleTimerId === 'number' && findChatgptBusyButton()) {
+        if (typeof tracking.idleTimerId === 'number' && findProviderBusyButton(provider)) {
           clearTimeout(tracking.idleTimerId);
           tracking.idleTimerId = null;
         }
@@ -1055,7 +1148,9 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['data-testid', 'aria-label', 'disabled', 'aria-disabled']
+        attributeFilter: provider === 'aistudio'
+          ? ['data-testid', 'aria-label', 'disabled', 'aria-disabled', 'class', 'mattooltip']
+          : ['data-testid', 'aria-label', 'disabled', 'aria-disabled']
       });
     }
 
@@ -1185,6 +1280,41 @@
 
     if (provider === 'yuanbao') {
       return window.ButtonFinderUtils?.isYuanbaoSendControl(element) === true;
+    }
+
+    if (provider === 'aistudio') {
+      if (typeof window.ButtonFinderUtils?.isAiStudioSendControl === 'function') {
+        return window.ButtonFinderUtils.isAiStudioSendControl(element) === true;
+      }
+
+      if (element.classList.contains('disabled')) {
+        return false;
+      }
+
+      if (element.querySelector?.('.spin')) {
+        return false;
+      }
+
+      const ariaLabel = (element.getAttribute('aria-label') || '').toLowerCase();
+      const matTooltip = (element.getAttribute('mattooltip') || '').toLowerCase();
+      const labelElement = element.querySelector?.('.run-button-label');
+      const labelText = (labelElement ? labelElement.textContent : element.textContent || '')
+        .trim()
+        .toLowerCase();
+
+      if (
+        ariaLabel.includes('cancel generation') ||
+        ariaLabel.includes('stop') ||
+        matTooltip.includes('cancel generation') ||
+        matTooltip.includes('stop') ||
+        labelText === 'stop' ||
+        labelText === 'add' ||
+        ariaLabel === 'add'
+      ) {
+        return false;
+      }
+
+      return true;
     }
 
     return !element.classList.contains('disabled');
@@ -1500,7 +1630,7 @@
           
           // Check if element or its parent is disabled
           if (isProviderSendControlEnabled(provider, targetElement)) {
-            console.log('[Text Injection] Clicking send button:', selector, targetElement);
+            console.log('[Text Injection] Clicking send button:', selector);
             if (provider === 'chatglm') {
               // ChatGLM submits from its mousedown handler; HTMLElement.click() skips it.
               targetElement.dispatchEvent(new MouseEvent('mousedown', {
@@ -1634,6 +1764,31 @@
     return button.classList.contains('temp-chat-on') || isTemporaryChatControlActive(button);
   }
 
+  function isAiStudioTemporaryChatEnabled(control = null) {
+    try {
+      const currentUrl = new URL(window.location.href);
+      if (currentUrl.searchParams.get('temporary') === 'true') {
+        return true;
+      }
+    } catch (error) {
+      // Ignore invalid URL parse errors
+    }
+
+    if (document.querySelector('ms-incognito-mode-indicator')) {
+      return true;
+    }
+
+    const button = control ||
+      document.querySelector('button[data-test-incognito-toggle]') ||
+      document.querySelector('button[aria-label="Toggle temporary chat"]');
+
+    if (!button) {
+      return false;
+    }
+
+    return isTemporaryChatControlActive(button);
+  }
+
   function isTemporaryChatAlreadyEnabled(provider, control = null) {
     const currentUrl = new URL(window.location.href);
 
@@ -1647,6 +1802,8 @@
       case 'gemini': {
         return isGeminiTemporaryChatEnabled(control);
       }
+      case 'aistudio':
+        return isAiStudioTemporaryChatEnabled(control);
       case 'yuanbao':
         return (
           currentUrl.searchParams.get('chatMode') === 'temp' ||
@@ -1750,11 +1907,29 @@
     }
   }
 
+  function handleAiStudioNewChat(options = {}) {
+    const shouldUseTemporaryChat = options?.temporaryChat === true ||
+      (options?.temporaryChat !== false && isTemporaryChatAlreadyEnabled('aistudio'));
+    const targetUrl = shouldUseTemporaryChat
+      ? AISTUDIO_TEMP_CHAT_URL
+      : AISTUDIO_NEW_CHAT_URL;
+    console.log('[Text Injection] Navigating AI Studio to new chat URL:', targetUrl);
+    window.location.href = targetUrl;
+    return true;
+  }
+
   // Find and click new chat button
-  function clickNewChatButton(provider, providerMode = null) {
+  function clickNewChatButton(provider, providerMode = null, options = {}) {
     // Special handling for Google
     if (provider === 'google') {
       return handleGoogleNewSearch(providerMode);
+    }
+
+    // Special handling for AI Studio: navigate directly to /prompts/new_chat(?temporary=true)
+    // to bypass the <ms-confirm-clear-dialog> modal triggered by in-page clear buttons
+    // when a prompt has unsaved or temporary turns.
+    if (provider === 'aistudio') {
+      return handleAiStudioNewChat(options);
     }
 
     const selectors = NEW_CHAT_BUTTON_SELECTORS[provider];
@@ -2040,8 +2215,8 @@
         stopMultiPanelUserInteractionTracking();
       }
 
-      if (provider === 'chatgpt' && autoSubmit && requestId) {
-        startChatgptSendTracking(requestId);
+      if ((provider === 'chatgpt' || provider === 'aistudio') && autoSubmit && requestId) {
+        startChatgptSendTracking(requestId, provider);
       }
 
       const succeededImageIds = [];
@@ -2151,6 +2326,9 @@
         break;
       case 'gemini':
         result = await injectImageToGemini(imageData);
+        break;
+      case 'aistudio':
+        result = await injectImageToAiStudio(imageData);
         break;
       case 'grok':
         result = await injectImageToGrok(imageData);
@@ -2903,6 +3081,61 @@
     }
   }
 
+  // Google AI Studio image injection - uses paste on ms-prompt-box [msfilecopypaste] / textarea with file input fallback
+  async function injectImageToAiStudio(imageData) {
+    try {
+      const blob = await dataUrlToBlob(imageData.dataUrl);
+      const file = new File([blob], imageData.name, { type: imageData.type });
+
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+
+      const pasteTarget =
+        findProviderInput('aistudio') ||
+        document.querySelector('ms-prompt-box [msfilecopypaste]') ||
+        document.querySelector('ms-prompt-box .prompt-box-container') ||
+        document.querySelector('[msfilecopypaste]');
+
+      if (pasteTarget) {
+        if (typeof pasteTarget.focus === 'function') {
+          pasteTarget.focus();
+        }
+
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+
+        pasteTarget.dispatchEvent(pasteEvent);
+        console.log('[Image Injection] AI Studio: Paste event dispatched');
+        return true;
+      }
+
+      if (await tryFileInputUpload('aistudio', imageData)) {
+        console.log('[Image Injection] AI Studio: File input fallback succeeded');
+        return true;
+      }
+
+      const uploadButton = findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.aistudio) ||
+        findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.aistudio);
+      if (uploadButton) {
+        uploadButton.click();
+        await sleep(100);
+        if (await tryFileInputUpload('aistudio', imageData)) {
+          console.log('[Image Injection] AI Studio: File input after upload button click succeeded');
+          return true;
+        }
+      }
+
+      console.warn('[Image Injection] AI Studio: Paste target and file input not found');
+      return false;
+    } catch (error) {
+      console.error('[Image Injection] AI Studio error:', error);
+      return false;
+    }
+  }
+
   // Google AI Mode image injection
   async function injectImageToGoogle(imageData) {
     try {
@@ -3474,7 +3707,7 @@
     if (event.data.type === 'CLEAR_INPUT' && event.data.context === 'multi-panel') {
       const provider = detectProvider();
       stopMultiPanelUserInteractionTracking();
-      if (provider === 'chatgpt') {
+      if (provider === 'chatgpt' || provider === 'aistudio') {
         stopChatgptSendTracking();
       }
       if (provider) {
@@ -3514,8 +3747,8 @@
         } else {
           stopMultiPanelUserInteractionTracking();
         }
-        if (provider === 'chatgpt' && event.data.requestId) {
-          startChatgptSendTracking(event.data.requestId);
+        if ((provider === 'chatgpt' || provider === 'aistudio') && event.data.requestId) {
+          startChatgptSendTracking(event.data.requestId, provider);
         }
         console.log('[Text Injection] Triggering send for', provider);
         clickSendButton(provider, providerMode);
@@ -3523,11 +3756,14 @@
       return;
     }
 
-    // Handle NEW_CHAT messages (create new chat)
-    if (event.data.type === 'NEW_CHAT' && event.data.context === 'multi-panel') {
+    // Handle NEW_CHAT / PANELIZE_NEW_CHAT messages (create new chat)
+    if (
+      (event.data.type === 'NEW_CHAT' || event.data.type === 'PANELIZE_NEW_CHAT') &&
+      event.data.context === 'multi-panel'
+    ) {
       const provider = detectProvider();
       stopMultiPanelUserInteractionTracking();
-      if (provider === 'chatgpt') {
+      if (provider === 'chatgpt' || provider === 'aistudio') {
         stopChatgptSendTracking();
       }
       const providerMode = provider === 'google'
@@ -3537,7 +3773,9 @@
       console.log('[Text Injection] Current URL:', window.location.href);
       if (provider) {
         console.log('[Text Injection] Creating new chat for', provider);
-        clickNewChatButton(provider, providerMode);
+        clickNewChatButton(provider, providerMode, {
+          temporaryChat: event.data.temporaryChat
+        });
       } else {
         console.warn('[Text Injection] Provider not detected for NEW_CHAT');
       }
@@ -3611,9 +3849,9 @@
     } else {
       stopMultiPanelUserInteractionTracking();
     }
-    if (provider === 'chatgpt') {
+    if (provider === 'chatgpt' || provider === 'aistudio') {
       if (shouldAutoSubmit && event.data.requestId) {
-        startChatgptSendTracking(event.data.requestId);
+        startChatgptSendTracking(event.data.requestId, provider);
       } else {
         stopChatgptSendTracking();
       }
