@@ -229,7 +229,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
     delete globalThis.fetch;
   });
 
-  it('ships all 16 Custom API locale strings across all 10 locales', () => {
+  it('ships all 22 Custom API & Custom AI Edit locale strings across all 10 locales', () => {
     const locales = readdirSync(LOCALES_DIR).sort();
     expect(locales).toEqual(['de', 'en', 'es', 'fr', 'it', 'ja', 'ko', 'ru', 'zh_CN', 'zh_TW']);
 
@@ -250,6 +250,12 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       'errCustomModelRequired',
       'errCustomModelTooLong',
       'errCustomApiKeyTooLong',
+      'ariaEditCustomProvider',
+      'headingEditCustomProvider',
+      'btnSaveCustomProvider',
+      'placeholderCustomProviderApiKeyKeepExisting',
+      'labelClearSavedApiKey',
+      'msgCustomProviderUpdated',
     ];
 
     for (const locale of locales) {
@@ -259,6 +265,8 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       }
       expect(dict.msgCustomApiEndpointPreview.message, `${locale}.msgCustomApiEndpointPreview`).toContain('$1');
       expect(dict.msgCustomApiEndpointPreview.message, `${locale}.msgCustomApiEndpointPreview`).toContain('$2');
+      expect(dict.ariaEditCustomProvider.message, `${locale}.ariaEditCustomProvider`).toContain('$1');
+      expect(dict.msgCustomProviderUpdated.message, `${locale}.msgCustomProviderUpdated`).toContain('$1');
     }
   });
 
@@ -281,6 +289,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
 
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
+      expect(document.getElementById('version')?.textContent).toContain('2.1.0');
       expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
     });
 
@@ -446,6 +455,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
 
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
+      expect(document.getElementById('version')?.textContent).toContain('2.1.0');
       expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
     });
 
@@ -488,6 +498,220 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
     db.close();
     expect(getAllKeys).toEqual([]);
     expect(await secretsMod.getCustomApiKey('custom-0000000000')).toBeNull();
+  });
+
+  it('edits custom API & Web providers in place without exposing saved IndexedDB keys, supports keep/replace/remove API key, revokes stale origin permission, and restores focus on Cancel/Save', async () => {
+    vi.resetModules();
+    globalThis.indexedDB = createMockIndexedDB();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const { areas, grantedSet } = installOptionsChromeEnv({
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt'],
+        providerOrder: ['chatgpt'],
+      },
+    });
+
+    await import('../options/options.js');
+    const secretsMod = await import('../modules/custom-api-secrets.js');
+
+    await vi.waitFor(() => {
+      expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
+      expect(document.getElementById('version')?.textContent).toContain('2.1.0');
+      expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
+    });
+
+    const form = document.getElementById('custom-provider-form');
+    const formTitle = document.getElementById('custom-provider-form-title');
+    const kindWeb = document.getElementById('custom-provider-kind-web');
+    const kindApi = document.getElementById('custom-provider-kind-api');
+    const nameInput = document.getElementById('custom-provider-name');
+    const urlInput = document.getElementById('custom-provider-url');
+    const modelInput = document.getElementById('custom-provider-model');
+    const apiKeyInput = document.getElementById('custom-provider-api-key');
+    const clearKeyRow = document.getElementById('custom-provider-clear-key-row');
+    const clearKeyCheckbox = document.getElementById('custom-provider-clear-api-key');
+    const submitBtn = document.getElementById('custom-provider-add-btn');
+    const cancelBtn = document.getElementById('custom-provider-cancel-btn');
+
+    // 1. Add an API custom provider with a local IndexedDB secret
+    kindApi.checked = true;
+    kindApi.dispatchEvent(new Event('change', { bubbles: true }));
+    nameInput.value = 'Local Alpha';
+    urlInput.value = 'http://localhost:11434';
+    modelInput.value = 'llama3.3:70b';
+    apiKeyInput.value = 'sk-secret-never-in-dom';
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toHaveLength(1);
+      expect(submitBtn.disabled).toBe(false);
+    });
+    const apiRecord = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY][0];
+
+    // 2. Add a Web UI custom provider
+    kindWeb.checked = true;
+    kindWeb.dispatchEvent(new Event('change', { bubbles: true }));
+    nameInput.value = 'Self Web';
+    urlInput.value = 'https://selfchat.example.com/app';
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toHaveLength(2);
+      expect(submitBtn.disabled).toBe(false);
+      expect(
+        document.querySelector(
+          `#provider-list .provider-item[data-provider-id="${areas.local[CUSTOM_PROVIDERS_STORAGE_KEY][1].id}"]`
+        )
+      ).not.toBeNull();
+    });
+    const webRecord = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY][1];
+
+    // 3. Click Edit on Local Alpha -> verify secret isolation, locked radios, Cancel button, and focus
+    const apiRow = document.querySelector(
+      `#provider-list .provider-item[data-provider-id="${apiRecord.id}"]`
+    );
+    const apiEditBtn = apiRow.querySelector('[data-action="edit-custom-provider"]');
+    expect(apiEditBtn).not.toBeNull();
+    expect(apiEditBtn.textContent).toBe('Edit');
+    expect(apiEditBtn.getAttribute('aria-label')).toBe('Edit Local Alpha');
+
+    apiEditBtn.click();
+
+    expect(formTitle.textContent).toBe('Edit custom AI');
+    expect(submitBtn.textContent).toBe('Save changes');
+    expect(cancelBtn.hidden).toBe(false);
+    expect(kindWeb.disabled).toBe(true);
+    expect(kindApi.disabled).toBe(true);
+    expect(apiRow.dataset.editing).toBe('true');
+    expect(document.activeElement).toBe(nameInput);
+
+    // Stored secret MUST NEVER appear in input value or anywhere in DOM
+    expect(apiKeyInput.value).toBe('');
+    expect(apiKeyInput.placeholder).toBe('Leave blank to keep saved key, or enter a new key');
+    expect(clearKeyRow.hidden).toBe(false);
+    expect(document.body.innerHTML).not.toContain('sk-secret-never-in-dom');
+
+    // 4. Cancel exits edit mode and restores focus to the row's Edit button
+    cancelBtn.click();
+    expect(formTitle.textContent).toBe('Add custom AI');
+    expect(submitBtn.textContent).toBe('Add');
+    expect(cancelBtn.hidden).toBe(true);
+    expect(kindWeb.disabled).toBe(false);
+    expect(kindApi.disabled).toBe(false);
+    expect(apiRow.dataset.editing).toBeUndefined();
+    expect(document.activeElement).toBe(apiEditBtn);
+
+    // 5. Re-enter Edit on Local Alpha, change Name + Endpoint Origin + Model while keeping saved key
+    chrome.permissions.remove.mockClear();
+    apiEditBtn.click();
+    nameInput.value = 'OpenRouter DeepSeek';
+    urlInput.value = 'https://openrouter.ai/api/v1';
+    modelInput.value = 'deepseek/deepseek-v4.1-flash';
+    // Leave apiKeyInput blank -> keeps sk-secret-never-in-dom
+
+    let syncPermissionCalled = false;
+    let tick = false;
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      syncPermissionCalled = !tick;
+      origins.forEach((o) => grantedSet.add(o));
+      return Promise.resolve(true);
+    });
+    Promise.resolve().then(() => {
+      tick = true;
+    });
+
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(syncPermissionCalled).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(submitBtn.disabled).toBe(false);
+      const updated = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY].find((r) => r.id === apiRecord.id);
+      expect(updated?.name).toBe('OpenRouter DeepSeek');
+      expect(updated?.endpointUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
+      expect(updated?.model).toBe('deepseek/deepseek-v4.1-flash');
+      expect(updated?.hasApiKey).toBe(true);
+      expect(updated?.frameRuleId).toBe(apiRecord.frameRuleId);
+    });
+
+    // Old unused origin permission (http://localhost:11434/*) was automatically revoked!
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['http://localhost:11434/*'],
+    });
+    expect(grantedSet.has('https://openrouter.ai/*')).toBe(true);
+    expect(await secretsMod.getCustomApiKey(apiRecord.id)).toBe('sk-secret-never-in-dom');
+    expect(areas.sync.enabledProviders).toContain(apiRecord.id);
+
+    await vi.waitFor(() => {
+      const refreshedRow = document.querySelector(
+        `#provider-list .provider-item[data-provider-id="${apiRecord.id}"]`
+      );
+      expect(refreshedRow.querySelector('.provider-name')?.textContent).toBe('OpenRouter DeepSeek');
+      expect(refreshedRow.querySelector('.provider-origin-badge')?.textContent).toBe(
+        'https://openrouter.ai'
+      );
+      expect(refreshedRow.querySelector('.provider-model-badge')?.textContent).toBe(
+        'deepseek/deepseek-v4.1-flash'
+      );
+    });
+
+    // 6. Edit again to test mutual exclusion between typing a key and "Remove saved API key", then remove key
+    document
+      .querySelector(
+        `#provider-list .provider-item[data-provider-id="${apiRecord.id}"] [data-action="edit-custom-provider"]`
+      )
+      .click();
+    clearKeyCheckbox.checked = true;
+    clearKeyCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+    apiKeyInput.value = 'sk-temp';
+    apiKeyInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(clearKeyCheckbox.checked).toBe(false);
+
+    clearKeyCheckbox.checked = true;
+    clearKeyCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(apiKeyInput.value).toBe('');
+
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      expect(submitBtn.disabled).toBe(false);
+      const updated = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY].find((r) => r.id === apiRecord.id);
+      expect(updated?.hasApiKey).toBe(false);
+    });
+    expect(await secretsMod.getCustomApiKey(apiRecord.id)).toBeNull();
+
+    // 7. Edit Web UI custom provider on its own origin without false duplicate_custom_origin error
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector(
+          `#provider-list .provider-item[data-provider-id="${webRecord.id}"] [data-action="edit-custom-provider"]`
+        )
+      ).not.toBeNull();
+    });
+    const webEditBtn = document.querySelector(
+      `#provider-list .provider-item[data-provider-id="${webRecord.id}"] [data-action="edit-custom-provider"]`
+    );
+    webEditBtn.click();
+    expect(kindWeb.checked).toBe(true);
+    expect(kindWeb.disabled).toBe(true);
+    expect(document.getElementById('custom-provider-origin-preview').hidden).toBe(false);
+
+    nameInput.value = 'Self Web v2';
+    urlInput.value = 'https://selfchat.example.com/v2';
+    urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    urlInput.dispatchEvent(new Event('blur'));
+    expect(document.getElementById('custom-provider-error').hidden).toBe(true);
+
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      expect(submitBtn.disabled).toBe(false);
+      const updatedWeb = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY].find(
+        (r) => r.id === webRecord.id
+      );
+      expect(updatedWeb?.name).toBe('Self Web v2');
+      expect(updatedWeb?.url).toBe('https://selfchat.example.com/v2');
+    });
   });
 
   describe('api-panel + custom-api-bridge end-to-end JSDOM contract', () => {
@@ -792,6 +1016,33 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       });
       expect(childDoc.querySelectorAll('.turn-item')).toHaveLength(0);
       expect(childDoc.getElementById('empty-state').hidden).toBe(false);
+
+      // Live metadata sync updates empty-state title, model badge, and origin badge without reload
+      const updatedDescriptor = toCustomProviderDescriptor(
+        {
+          id: PROVIDER_ID,
+          kind: 'api',
+          name: 'DeepSeek V4 Live',
+          endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
+          model: 'deepseek/deepseek-v4.1-flash',
+          hasApiKey: true,
+          frameRuleId: 10000,
+          createdAt: 1700000000000,
+        },
+        { extensionOrigin: EXTENSION_ORIGIN }
+      );
+      setCustomProviderDescriptors([updatedDescriptor]);
+      bridge.syncPanelsMetadata();
+
+      expect(childDoc.getElementById('api-model-badge').textContent).toBe(
+        'deepseek/deepseek-v4.1-flash'
+      );
+      expect(childDoc.getElementById('api-origin-badge').textContent).toBe(
+        'https://openrouter.ai'
+      );
+      expect(childDoc.getElementById('empty-state-title').textContent).toBe(
+        'DeepSeek V4 Live · deepseek/deepseek-v4.1-flash'
+      );
 
       apiPanel.destroy();
       bridge.dispose();

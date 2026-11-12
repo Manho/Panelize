@@ -10,6 +10,7 @@ import {
   loadCustomProviders,
   removeCustomProvider,
   toCustomProviderDescriptor,
+  updateCustomProvider,
   validateCustomApiEndpointUrl,
 } from '../modules/custom-providers.js';
 import { STATIC_FRAME_RULESET_ID } from '../modules/frame-header-rules.js';
@@ -484,5 +485,82 @@ describe('Custom API provider descriptors, validation, storage, and DNR Origin-s
     expect(isProviderAllowedUrl(apiDescriptor.id, `${EXTENSION_ORIGIN}/options/options.html`)).toBe(
       false
     );
+  });
+
+  it('updates custom Web and API providers in place while preserving id, frameRuleId, createdAt, and kind invariants', async () => {
+    const state = installStatefulChromeEnv();
+    await addCustomProvider(API_RECORD_OLLAMA_A);
+    await addCustomProvider(WEB_RECORD_C);
+    await addCustomProvider({
+      id: 'custom-e1e2e3e4e5',
+      name: 'Other WebUI',
+      url: 'https://otherweb.example.com/chat',
+      frameRuleId: 10003,
+      createdAt: 1700000003000,
+    });
+
+    const updatedApi = await updateCustomProvider(API_RECORD_OLLAMA_A.id, {
+      name: 'OpenRouter DeepSeek',
+      endpointUrl: 'https://openrouter.ai/api/v1',
+      model: 'deepseek/deepseek-v4.1-flash',
+      hasApiKey: true,
+    });
+    expect(updatedApi).toEqual({
+      id: API_RECORD_OLLAMA_A.id,
+      kind: 'api',
+      name: 'OpenRouter DeepSeek',
+      endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      model: 'deepseek/deepseek-v4.1-flash',
+      hasApiKey: true,
+      frameRuleId: API_RECORD_OLLAMA_A.frameRuleId,
+      createdAt: API_RECORD_OLLAMA_A.createdAt,
+    });
+    expect(getCustomProviderOrigin(API_RECORD_OLLAMA_A.id)).toBe('https://openrouter.ai');
+    expect(state.localRecords.find((r) => r.id === API_RECORD_OLLAMA_A.id)).toEqual(updatedApi);
+
+    // Self-origin edit on Web custom provider succeeds while colliding with another Web origin fails
+    const updatedWeb = await updateCustomProvider(WEB_RECORD_C.id, {
+      name: 'Self-Hosted WebUI v2',
+      url: 'https://webui.example.com/v2/chat',
+    });
+    expect(updatedWeb).toEqual({
+      id: WEB_RECORD_C.id,
+      name: 'Self-Hosted WebUI v2',
+      url: 'https://webui.example.com/v2/chat',
+      frameRuleId: WEB_RECORD_C.frameRuleId,
+      createdAt: WEB_RECORD_C.createdAt,
+    });
+
+    await expect(
+      updateCustomProvider(WEB_RECORD_C.id, {
+        name: 'Collision Attempt',
+        url: 'https://otherweb.example.com/app',
+      })
+    ).rejects.toMatchObject({ reason: 'duplicate_custom_origin' });
+
+    // Kind switching, raw apiKey, and unknown IDs are strictly rejected
+    await expect(
+      updateCustomProvider(API_RECORD_OLLAMA_A.id, {
+        kind: 'web',
+        name: 'Kind Tamper',
+        url: 'https://kindtamper.example.com/',
+      })
+    ).rejects.toThrow(/Cannot change custom provider kind/i);
+
+    await expect(
+      updateCustomProvider(API_RECORD_OLLAMA_A.id, {
+        name: 'Key Leak Attempt',
+        endpointUrl: 'https://openrouter.ai/api/v1',
+        model: 'deepseek/deepseek-v4.1-flash',
+        apiKey: 'sk-should-reject',
+      })
+    ).rejects.toThrow(/apiKey/i);
+
+    await expect(
+      updateCustomProvider('custom-9999999999', {
+        name: 'Ghost',
+        url: 'https://ghost.example.com/',
+      })
+    ).rejects.toThrow(/not found/i);
   });
 });

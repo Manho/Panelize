@@ -92,12 +92,18 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
         stream: parsed.stream,
       });
 
-      if (parsed.model === 'alpha-reasoner' && authHeader !== 'Bearer sk-e2e-alpha') {
+      if (
+        (parsed.model === 'alpha-reasoner' || parsed.model === 'alpha-reasoner-v2') &&
+        authHeader !== 'Bearer sk-e2e-alpha'
+      ) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'Missing or invalid Alpha API key' } }));
         return;
       }
-      if (parsed.model === 'beta-local' && authHeader !== null) {
+      if (
+        (parsed.model === 'beta-local' || parsed.model === 'beta-upgraded') &&
+        authHeader !== null
+      ) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'Beta expects no Authorization header' } }));
         return;
@@ -399,10 +405,42 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
       await expect(alphaFrame.locator('#empty-state')).toBeVisible();
       await expect(betaFrame.locator('#empty-state')).toBeVisible();
 
-      // 7. Deleting Local Alpha in Options retains shared permission so Local Beta keeps working
+      // 6.5. Edit Local Alpha in Options (keep saved IndexedDB key blank) and Local Beta (upgrade model) -> live Multi-Panel sync
       const alphaOptRow = optionsPage.locator(
         `#provider-list .provider-item[data-provider-id="${alphaId}"]`
       );
+      await alphaOptRow.locator('[data-action="edit-custom-provider"]').click();
+      await expect(optionsPage.locator('#custom-provider-form-title')).toHaveText('Edit custom AI');
+      await expect(optionsPage.locator('#custom-provider-api-key')).toHaveValue('');
+      await optionsPage.locator('#custom-provider-name').fill('Local Alpha v2');
+      await optionsPage.locator('#custom-provider-model').fill('alpha-reasoner-v2');
+      await optionsPage.locator('#custom-provider-add-btn').click();
+      await expect(optionsPage.locator('#custom-provider-form-title')).toHaveText('Add custom AI');
+
+      const betaOptRow = optionsPage.locator(
+        `#provider-list .provider-item[data-provider-id="${betaId}"]`
+      );
+      await betaOptRow.locator('[data-action="edit-custom-provider"]').click();
+      await optionsPage.locator('#custom-provider-name').fill('Local Beta v2');
+      await optionsPage.locator('#custom-provider-model').fill('beta-upgraded');
+      await optionsPage.locator('#custom-provider-add-btn').click();
+
+      // Open Multi-Panel updates headers and iframe model badges live without reload, preserving Alpha's IndexedDB key!
+      await expect(panels.nth(0).locator('.panel-provider-name')).toHaveText('Local Alpha v2');
+      await expect(panels.nth(1).locator('.panel-provider-name')).toHaveText('Local Beta v2');
+      await expect(alphaFrame.locator('#api-model-badge')).toHaveText('alpha-reasoner-v2');
+      await expect(betaFrame.locator('#api-model-badge')).toHaveText('beta-upgraded');
+
+      await mpPage.locator('#unified-input').fill('Verify edited models');
+      await mpPage.locator('#send-all-btn').click();
+      await expect(alphaFrame.locator('.turn-assistant .turn-markdown strong')).toHaveText(
+        'alpha-reasoner-v2'
+      );
+      await expect(betaFrame.locator('.turn-assistant .turn-markdown strong')).toHaveText(
+        'beta-upgraded'
+      );
+
+      // 7. Deleting Local Alpha in Options retains shared permission so Local Beta keeps working
       await alphaOptRow.locator('[data-action="delete-custom-provider"]').click();
       await alphaOptRow.locator('[data-action="confirm-delete-custom-provider"]').click();
       await expect(alphaOptRow).toHaveCount(0);
@@ -411,8 +449,13 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
       await mpPage.locator('#unified-input').fill('Still working after Alpha deleted');
       await mpPage.locator('#send-all-btn').click();
       await expect(
-        mpPage.locator('#panel-grid .panel-item').first().frameLocator('iframe').locator('.turn-assistant .turn-markdown strong')
-      ).toHaveText('beta-local');
+        mpPage
+          .locator('#panel-grid .panel-item')
+          .first()
+          .frameLocator('iframe')
+          .locator('.turn-assistant .turn-markdown strong')
+          .nth(1)
+      ).toHaveText('beta-upgraded');
 
       expect(runtimeErrors).toEqual([]);
     } finally {
