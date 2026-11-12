@@ -152,6 +152,19 @@
             Adding or activating custom AI sites requires Chrome 145 or newer.
           </p>
           <form id="custom-provider-form" class="custom-provider-form" aria-labelledby="custom-provider-form-title" novalidate>
+            <fieldset class="custom-provider-kind-fieldset" id="custom-provider-kind-fieldset">
+              <legend class="custom-provider-kind-legend" data-i18n="labelCustomProviderKind">Connection type</legend>
+              <div class="custom-provider-kind-options">
+                <label class="custom-provider-kind-option">
+                  <input type="radio" name="customProviderKind" id="custom-provider-kind-web" value="web" checked />
+                  <span data-i18n="optionCustomProviderKindWeb">Web UI (embed chat site)</span>
+                </label>
+                <label class="custom-provider-kind-option">
+                  <input type="radio" name="customProviderKind" id="custom-provider-kind-api" value="api" />
+                  <span data-i18n="optionCustomProviderKindApi">OpenAI-compatible API</span>
+                </label>
+              </div>
+            </fieldset>
             <div class="custom-provider-fields">
               <div class="custom-provider-field custom-provider-field-name">
                 <label for="custom-provider-name" data-i18n="labelCustomProviderName">Name (max 40 chars)</label>
@@ -168,7 +181,7 @@
                 />
               </div>
               <div class="custom-provider-field custom-provider-field-url">
-                <label for="custom-provider-url" data-i18n="labelCustomProviderUrl">URL</label>
+                <label for="custom-provider-url" id="custom-provider-url-label" data-i18n="labelCustomProviderUrl">URL</label>
                 <input
                   type="text"
                   inputmode="url"
@@ -184,10 +197,55 @@
                   aria-describedby="custom-provider-origin-preview custom-provider-error"
                 />
               </div>
+              <div class="custom-provider-api-fields" id="custom-provider-api-fields" hidden>
+                <div class="custom-provider-field custom-provider-field-model">
+                  <label for="custom-provider-model" data-i18n="labelCustomProviderModel">Model ID</label>
+                  <input
+                    type="text"
+                    id="custom-provider-model"
+                    name="customProviderModel"
+                    maxlength="200"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    data-i18n-placeholder="placeholderCustomProviderModel"
+                    placeholder="gpt-4o-mini or qwen2.5:14b"
+                    aria-describedby="custom-provider-error"
+                  />
+                </div>
+                <div class="custom-provider-field custom-provider-field-api-key">
+                  <label for="custom-provider-api-key" data-i18n="labelCustomProviderApiKey">API Key (optional for local endpoints)</label>
+                  <div class="custom-provider-password-wrap">
+                    <input
+                      type="password"
+                      id="custom-provider-api-key"
+                      name="customProviderApiKey"
+                      autocomplete="off"
+                      autocorrect="off"
+                      autocapitalize="none"
+                      spellcheck="false"
+                      data-i18n-placeholder="placeholderCustomProviderApiKey"
+                      placeholder="sk-... (stored on this device only)"
+                      aria-describedby="custom-provider-api-note custom-provider-error"
+                    />
+                    <button
+                      type="button"
+                      class="btn-api-key-toggle"
+                      id="custom-provider-api-key-toggle"
+                      aria-pressed="false"
+                      data-i18n="btnShowApiKey"
+                    >Show</button>
+                  </div>
+                </div>
+              </div>
               <div class="custom-provider-submit">
                 <button type="submit" class="btn btn-primary" id="custom-provider-add-btn" data-i18n="btnAddCustomProvider">Add</button>
               </div>
             </div>
+            <p class="custom-provider-api-note" id="custom-provider-api-note" data-i18n="noteCustomApiLocalOnly" hidden>
+              API keys stay locally on this device only, are never synced or exported, and are sent solely to your configured endpoint.
+            </p>
             <p class="custom-provider-origin-preview" id="custom-provider-origin-preview" hidden></p>
             <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
           </form>

@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "需要網站存取權限才能啟用 $PROVIDER$。",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "無法為 $PROVIDER$ 請求網站存取權限。",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "鍵盤快速鍵已啟用"
@@ -1030,5 +1038,53 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "刪除$1"
+  },
+  "labelCustomProviderKind": {
+    "message": "接入方式"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "網頁版（嵌入聊天網站）"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "OpenAI相容API"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "基礎URL或Chat Completions端點網址"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1或http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "模型ID"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini或qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "API金鑰（本機端點可留空）"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-...（僅儲存在此裝置）"
+  },
+  "btnShowApiKey": {
+    "message": "顯示"
+  },
+  "btnHideApiKey": {
+    "message": "隱藏"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize將請求存取$1 · 端點：$2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "API金鑰僅儲存在此裝置上，不會同步或匯出，且僅傳送至你設定的端點網址。"
+  },
+  "errCustomModelRequired": {
+    "message": "請輸入模型ID（例如gpt-4o-mini或qwen2.5:14b）。"
+  },
+  "errCustomModelTooLong": {
+    "message": "模型ID不得超過200個字元。"
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "API金鑰超過允許的最大長度。"
   }
 }

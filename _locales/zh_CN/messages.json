@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "需要网站访问权限才能启用 $PROVIDER$。",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "无法为 $PROVIDER$ 请求网站访问权限。",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "键盘快捷键已启用"
@@ -1030,5 +1038,53 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "删除$1"
+  },
+  "labelCustomProviderKind": {
+    "message": "接入方式"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "网页版（嵌入聊天站点）"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "OpenAI兼容API"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "基础URL或Chat Completions接口地址"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1或http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "模型ID"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini或qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "API密钥（本地接口可留空）"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-...（仅保存在当前设备）"
+  },
+  "btnShowApiKey": {
+    "message": "显示"
+  },
+  "btnHideApiKey": {
+    "message": "隐藏"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize将请求访问$1 · 接口：$2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "API密钥仅保存在本机设备，不会同步或导出，且仅发送至你配置的接口地址。"
+  },
+  "errCustomModelRequired": {
+    "message": "请输入模型ID（例如gpt-4o-mini或qwen2.5:14b）。"
+  },
+  "errCustomModelTooLong": {
+    "message": "模型ID不能超过200个字符。"
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "API密钥超出允许的最大长度。"
   }
 }

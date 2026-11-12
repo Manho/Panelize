@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "$PROVIDER$을(를) 사용하려면 사이트 접근 권한이 필요합니다.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "$PROVIDER$의 사이트 접근 권한을 요청하지 못했습니다.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "키보드 단축키가 활성화되었습니다"
@@ -813,7 +821,9 @@
   "switchToPopupModeTitle": {
     "message": "팝업 모드로 전환"
   },
-  "openProviderTopLevelTitle": { "message": "새 탭에서 열기" },
+  "openProviderTopLevelTitle": {
+    "message": "새 탭에서 열기"
+  },
   "msgOpenModeUpdated": {
     "message": "열기 모드가 업데이트되었습니다"
   },
@@ -1034,5 +1044,53 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "$1 삭제"
+  },
+  "labelCustomProviderKind": {
+    "message": "연결 방식"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "웹 UI (채팅 사이트 임베드)"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "OpenAI 호환 API"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "기본 URL 또는 Chat Completions URL"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1 또는 http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "모델 ID"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini 또는 qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "API 키 (로컬 엔드포인트는 선택 사항)"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-... (이 기기에만 저장됨)"
+  },
+  "btnShowApiKey": {
+    "message": "표시"
+  },
+  "btnHideApiKey": {
+    "message": "숨기기"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize가 $1 접근 권한을 요청합니다 · 엔드포인트: $2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "API 키는 이 기기에만 로컬로 저장되며 동기화되거나 내보내지지 않고, 설정한 엔드포인트로만 전송됩니다."
+  },
+  "errCustomModelRequired": {
+    "message": "모델 ID를 입력하세요 (예: gpt-4o-mini 또는 qwen2.5:14b)."
+  },
+  "errCustomModelTooLong": {
+    "message": "모델 ID는 200자 이하여야 합니다."
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "API 키가 허용된 최대 길이를 초과했습니다."
   }
 }

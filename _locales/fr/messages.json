@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "L’accès au site est requis pour activer $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "Impossible de demander l’accès au site pour $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "Raccourci clavier activé"
@@ -813,7 +821,9 @@
   "switchToPopupModeTitle": {
     "message": "Passer au mode fenêtre popup"
   },
-  "openProviderTopLevelTitle": { "message": "Ouvrir dans un nouvel onglet" },
+  "openProviderTopLevelTitle": {
+    "message": "Ouvrir dans un nouvel onglet"
+  },
   "msgOpenModeUpdated": {
     "message": "Mode d'ouverture mis à jour"
   },
@@ -1034,5 +1044,53 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "Supprimer $1"
+  },
+  "labelCustomProviderKind": {
+    "message": "Type de connexion"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "Interface web (intégrer un site de chat)"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "API compatible OpenAI"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "URL de base ou URL Chat Completions"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1 ou http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "ID du modèle"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini ou qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "Clé API (facultative pour les points de terminaison locaux)"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-... (stockée uniquement sur cet appareil)"
+  },
+  "btnShowApiKey": {
+    "message": "Afficher"
+  },
+  "btnHideApiKey": {
+    "message": "Masquer"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize demandera l’accès à $1 · Point de terminaison : $2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "Les clés API restent stockées localement sur cet appareil uniquement, ne sont jamais synchronisées ni exportées, et sont envoyées exclusivement au point de terminaison configuré."
+  },
+  "errCustomModelRequired": {
+    "message": "Saisissez un ID de modèle (par exemple, gpt-4o-mini ou qwen2.5:14b)."
+  },
+  "errCustomModelTooLong": {
+    "message": "L’ID du modèle ne doit pas dépasser 200 caractères."
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "La clé API dépasse la longueur maximale autorisée."
   }
 }

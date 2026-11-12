@@ -9,12 +9,20 @@ import {
   addCustomProvider,
   allocateCustomFrameRuleId,
   generateCustomProviderId,
+  getCustomProviderOrigin,
   loadCustomProviders,
+  MAX_CUSTOM_API_MODEL_LENGTH,
   MAX_CUSTOM_PROVIDER_NAME_LENGTH,
   removeCustomProvider,
   subscribeCustomProvidersChanged,
+  validateCustomApiEndpointUrl,
   validateCustomProviderUrl
 } from '../modules/custom-providers.js';
+import {
+  deleteCustomApiKey,
+  MAX_CUSTOM_API_KEY_LENGTH,
+  saveCustomApiKey
+} from '../modules/custom-api-secrets.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import {
   appendProviderToOrder,
@@ -87,8 +95,16 @@ export function isOriginUsedByAnyProvider(origin, { excludeProviderId = null } =
 function getCustomProviderFormElements() {
   return {
     form: document.getElementById('custom-provider-form'),
+    kindWebRadio: document.getElementById('custom-provider-kind-web'),
+    kindApiRadio: document.getElementById('custom-provider-kind-api'),
     nameInput: document.getElementById('custom-provider-name'),
+    urlLabel: document.getElementById('custom-provider-url-label'),
     urlInput: document.getElementById('custom-provider-url'),
+    apiFieldsWrapper: document.getElementById('custom-provider-api-fields'),
+    modelInput: document.getElementById('custom-provider-model'),
+    apiKeyInput: document.getElementById('custom-provider-api-key'),
+    apiKeyToggleButton: document.getElementById('custom-provider-api-key-toggle'),
+    apiNote: document.getElementById('custom-provider-api-note'),
     addButton: document.getElementById('custom-provider-add-btn'),
     originPreview: document.getElementById('custom-provider-origin-preview'),
     errorMessage: document.getElementById('custom-provider-error'),
@@ -96,14 +112,82 @@ function getCustomProviderFormElements() {
   };
 }
 
+function getSelectedCustomProviderKind() {
+  const checked = document.querySelector('input[name="customProviderKind"]:checked');
+  return checked?.value === 'api' ? 'api' : 'web';
+}
+
+function setApiKeyRevealedState(revealed) {
+  const { apiKeyInput, apiKeyToggleButton } = getCustomProviderFormElements();
+  if (!apiKeyInput || !apiKeyToggleButton) {
+    return;
+  }
+  apiKeyInput.type = revealed ? 'text' : 'password';
+  apiKeyToggleButton.setAttribute('aria-pressed', revealed ? 'true' : 'false');
+  const i18nKey = revealed ? 'btnHideApiKey' : 'btnShowApiKey';
+  apiKeyToggleButton.dataset.i18n = i18nKey;
+  apiKeyToggleButton.textContent = t(i18nKey);
+}
+
+export function syncCustomProviderKindFields() {
+  const {
+    urlLabel,
+    urlInput,
+    apiFieldsWrapper,
+    modelInput,
+    apiNote
+  } = getCustomProviderFormElements();
+  const isApi = getSelectedCustomProviderKind() === 'api';
+
+  if (apiFieldsWrapper) {
+    apiFieldsWrapper.hidden = !isApi;
+  }
+  if (apiNote) {
+    apiNote.hidden = !isApi;
+  }
+  if (modelInput) {
+    modelInput.required = isApi;
+  }
+  if (urlLabel) {
+    const labelKey = isApi ? 'labelCustomApiEndpointUrl' : 'labelCustomProviderUrl';
+    urlLabel.dataset.i18n = labelKey;
+    urlLabel.textContent = t(labelKey);
+  }
+  if (urlInput) {
+    const placeholderKey = isApi
+      ? 'placeholderCustomApiEndpointUrl'
+      : 'placeholderCustomProviderUrl';
+    urlInput.dataset.i18nPlaceholder = placeholderKey;
+    urlInput.placeholder = t(placeholderKey);
+  }
+}
+
 export function syncCustomProviderFormAvailability() {
-  const { nameInput, urlInput, addButton, unsupportedNote } = getCustomProviderFormElements();
+  const {
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    apiKeyToggleButton,
+    addButton,
+    unsupportedNote
+  } = getCustomProviderFormElements();
   const supported = supportsScopedFrameRules();
   const disabled = !supported || isSubmittingCustomProvider;
+
+  syncCustomProviderKindFields();
 
   if (unsupportedNote) {
     unsupportedNote.textContent = t('msgCustomProviderUnsupportedChrome');
     unsupportedNote.hidden = supported;
+  }
+  if (kindWebRadio) {
+    kindWebRadio.disabled = disabled;
+  }
+  if (kindApiRadio) {
+    kindApiRadio.disabled = disabled;
   }
   if (nameInput) {
     nameInput.disabled = disabled;
@@ -111,15 +195,27 @@ export function syncCustomProviderFormAvailability() {
   if (urlInput) {
     urlInput.disabled = disabled;
   }
+  if (modelInput) {
+    modelInput.disabled = disabled;
+  }
+  if (apiKeyInput) {
+    apiKeyInput.disabled = disabled;
+  }
+  if (apiKeyToggleButton) {
+    apiKeyToggleButton.disabled = disabled;
+  }
   if (addButton) {
     addButton.disabled = disabled;
   }
 }
 
 function clearCustomProviderFormError() {
-  const { nameInput, urlInput, errorMessage } = getCustomProviderFormElements();
+  const { nameInput, urlInput, modelInput, apiKeyInput, errorMessage } =
+    getCustomProviderFormElements();
   nameInput?.removeAttribute('aria-invalid');
   urlInput?.removeAttribute('aria-invalid');
+  modelInput?.removeAttribute('aria-invalid');
+  apiKeyInput?.removeAttribute('aria-invalid');
   if (errorMessage) {
     errorMessage.textContent = '';
     errorMessage.hidden = true;
@@ -127,9 +223,12 @@ function clearCustomProviderFormError() {
 }
 
 function setCustomProviderFormError(message, invalidField = null) {
-  const { nameInput, urlInput, errorMessage } = getCustomProviderFormElements();
+  const { nameInput, urlInput, modelInput, apiKeyInput, errorMessage } =
+    getCustomProviderFormElements();
   nameInput?.removeAttribute('aria-invalid');
   urlInput?.removeAttribute('aria-invalid');
+  modelInput?.removeAttribute('aria-invalid');
+  apiKeyInput?.removeAttribute('aria-invalid');
   if (invalidField) {
     invalidField.setAttribute('aria-invalid', 'true');
   }
@@ -146,6 +245,21 @@ export function updateCustomProviderOriginPreview() {
   }
   const raw = urlInput.value;
   if (!raw || raw.trim().length === 0) {
+    originPreview.textContent = '';
+    originPreview.hidden = true;
+    return;
+  }
+
+  if (getSelectedCustomProviderKind() === 'api') {
+    const endpointCheck = validateCustomApiEndpointUrl(raw);
+    if (endpointCheck.ok && endpointCheck.origin && endpointCheck.endpointUrl) {
+      originPreview.textContent = t('msgCustomApiEndpointPreview', [
+        endpointCheck.origin,
+        endpointCheck.endpointUrl
+      ]);
+      originPreview.hidden = false;
+      return;
+    }
     originPreview.textContent = '';
     originPreview.hidden = true;
     return;
@@ -169,13 +283,15 @@ export async function handleCustomProviderFormSubmit(event) {
     return;
   }
 
-  const { nameInput, urlInput } = getCustomProviderFormElements();
+  const { nameInput, urlInput, modelInput, apiKeyInput } = getCustomProviderFormElements();
   if (!supportsScopedFrameRules()) {
     const message = t('msgCustomProviderUnsupportedChrome');
     setCustomProviderFormError(message);
     showStatus('error', message);
     return;
   }
+
+  const isApiKind = getSelectedCustomProviderKind() === 'api';
 
   const rawName = typeof nameInput?.value === 'string' ? nameInput.value : '';
   const trimmedName = rawName.trim();
@@ -191,12 +307,39 @@ export async function handleCustomProviderFormSubmit(event) {
   }
 
   const rawUrl = typeof urlInput?.value === 'string' ? urlInput.value : '';
-  const urlCheck = validateCustomProviderUrl(rawUrl);
+  const urlCheck = isApiKind
+    ? validateCustomApiEndpointUrl(rawUrl)
+    : validateCustomProviderUrl(rawUrl);
   if (!urlCheck.ok) {
     const message = getCustomProviderUrlErrorMessage(urlCheck.reason);
     setCustomProviderFormError(message, urlInput);
     urlInput?.focus?.();
     return;
+  }
+
+  let trimmedModel = '';
+  let trimmedApiKey = '';
+  if (isApiKind) {
+    const rawModel = typeof modelInput?.value === 'string' ? modelInput.value : '';
+    trimmedModel = rawModel.trim();
+    if (trimmedModel.length === 0) {
+      setCustomProviderFormError(t('errCustomModelRequired'), modelInput);
+      modelInput?.focus?.();
+      return;
+    }
+    if (trimmedModel.length > MAX_CUSTOM_API_MODEL_LENGTH) {
+      setCustomProviderFormError(t('errCustomModelTooLong'), modelInput);
+      modelInput?.focus?.();
+      return;
+    }
+
+    const rawApiKey = typeof apiKeyInput?.value === 'string' ? apiKeyInput.value : '';
+    trimmedApiKey = rawApiKey.trim();
+    if (trimmedApiKey.length > MAX_CUSTOM_API_KEY_LENGTH) {
+      setCustomProviderFormError(t('errCustomApiKeyTooLong'), apiKeyInput);
+      apiKeyInput?.focus?.();
+      return;
+    }
   }
 
   let id;
@@ -252,15 +395,34 @@ export async function handleCustomProviderFormSubmit(event) {
       return;
     }
 
+    let savedSecret = false;
     let addedToLocal = false;
     try {
-      const savedRecord = await addCustomProvider({
-        id,
-        name: trimmedName,
-        url: urlCheck.url,
-        frameRuleId,
-        createdAt
-      });
+      if (isApiKind && trimmedApiKey.length > 0) {
+        await saveCustomApiKey(id, trimmedApiKey);
+        savedSecret = true;
+      }
+
+      const savedRecord = await addCustomProvider(
+        isApiKind
+          ? {
+              id,
+              kind: 'api',
+              name: trimmedName,
+              endpointUrl: urlCheck.endpointUrl,
+              model: trimmedModel,
+              hasApiKey: trimmedApiKey.length > 0,
+              frameRuleId,
+              createdAt
+            }
+          : {
+              id,
+              name: trimmedName,
+              url: urlCheck.url,
+              frameRuleId,
+              createdAt
+            }
+      );
       addedToLocal = true;
 
       const settings = await getSettings();
@@ -292,11 +454,17 @@ export async function handleCustomProviderFormSubmit(event) {
 
       if (nameInput) nameInput.value = '';
       if (urlInput) urlInput.value = '';
+      if (modelInput) modelInput.value = '';
+      if (apiKeyInput) apiKeyInput.value = '';
+      setApiKeyRevealedState(false);
       updateCustomProviderOriginPreview();
       clearCustomProviderFormError();
       await renderProviderList();
       showStatus('success', t('msgCustomProviderAdded', savedRecord.name));
     } catch (persistError) {
+      if (savedSecret) {
+        await deleteCustomApiKey(id).catch(() => {});
+      }
       if (addedToLocal) {
         await removeCustomProvider(id).catch(() => {});
       }
@@ -325,10 +493,11 @@ export async function deleteCustomProviderEntry(providerId) {
     return false;
   }
 
-  const origin = descriptor.frameOrigins[0] || null;
+  const origin = getCustomProviderOrigin(descriptor);
   const providerName = descriptor.name;
 
   await removeCustomProvider(providerId);
+  await deleteCustomApiKey(providerId).catch(() => {});
 
   const syncState = await chrome.storage.sync.get({
     enabledProviders: DEFAULT_ENABLED_PROVIDERS,
@@ -361,7 +530,16 @@ export async function deleteCustomProviderEntry(providerId) {
 }
 
 function setupCustomProviderForm() {
-  const { form, nameInput, urlInput } = getCustomProviderFormElements();
+  const {
+    form,
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    apiKeyToggleButton
+  } = getCustomProviderFormElements();
   syncCustomProviderFormAvailability();
   updateCustomProviderOriginPreview();
 
@@ -369,6 +547,14 @@ function setupCustomProviderForm() {
     return;
   }
   form.dataset.customFormBound = 'true';
+
+  const onKindChange = () => {
+    clearCustomProviderFormError();
+    syncCustomProviderKindFields();
+    updateCustomProviderOriginPreview();
+  };
+  kindWebRadio?.addEventListener('change', onKindChange);
+  kindApiRadio?.addEventListener('change', onKindChange);
 
   nameInput?.addEventListener('input', () => {
     clearCustomProviderFormError();
@@ -379,6 +565,19 @@ function setupCustomProviderForm() {
     updateCustomProviderOriginPreview();
   });
 
+  modelInput?.addEventListener('input', () => {
+    clearCustomProviderFormError();
+  });
+
+  apiKeyInput?.addEventListener('input', () => {
+    clearCustomProviderFormError();
+  });
+
+  apiKeyToggleButton?.addEventListener('click', () => {
+    const isRevealed = apiKeyToggleButton.getAttribute('aria-pressed') === 'true';
+    setApiKeyRevealedState(!isRevealed);
+  });
+
   urlInput?.addEventListener('blur', () => {
     if (!supportsScopedFrameRules()) {
       return;
@@ -387,7 +586,9 @@ function setupCustomProviderForm() {
     if (!raw || raw.trim().length === 0) {
       return;
     }
-    const check = validateCustomProviderUrl(raw);
+    const check = getSelectedCustomProviderKind() === 'api'
+      ? validateCustomApiEndpointUrl(raw)
+      : validateCustomProviderUrl(raw);
     if (!check.ok) {
       setCustomProviderFormError(getCustomProviderUrlErrorMessage(check.reason), urlInput);
     }
@@ -829,8 +1030,8 @@ function createProviderListItemElement(
 
   info.append(iconWrapper, nameSpan);
 
-  if (isCustom && descriptor.frameOrigins?.[0]) {
-    const origin = descriptor.frameOrigins[0];
+  const customOrigin = isCustom ? getCustomProviderOrigin(descriptor) : null;
+  if (customOrigin) {
     const originBadge = document.createElement('span');
     originBadge.className = 'provider-origin-badge';
     const shadow = originBadge.attachShadow({ mode: 'open' });
@@ -840,9 +1041,18 @@ function createProviderListItemElement(
     bdiEl.style.unicodeBidi = 'isolate';
     bdiEl.appendChild(document.createElement('slot'));
     shadow.appendChild(bdiEl);
-    originBadge.textContent = origin;
-    originBadge.title = origin;
+    originBadge.textContent = customOrigin;
+    originBadge.title = customOrigin;
     info.appendChild(originBadge);
+  }
+
+  if (isCustom && descriptor.customKind === 'api' && descriptor.apiConfig?.model) {
+    const modelBadge = document.createElement('span');
+    modelBadge.className = 'provider-model-badge';
+    modelBadge.dir = 'ltr';
+    modelBadge.textContent = descriptor.apiConfig.model;
+    modelBadge.title = descriptor.apiConfig.model;
+    info.appendChild(modelBadge);
   }
 
   const controls = document.createElement('div');

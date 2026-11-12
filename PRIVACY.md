@@ -1,6 +1,6 @@
 # Privacy Policy for Panelize
 
-**Last Updated: November 10, 2026**
+**Last Updated: November 12, 2026**
 
 ## Overview
 
@@ -41,18 +41,24 @@ The following data is stored in browser-managed storage. Prompt library data rem
 
 **Purpose:** To improve user experience with relevant suggestions and quick access.
 
+#### Custom AI Providers and Optional Local API Keys
+- Custom AI site URLs, names, and OpenAI-compatible API endpoint URLs / model IDs you add in Settings (stored in device-local `chrome.storage.local`)
+- Optional API keys you enter for Custom API providers (stored **strictly on your local device** in extension-origin `IndexedDB`, never stored in `chrome.storage.sync`, never included in exported JSON backups, and deleted from local `IndexedDB` when you remove that Custom API provider)
+
+**Purpose:** To let you compare self-hosted or OpenAI-compatible models side by side. Optional API keys are transmitted solely in requests to the exact endpoint URL you configured and authorized, and conversations in the built-in API comparison panel remain in memory only for the active session without persistent chat history.
+
 ### 2. Data We Do NOT Collect
 
-Panelize does **NOT** collect, store, or transmit:
+Panelize does **NOT** collect, store on Panelize servers, or transmit to Panelize developers:
 
 - ❌ Personal identification information
 - ❌ Browsing history
 - ❌ IP addresses
 - ❌ Analytics or telemetry data
 - ❌ Usage statistics sent to external servers
-- ❌ AI conversation content
-- ❌ Login credentials or API keys
-- ❌ Any data to external servers or third parties
+- ❌ Persistent AI conversation history
+- ❌ Website login credentials, or any collection/syncing of optional Custom API keys by Panelize (optional API keys remain on your device only and are sent solely to your configured endpoint)
+- ❌ Any data to Panelize-operated servers or unrelated third parties
 
 ---
 
@@ -71,11 +77,11 @@ All data collected by Panelize is used solely for providing extension functional
 
 ## Third-Party Services
 
-### AI Provider Websites
+### AI Provider Websites and User-Configured Endpoints
 
-Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen, ChatGLM, Z.ai, Yuanbao, Google AI Studio, and Google AI Mode) inside embedded panels. These providers operate under their own privacy policies.
+Panelize loads AI provider websites (ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen, ChatGLM, Z.ai, Yuanbao, Google AI Studio, Google AI Mode, and any Custom Web AI sites you explicitly add) inside embedded panels, and sends chat completion requests directly from your browser to any OpenAI-compatible API endpoints you explicitly configure. These services and endpoints operate under their own privacy policies.
 
-When you interact with these AI providers through Panelize, you are subject to their respective privacy policies. Panelize does not collect or store the content of your conversations with these services.
+When you interact with these AI providers or endpoints through Panelize, you are subject to their respective privacy policies. Panelize does not collect or store on disk the content of your conversations with these services.
 
 ### Cookie Access
 
@@ -159,10 +165,10 @@ Panelize requests the following Chrome extension permissions:
 | `storage` | Store your prompts and settings locally |
 | `cookies` | Attach existing `grok.com` session cookies to Grok's embedded WebSocket connections and preserve your Grok cookie consent choices inside Panelize |
 | `contextMenus` | Add "Send to Panelize" option when right-clicking |
-| `declarativeNetRequest` | Allow AI provider websites to load in embedded panels (bypass X-Frame-Options) |
-| `declarativeNetRequestWithHostAccess` | Apply header modifications for specific AI provider domains |
+| `declarativeNetRequest` | Allow AI provider websites to load in embedded panels (bypass X-Frame-Options) and omit the `chrome-extension://` `Origin` header on extension-initiated Custom API requests so strict local servers (such as Ollama) accept authorized requests |
+| `declarativeNetRequestWithHostAccess` | Apply header modifications only for authorized AI provider domains and user-approved custom origins |
 | Host permissions | Access the built-in AI provider websites and check for updates on GitHub |
-| Optional host permissions | Access additional providers only after you enable them and approve the provider-specific browser prompt |
+| Optional host permissions | Access optional built-in providers, Custom Web AI sites, and Custom API endpoints only after you add/enable them and approve Chrome's origin-specific permission prompt |
 
 **None of these permissions are used to collect, transmit, or share your data with external parties.**
 
