@@ -1948,9 +1948,11 @@
   // must clear it explicitly. The composer re-renders after navigation and may
   // restore the draft late, so clear a few times, stopping once the user types.
   const CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS = [0, 250, 600, 1200, 2000];
+  const CHATGPT_NEW_CHAT_MOUNT_POLL_MS = 250;
   const CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY = 'panelize:chatgpt-pending-new-chat-clear';
   const CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS = 15000;
   let chatgptNewChatClearTimerIds = [];
+  let chatgptNewChatMountObserver = null;
 
   function clearPendingChatgptNewChatComposerClearMarker() {
     try {
@@ -1971,7 +1973,7 @@
   function clearChatgptComposerDraftOnce() {
     const editor = findProviderInput('chatgpt');
     if (!editor) {
-      return;
+      return false;
     }
     const currentText = editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT'
       ? (editor.value || '')
@@ -1984,11 +1986,24 @@
       }
       console.log('[Text Injection] Cleared persisted ChatGPT draft after new chat');
     }
+    return true;
+  }
+
+  function disconnectChatgptNewChatMountObserver() {
+    if (chatgptNewChatMountObserver) {
+      chatgptNewChatMountObserver.disconnect();
+      chatgptNewChatMountObserver = null;
+    }
+  }
+
+  function clearChatgptNewChatScheduledTimers() {
+    chatgptNewChatClearTimerIds.forEach(timerId => clearTimeout(timerId));
+    chatgptNewChatClearTimerIds = [];
   }
 
   function cancelChatgptNewChatComposerClear({ clearReloadMarker = true } = {}) {
-    chatgptNewChatClearTimerIds.forEach(timerId => clearTimeout(timerId));
-    chatgptNewChatClearTimerIds = [];
+    clearChatgptNewChatScheduledTimers();
+    disconnectChatgptNewChatMountObserver();
     if (clearReloadMarker) {
       clearPendingChatgptNewChatComposerClearMarker();
     }
@@ -2002,19 +2017,81 @@
     }
   }
 
-  function scheduleChatgptNewChatComposerClear() {
-    cancelChatgptNewChatComposerClear({ clearReloadMarker: false });
-    document.addEventListener('keydown', handleChatgptNewChatUserInput, true);
-    document.addEventListener('beforeinput', handleChatgptNewChatUserInput, true);
+  function startChatgptPostMountClearPasses({ consumeReloadMarker = false } = {}) {
+    clearChatgptNewChatScheduledTimers();
+    disconnectChatgptNewChatMountObserver();
+    if (consumeReloadMarker) {
+      clearPendingChatgptNewChatComposerClearMarker();
+    }
     CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.forEach((delay, index) => {
       const timerId = setTimeout(() => {
         clearChatgptComposerDraftOnce();
         if (index === CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.length - 1) {
-          cancelChatgptNewChatComposerClear({ clearReloadMarker: false });
+          cancelChatgptNewChatComposerClear({ clearReloadMarker: consumeReloadMarker });
         }
       }, delay);
       chatgptNewChatClearTimerIds.push(timerId);
     });
+  }
+
+  function scheduleChatgptNewChatComposerClear({
+    waitForMountUntilMs = 0,
+    consumeReloadMarkerOnMount = false
+  } = {}) {
+    cancelChatgptNewChatComposerClear({ clearReloadMarker: false });
+    document.addEventListener('keydown', handleChatgptNewChatUserInput, true);
+    document.addEventListener('beforeinput', handleChatgptNewChatUserInput, true);
+
+    if (!waitForMountUntilMs || findProviderInput('chatgpt')) {
+      startChatgptPostMountClearPasses({ consumeReloadMarker: consumeReloadMarkerOnMount });
+      return;
+    }
+
+    const remainingTtlMs = Math.max(0, waitForMountUntilMs - Date.now());
+    if (remainingTtlMs === 0) {
+      cancelChatgptNewChatComposerClear({ clearReloadMarker: true });
+      return;
+    }
+
+    const checkMountedOrExpired = () => {
+      if (findProviderInput('chatgpt')) {
+        startChatgptPostMountClearPasses({ consumeReloadMarker: consumeReloadMarkerOnMount });
+        return true;
+      }
+      if (Date.now() >= waitForMountUntilMs) {
+        cancelChatgptNewChatComposerClear({ clearReloadMarker: true });
+        return true;
+      }
+      return false;
+    };
+
+    const observeRoot = document.documentElement || document;
+    if (typeof MutationObserver === 'function' && observeRoot) {
+      chatgptNewChatMountObserver = new MutationObserver(() => {
+        checkMountedOrExpired();
+      });
+      chatgptNewChatMountObserver.observe(observeRoot, {
+        childList: true,
+        subtree: true,
+        attributes: true
+      });
+    }
+
+    const scheduleNextMountPoll = () => {
+      const msLeft = waitForMountUntilMs - Date.now();
+      if (msLeft <= 0) {
+        cancelChatgptNewChatComposerClear({ clearReloadMarker: true });
+        return;
+      }
+      const pollTimerId = setTimeout(() => {
+        if (!checkMountedOrExpired()) {
+          scheduleNextMountPoll();
+        }
+      }, Math.min(CHATGPT_NEW_CHAT_MOUNT_POLL_MS, msLeft));
+      chatgptNewChatClearTimerIds.push(pollTimerId);
+    };
+
+    scheduleNextMountPoll();
   }
 
   function resumePendingChatgptNewChatComposerClear() {
@@ -2025,17 +2102,25 @@
     let rawTimestamp = null;
     try {
       rawTimestamp = window.sessionStorage?.getItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY) || null;
-      if (rawTimestamp !== null) {
-        window.sessionStorage?.removeItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY);
-      }
     } catch (error) {
       return;
     }
 
-    const timestamp = Number(rawTimestamp);
-    if (Number.isFinite(timestamp) && Date.now() - timestamp < CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS) {
-      scheduleChatgptNewChatComposerClear();
+    if (rawTimestamp === null) {
+      return;
     }
+
+    const timestamp = Number(rawTimestamp);
+    const deadlineMs = timestamp + CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS;
+    if (!Number.isFinite(timestamp) || Date.now() >= deadlineMs) {
+      clearPendingChatgptNewChatComposerClearMarker();
+      return;
+    }
+
+    scheduleChatgptNewChatComposerClear({
+      waitForMountUntilMs: deadlineMs,
+      consumeReloadMarkerOnMount: true
+    });
   }
 
   // Find and click new chat button

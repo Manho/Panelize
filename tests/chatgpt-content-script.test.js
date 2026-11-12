@@ -458,5 +458,78 @@ describe('chatgpt content script provider status', () => {
 
       expect(textarea.value).toBe('');
     });
+
+    it('waits past 2000ms for a slow reloaded composer to mount before consuming the marker, and never erases trusted user typing', async () => {
+      const { Window: HappyWindow } = await import('happy-dom');
+      const frameWin = new HappyWindow({ url: 'https://chatgpt.com/' });
+      const hostStub = { postMessage: vi.fn() };
+      Object.defineProperty(frameWin, 'parent', { configurable: true, value: hostStub });
+      Object.defineProperty(frameWin, 'top', { configurable: true, value: hostStub });
+
+      vi.useFakeTimers();
+      try {
+        frameWin.setTimeout = globalThis.setTimeout;
+        frameWin.clearTimeout = globalThis.clearTimeout;
+        frameWin.Date = globalThis.Date;
+
+        frameWin.document.body.innerHTML = '<div id="app-loading-shell">Loading...</div>';
+        frameWin.sessionStorage.setItem(
+          'panelize:chatgpt-pending-new-chat-clear',
+          String(Date.now())
+        );
+
+        frameWin.eval(composerScriptSource);
+        frameWin.eval(contentScriptSource);
+
+        // Past the old 2000ms cutoff with no composer mounted yet: marker is still retained
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(
+          frameWin.sessionStorage.getItem('panelize:chatgpt-pending-new-chat-clear')
+        ).not.toBeNull();
+
+        // At 3200ms ChatGPT mounts its composer with a persisted draft
+        const form = frameWin.document.createElement('form');
+        form.setAttribute('data-chatgpt-composer', '');
+        form.setAttribute('data-composer-placement', 'home');
+        const slowEditor = frameWin.document.createElement('div');
+        slowEditor.id = 'slow-editor';
+        slowEditor.setAttribute('data-composer-markdown', '');
+        slowEditor.setAttribute('contenteditable', 'true');
+        slowEditor.className = 'ProseMirror';
+        slowEditor.innerHTML = '<p>persisted cold-load draft</p>';
+        Object.defineProperty(slowEditor, 'offsetParent', {
+          configurable: true,
+          get: () => frameWin.document.body,
+        });
+        const sendBtn = frameWin.document.createElement('button');
+        sendBtn.type = 'submit';
+        sendBtn.setAttribute('aria-label', 'Send');
+        form.append(slowEditor, sendBtn);
+        frameWin.document.body.appendChild(form);
+
+        await vi.advanceTimersByTimeAsync(300);
+        expect(slowEditor.textContent).toBe('');
+        expect(
+          frameWin.sessionStorage.getItem('panelize:chatgpt-pending-new-chat-clear')
+        ).toBeNull();
+
+        // Late React draft hydration 200ms after mount is also cleared
+        slowEditor.innerHTML = '<p>late hydrated draft</p>';
+        await vi.advanceTimersByTimeAsync(350);
+        expect(slowEditor.textContent).toBe('');
+
+        // Trusted user typing cancels remaining passes so user input is never erased
+        const trustedKeydown = new frameWin.KeyboardEvent('keydown', { key: 'H', bubbles: true });
+        Object.defineProperty(trustedKeydown, 'isTrusted', { value: true });
+        slowEditor.dispatchEvent(trustedKeydown);
+        slowEditor.innerHTML = '<p>Hello from user</p>';
+
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(slowEditor.textContent).toBe('Hello from user');
+      } finally {
+        vi.useRealTimers();
+        await frameWin.happyDOM.close();
+      }
+    });
   });
 });
