@@ -549,7 +549,7 @@
     }
   }
 
-  function injectIntoContentEditable(el, text) {
+  async function injectIntoContentEditable(el, text) {
     try {
       el.focus({ preventScroll: true });
     } catch {
@@ -561,17 +561,41 @@
 
     // Primary strategy: execCommand('insertText') fires native beforeinput + mutates DOM + fires input,
     // which ProseMirror, TipTap, Lexical, Quill, and Svelte/React contenteditables observe.
+    // Note: Lexical/Slate call preventDefault() on beforeinput and reconcile the DOM asynchronously
+    // in a microtask, so we observe beforeinput and allow a brief settle tick before falling back.
     let execSucceeded = false;
+    let beforeInputObserved = false;
+    let beforeInputCancelled = false;
+    const onBeforeInput = (evt) => {
+      if (evt && (evt.target === el || el.contains(evt.target))) {
+        beforeInputObserved = true;
+        if (evt.defaultPrevented) {
+          beforeInputCancelled = true;
+        }
+      }
+    };
+    document.addEventListener('beforeinput', onBeforeInput);
     try {
       execSucceeded = document.execCommand('insertText', false, text);
     } catch {
       execSucceeded = false;
+    } finally {
+      document.removeEventListener('beforeinput', onBeforeInput);
     }
 
-    const afterExec = getComposerText(el).trim();
+    let afterExec = getComposerText(el).trim();
     if (execSucceeded && (afterExec !== beforeNormalized || afterExec.includes(text.trim()))) {
       moveCaretToEnd(el);
       return true;
+    }
+
+    if (beforeInputCancelled || beforeInputObserved || execSucceeded) {
+      await sleep(25);
+      afterExec = getComposerText(el).trim();
+      if (afterExec !== beforeNormalized || afterExec.includes(text.trim())) {
+        moveCaretToEnd(el);
+        return true;
+      }
     }
 
     // Fallback 1: synthetic ClipboardEvent('paste') for editors that ignore execCommand.
@@ -585,6 +609,9 @@
         clipboardData: dataTransfer,
       });
       const notCancelled = el.dispatchEvent(pasteEvent);
+      if (!notCancelled) {
+        await sleep(25);
+      }
       const afterPaste = getComposerText(el).trim();
       if (!notCancelled || afterPaste !== beforeNormalized) {
         moveCaretToEnd(el);
@@ -604,6 +631,8 @@
         data: text,
       });
       if (!el.dispatchEvent(beforeInput)) {
+        await sleep(25);
+        moveCaretToEnd(el);
         return true;
       }
     } catch {
@@ -617,7 +646,7 @@
     return true;
   }
 
-  function injectTextIntoComposer(composer, text, { skipIfAlreadyPresent = false } = {}) {
+  async function injectTextIntoComposer(composer, text, { skipIfAlreadyPresent = false } = {}) {
     if (!composer || typeof text !== 'string' || text.length === 0) {
       return false;
     }
@@ -639,6 +668,66 @@
     return false;
   }
 
+  function dispatchCancelableBeforeInput(el, inputType, data = null) {
+    try {
+      const ev = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType,
+        data,
+      });
+      return !el.dispatchEvent(ev);
+    } catch {
+      return false;
+    }
+  }
+
+  async function settleControlledContentEditableClear(composer) {
+    await sleep(30);
+    if (!composer.isConnected || isComposerEmpty(composer)) {
+      return;
+    }
+
+    // Editors like Lexical sync internal RangeSelection asynchronously on document 'selectionchange'.
+    selectAllInElement(composer);
+    try {
+      document.dispatchEvent(new Event('selectionchange'));
+    } catch {
+      // Ignore.
+    }
+    await sleep(35);
+    if (!composer.isConnected || isComposerEmpty(composer)) {
+      return;
+    }
+
+    try {
+      document.execCommand('delete', false, null);
+    } catch {
+      // Ignore.
+    }
+    await sleep(25);
+    if (!composer.isConnected || isComposerEmpty(composer)) {
+      return;
+    }
+
+    selectAllInElement(composer);
+    try {
+      document.dispatchEvent(new Event('selectionchange'));
+    } catch {
+      // Ignore.
+    }
+    await sleep(20);
+    dispatchCancelableBeforeInput(composer, 'deleteContentBackward');
+    await sleep(25);
+
+    if (composer.isConnected && !isComposerEmpty(composer)) {
+      composer.innerHTML = '';
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      composer.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
   function clearComposer(composer) {
     if (!composer) return false;
 
@@ -654,23 +743,46 @@
         composer.focus();
       }
 
-      selectAllInElement(composer);
-      try {
-        document.execCommand('delete', false, null);
-      } catch {
-        // Ignore.
-      }
+      let beforeInputHandled = false;
+      const onBeforeInput = (evt) => {
+        if (evt && (evt.target === composer || composer.contains(evt.target)) && evt.defaultPrevented) {
+          beforeInputHandled = true;
+        }
+      };
+      document.addEventListener('beforeinput', onBeforeInput);
 
-      if (!isComposerEmpty(composer)) {
+      try {
         selectAllInElement(composer);
         try {
-          document.execCommand('insertText', false, '');
+          document.dispatchEvent(new Event('selectionchange'));
         } catch {
           // Ignore.
         }
+        try {
+          document.execCommand('delete', false, null);
+        } catch {
+          // Ignore.
+        }
+
+        if (!isComposerEmpty(composer) && !beforeInputHandled) {
+          selectAllInElement(composer);
+          try {
+            document.execCommand('insertText', false, '');
+          } catch {
+            // Ignore.
+          }
+        }
+
+        if (!isComposerEmpty(composer) && !beforeInputHandled) {
+          if (dispatchCancelableBeforeInput(composer, 'deleteContentBackward')) {
+            beforeInputHandled = true;
+          }
+        }
+      } finally {
+        document.removeEventListener('beforeinput', onBeforeInput);
       }
 
-      if (!isComposerEmpty(composer)) {
+      if (!isComposerEmpty(composer) && !beforeInputHandled) {
         composer.dispatchEvent(
           new KeyboardEvent('keydown', {
             key: 'Backspace',
@@ -682,6 +794,13 @@
             composed: true,
           })
         );
+      }
+
+      if (beforeInputHandled) {
+        // Avoid synchronous innerHTML wipe that triggers Lexical/Slate MutationObserver revert;
+        // let microtasks + selectionchange settle cleanly instead.
+        void settleControlledContentEditableClear(composer);
+        return true;
       }
 
       if (!isComposerEmpty(composer)) {
@@ -906,7 +1025,7 @@
       if (typeof text === 'string' && text.length > 0 && text.length <= MAX_TEXT_BYTES) {
         const composer = await findComposerWithRetry(500);
         if (composer) {
-          injectTextIntoComposer(composer, text, { skipIfAlreadyPresent: Boolean(retry) });
+          await injectTextIntoComposer(composer, text, { skipIfAlreadyPresent: Boolean(retry) });
         }
       }
       postActionResult(requestId, providerId, {
@@ -936,7 +1055,9 @@
       return;
     }
 
-    const injected = injectTextIntoComposer(composer, text, { skipIfAlreadyPresent: Boolean(retry) });
+    const injected = await injectTextIntoComposer(composer, text, {
+      skipIfAlreadyPresent: Boolean(retry),
+    });
     if (!injected) {
       postActionResult(requestId, providerId, {
         ok: false,
@@ -990,7 +1111,7 @@
       return;
     }
 
-    const injected = injectTextIntoComposer(composer, text);
+    const injected = await injectTextIntoComposer(composer, text);
     if (injected && shouldAutoSubmit) {
       // Allow reactive UI state (Svelte/React/ProseMirror) a brief tick to enable the send control.
       await sleep(80);

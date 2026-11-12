@@ -523,6 +523,104 @@ describe('content-scripts/custom-provider-driver.js', () => {
     }
   });
 
+  it('inserts once (no paste duplicate) and clears cleanly on Lexical-style microtask-reconciled contenteditable editors', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `<div id="lexical" contenteditable="true" role="textbox"></div>`;
+      const lexical = setLayoutRect(env.document.getElementById('lexical'));
+
+      // Simulate Lexical: internal state + selection synced on 'selectionchange',
+      // 'beforeinput' and 'paste' cancel default and reconcile DOM in a microtask,
+      // and unauthorized direct DOM wipes get reverted to editorState.
+      let editorText = '';
+      let selectionAll = false;
+
+      env.document.addEventListener('selectionchange', () => {
+        const sel = env.win.getSelection();
+        selectionAll = Boolean(sel && sel.rangeCount > 0 && !sel.isCollapsed);
+      });
+
+      const reconcile = () => {
+        queueMicrotask(() => {
+          lexical.textContent = editorText;
+        });
+      };
+
+      env.document.execCommand = (cmd, _ui, val) => {
+        if (cmd === 'insertText') {
+          const ev = new env.win.InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'insertText',
+            data: val,
+          });
+          lexical.dispatchEvent(ev);
+          return !ev.defaultPrevented;
+        }
+        if (cmd === 'delete') {
+          const ev = new env.win.InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'deleteContentBackward',
+          });
+          lexical.dispatchEvent(ev);
+          return !ev.defaultPrevented;
+        }
+        return false;
+      };
+
+      lexical.addEventListener('beforeinput', (ev) => {
+        if (ev.inputType === 'insertText' && typeof ev.data === 'string') {
+          ev.preventDefault();
+          editorText = selectionAll ? ev.data : editorText + ev.data;
+          selectionAll = false;
+          reconcile();
+        } else if (ev.inputType === 'deleteContentBackward' || ev.inputType === 'deleteByCut') {
+          ev.preventDefault();
+          editorText = selectionAll ? '' : editorText.slice(0, -1);
+          selectionAll = false;
+          reconcile();
+        }
+      });
+
+      lexical.addEventListener('paste', (ev) => {
+        ev.preventDefault();
+        const clip = ev.clipboardData?.getData('text/plain') || '';
+        editorText += clip;
+        reconcile();
+      });
+
+      env.evaluateDriver();
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-lexical-fill',
+        action: 'fill',
+        text: 'Hello Perplexity Lexical!',
+        images: [],
+        autoSubmit: false,
+      });
+
+      await wait(80);
+      expect(lexical.textContent).toBe('Hello Perplexity Lexical!');
+
+      env.postFromHost({
+        type: 'CLEAR_INPUT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+
+      await wait(160);
+      expect(lexical.textContent).toBe('');
+    } finally {
+      await env.close();
+    }
+  });
+
   it('fast-fails INJECT_TEXT_WITH_IMAGES with reason "unsupported" when images are non-empty, while succeeding when images is empty', async () => {
     const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
     try {
