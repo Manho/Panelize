@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildOpenAiChatMessages,
   ChatApiError,
+  fetchOpenAiModels,
   resolveChatCompletionsUrl,
+  resolveModelsUrl,
   streamChatCompletion
 } from '../modules/openai-chat-client.js';
 
@@ -228,6 +230,93 @@ describe('openai-chat-client', () => {
       ).rejects.toThrow(
         /Rate limit or quota exceeded \(HTTP 429\): \[Google AI Studio\] google\/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream\./
       );
+    });
+  });
+
+  describe('resolveModelsUrl & fetchOpenAiModels', () => {
+    it('resolves base URLs, /v1, /chat/completions, and /models endpoints cleanly', () => {
+      expect(resolveModelsUrl('http://localhost:11434')).toBe(
+        'http://localhost:11434/v1/models'
+      );
+      expect(resolveModelsUrl('https://openrouter.ai/api/v1')).toBe(
+        'https://openrouter.ai/api/v1/models'
+      );
+      expect(resolveModelsUrl('https://openrouter.ai/api/v1/chat/completions')).toBe(
+        'https://openrouter.ai/api/v1/models'
+      );
+      expect(resolveModelsUrl('https://open.bigmodel.cn/api/paas/v4/chat/completions')).toBe(
+        'https://open.bigmodel.cn/api/paas/v4/models'
+      );
+      expect(resolveModelsUrl('https://api.openai.com/v1/models')).toBe(
+        'https://api.openai.com/v1/models'
+      );
+      expect(() => resolveModelsUrl('ftp://bad.example.com')).toThrow(ChatApiError);
+    });
+
+    it('fetches, normalizes, and deduplicates OpenAI/OpenRouter/Ollama model catalogs with optional Bearer auth', async () => {
+      const fetchImpl = vi.fn(async (url, init) => {
+        expect(url).toBe('https://openrouter.ai/api/v1/models');
+        expect(init.method).toBe('GET');
+        expect(init.headers.Authorization).toBe('Bearer sk-or-models');
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek: DeepSeek V3.2' },
+              { id: 'deepseek/deepseek-v3.2', name: 'Duplicate ignored' },
+              { id: 'qwen/qwen2.5-coder:free', name: 'qwen/qwen2.5-coder:free' },
+              { id: '   ' },
+              'llama3.3:70b'
+            ]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const res = await fetchOpenAiModels({
+        endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
+        apiKey: 'sk-or-models',
+        fetchImpl
+      });
+
+      expect(res.modelsUrl).toBe('https://openrouter.ai/api/v1/models');
+      expect(res.models).toEqual([
+        { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek: DeepSeek V3.2' },
+        { id: 'qwen/qwen2.5-coder:free', name: null },
+        { id: 'llama3.3:70b', name: null }
+      ]);
+    });
+
+    it('supports { models: [...] } payloads without Authorization header and surfaces HTTP 404/401 errors', async () => {
+      const localFetch = vi.fn(async (url, init) => {
+        expect(url).toBe('http://localhost:11434/v1/models');
+        expect(init.headers.Authorization).toBeUndefined();
+        return new Response(
+          JSON.stringify({
+            models: [{ model: 'qwen2.5:14b', name: 'Qwen 2.5 14B' }]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const localRes = await fetchOpenAiModels({
+        endpointUrl: 'http://localhost:11434',
+        apiKey: '',
+        fetchImpl: localFetch
+      });
+      expect(localRes.models).toEqual([{ id: 'qwen2.5:14b', name: 'Qwen 2.5 14B' }]);
+
+      const notFoundFetch = vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: 'Models endpoint unsupported' } }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+      await expect(
+        fetchOpenAiModels({
+          endpointUrl: 'https://gateway.example.com/v1',
+          fetchImpl: notFoundFetch
+        })
+      ).rejects.toThrow(/Endpoint or model not found \(HTTP 404\).*Models endpoint unsupported/);
     });
   });
 });

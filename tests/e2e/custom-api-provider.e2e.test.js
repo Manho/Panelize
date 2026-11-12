@@ -61,7 +61,10 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
         return;
       }
 
-      if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      const isModelsRoute = req.method === 'GET' && req.url === '/v1/models';
+      const isChatRoute = req.method === 'POST' && req.url === '/v1/chat/completions';
+
+      if (!isModelsRoute && !isChatRoute) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: `Unexpected route: ${req.method} ${req.url}` } }));
         return;
@@ -69,13 +72,28 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
 
       // Strict Ollama-style Origin enforcement: NO CORS headers, and any request
       // carrying an Origin header is rejected with HTTP 403. Extension top-level
-      // fetches only succeed when our dynamic DNR rule strips `Origin`.
+      // fetches only succeed when our dynamic/session DNR rule strips `Origin`.
       if (req.headers.origin) {
         serverState.rejectedOrigins.push(req.headers.origin);
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
             error: { message: `Rejected unexpected Origin header: ${req.headers.origin}` },
+          })
+        );
+        return;
+      }
+
+      if (isModelsRoute) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            data: [
+              { id: 'alpha-reasoner', name: 'Alpha Reasoner v1' },
+              { id: 'alpha-reasoner-v2', name: 'Alpha Reasoner v2' },
+              { id: 'beta-local', name: 'Beta Local' },
+              { id: 'beta-upgraded', name: 'Beta Upgraded' },
+            ],
           })
         );
         return;
@@ -221,14 +239,27 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
       });
       await optionsPage.setViewportSize({ width: 1280, height: 840 });
 
-      // Add Local Alpha (with API key)
+      // Add Local Alpha (with API key + searchable /v1/models picker)
       await optionsPage.locator('#custom-provider-name').fill('Local Alpha');
       await optionsPage.locator('#custom-provider-url').fill(apiOrigin);
       await expect(optionsPage.locator('#custom-provider-origin-preview')).toContainText(
         `${apiOrigin}/v1/chat/completions`
       );
-      await optionsPage.locator('#custom-provider-model').fill('alpha-reasoner');
       await optionsPage.locator('#custom-provider-api-key').fill('sk-e2e-alpha');
+
+      // Load models from strict-Origin /v1/models endpoint, filter, and pick alpha-reasoner
+      await optionsPage.locator('#custom-provider-load-models-btn').click();
+      await expect(optionsPage.locator('#custom-provider-model-count')).toHaveText('4 models');
+      await expect(optionsPage.locator('#custom-provider-model-listbox')).toBeVisible();
+      await optionsPage.locator('#custom-provider-model').fill('alpha v1');
+      await expect(
+        optionsPage.locator('#custom-provider-model-listbox [role="option"]')
+      ).toHaveCount(1);
+      await optionsPage
+        .locator('#custom-provider-model-listbox [data-model-id="alpha-reasoner"]')
+        .click();
+      await expect(optionsPage.locator('#custom-provider-model')).toHaveValue('alpha-reasoner');
+      await expect(optionsPage.locator('#custom-provider-model-listbox')).toBeHidden();
 
       // Verify password unmask toggle a11y state
       await optionsPage.locator('#custom-provider-api-key-toggle').click();
@@ -405,25 +436,38 @@ test.describe('M3 Custom OpenAI-compatible API provider E2E', () => {
       await expect(alphaFrame.locator('#empty-state')).toBeVisible();
       await expect(betaFrame.locator('#empty-state')).toBeVisible();
 
-      // 6.5. Edit Local Alpha in Options (keep saved IndexedDB key blank) and Local Beta (upgrade model) -> live Multi-Panel sync
+      // 6.5. Inline-edit Local Alpha right inside its row (keep saved IndexedDB key blank + pick v2 model from combobox) and Local Beta -> live Multi-Panel sync
+      await optionsPage.bringToFront();
       const alphaOptRow = optionsPage.locator(
         `#provider-list .provider-item[data-provider-id="${alphaId}"]`
       );
       await alphaOptRow.locator('[data-action="edit-custom-provider"]').click();
-      await expect(optionsPage.locator('#custom-provider-form-title')).toHaveText('Edit custom AI');
-      await expect(optionsPage.locator('#custom-provider-api-key')).toHaveValue('');
-      await optionsPage.locator('#custom-provider-name').fill('Local Alpha v2');
-      await optionsPage.locator('#custom-provider-model').fill('alpha-reasoner-v2');
-      await optionsPage.locator('#custom-provider-add-btn').click();
+      const alphaInlineForm = alphaOptRow.locator('form.custom-provider-inline-edit');
+      await expect(alphaInlineForm).toBeVisible();
       await expect(optionsPage.locator('#custom-provider-form-title')).toHaveText('Add custom AI');
+      await expect(alphaInlineForm.locator('input[name="customProviderApiKey"]')).toHaveValue('');
+      await expect(alphaInlineForm.locator('.custom-provider-model-count')).toHaveText('4 models');
+
+      await alphaInlineForm.locator('input[name="customProviderName"]').fill('Local Alpha v2');
+      await alphaInlineForm.locator('input[name="customProviderModel"]').click();
+      await expect(alphaInlineForm.locator('[role="listbox"]')).toBeVisible();
+      await alphaInlineForm.locator('[data-model-id="alpha-reasoner-v2"]').click();
+      await expect(alphaInlineForm.locator('input[name="customProviderModel"]')).toHaveValue(
+        'alpha-reasoner-v2'
+      );
+      await alphaInlineForm.locator('[data-action="save-inline-custom-provider"]').click();
+      await expect(alphaInlineForm).toHaveCount(0);
 
       const betaOptRow = optionsPage.locator(
         `#provider-list .provider-item[data-provider-id="${betaId}"]`
       );
       await betaOptRow.locator('[data-action="edit-custom-provider"]').click();
-      await optionsPage.locator('#custom-provider-name').fill('Local Beta v2');
-      await optionsPage.locator('#custom-provider-model').fill('beta-upgraded');
-      await optionsPage.locator('#custom-provider-add-btn').click();
+      const betaInlineForm = betaOptRow.locator('form.custom-provider-inline-edit');
+      await expect(betaInlineForm).toBeVisible();
+      await betaInlineForm.locator('input[name="customProviderName"]').fill('Local Beta v2');
+      await betaInlineForm.locator('input[name="customProviderModel"]').fill('beta-upgraded');
+      await betaInlineForm.locator('[data-action="save-inline-custom-provider"]').click();
+      await expect(betaInlineForm).toHaveCount(0);
 
       // Open Multi-Panel updates headers and iframe model badges live without reload, preserving Alpha's IndexedDB key!
       await expect(panels.nth(0).locator('.panel-provider-name')).toHaveText('Local Alpha v2');
