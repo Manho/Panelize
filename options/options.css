@@ -579,8 +579,10 @@ select:focus {
 }
 
 .provider-model-badge {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  vertical-align: middle;
+  flex: 0 1000 auto;
+  min-width: 0;
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 11px;
@@ -588,7 +590,7 @@ select:focus {
   color: #1557b0;
   background: #e8f0fe;
   border: 1px solid #c6dafc;
-  max-width: 180px;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -169,8 +169,8 @@ html.snapshot-capture-active .messages-scroll::-webkit-scrollbar {
 }
 
 .api-model-badge {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  vertical-align: middle;
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--badge-bg);
@@ -181,7 +181,7 @@ html.snapshot-capture-active .messages-scroll::-webkit-scrollbar {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
+  max-width: min(340px, 65vw);
 }
 
 .api-origin-badge {
