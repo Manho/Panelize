@@ -10,6 +10,7 @@ import {
 import {
   getCustomApiKey,
   resetCustomApiSecretsDbForTests,
+  saveCustomApiKey,
 } from '../modules/custom-api-secrets.js';
 import {
   CUSTOM_PROVIDERS_STORAGE_KEY,
@@ -943,6 +944,145 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
     });
   });
 
+  it('aborts and rejects stale first-load /models requests when endpoint URL or API key changes before completion', async () => {
+    vi.resetModules();
+    globalThis.indexedDB = createMockIndexedDB();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    installOptionsChromeEnv({
+      grantedOrigins: [
+        'https://a.example/*',
+        'https://b.example/*',
+      ],
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [
+          {
+            id: 'custom-aaaa111111',
+            kind: 'api',
+            name: 'Endpoint A',
+            endpointUrl: 'https://a.example/v1/chat/completions',
+            model: 'initial-model',
+            hasApiKey: false,
+            frameRuleId: 10000,
+            createdAt: 1700000000000,
+          },
+        ],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', 'custom-aaaa111111'],
+        providerOrder: ['chatgpt', 'custom-aaaa111111'],
+      },
+    });
+
+    const deferredByUrl = new Map();
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn((url, init = {}) => {
+      const str = String(url);
+      if (str.endsWith('/v1/models')) {
+        let resolveFetch;
+        const promise = new Promise((resolve) => {
+          resolveFetch = resolve;
+        });
+        deferredByUrl.set(str, { signal: init.signal, auth: init.headers?.Authorization || null, resolveFetch });
+        return promise;
+      }
+      return baseFetch(url, init);
+    });
+
+    await import('../options/options.js');
+
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector('#provider-list .provider-item[data-provider-id="custom-aaaa111111"]')
+      ).not.toBeNull();
+    });
+
+    // 1. Opening inline edit starts initial auto-load for https://a.example/v1/models (loadedSourceKey is still "")
+    const row = document.querySelector(
+      '#provider-list .provider-item[data-provider-id="custom-aaaa111111"]'
+    );
+    row.querySelector('[data-action="edit-custom-provider"]').click();
+
+    const inlineForm = row.querySelector('form.custom-provider-inline-edit');
+    const inlineUrl = inlineForm.querySelector('input[name="customProviderUrl"]');
+    const inlineModel = inlineForm.querySelector('input[name="customProviderModel"]');
+    const inlineApiKey = inlineForm.querySelector('input[name="customProviderApiKey"]');
+    const inlineListbox = inlineForm.querySelector('[role="listbox"]');
+    const inlineCount = inlineForm.querySelector('.custom-provider-model-count');
+    const inlineLoadBtn = inlineForm.querySelector('.btn-load-models');
+
+    await vi.waitFor(() => {
+      expect(deferredByUrl.has('https://a.example/v1/models')).toBe(true);
+    });
+    const reqA = deferredByUrl.get('https://a.example/v1/models');
+    expect(reqA.signal.aborted).toBe(false);
+
+    // Edit endpoint from A -> B before A's initial /models response arrives
+    inlineUrl.value = 'https://b.example/v1';
+    inlineUrl.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(reqA.signal.aborted).toBe(true);
+    expect(inlineLoadBtn.disabled).toBe(false);
+    expect(inlineLoadBtn.textContent).toBe('Load models');
+
+    // Even if transport ignores abort and resolves A with model-from-A, B's editor MUST NOT accept it
+    reqA.resolveFetch(
+      new Response(JSON.stringify({ data: [{ id: 'model-from-A', name: 'Stale Model A' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(inlineCount.hidden).toBe(true);
+    expect(inlineListbox.hidden).toBe(true);
+    expect(inlineListbox.querySelector('[data-model-id="model-from-A"]')).toBeNull();
+
+    // 2. Load models for B, then change B -> invalid URL while in flight; B's signal aborts immediately
+    inlineLoadBtn.click();
+    await vi.waitFor(() => {
+      expect(deferredByUrl.has('https://b.example/v1/models')).toBe(true);
+    });
+    const reqB1 = deferredByUrl.get('https://b.example/v1/models');
+    expect(reqB1.signal.aborted).toBe(false);
+
+    inlineUrl.value = 'not-a-valid-url';
+    inlineUrl.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(reqB1.signal.aborted).toBe(true);
+
+    // 3. Load models cleanly for B, then edit API key -> invalidates loaded catalog
+    deferredByUrl.delete('https://b.example/v1/models');
+    inlineUrl.value = 'https://b.example/v1';
+    inlineUrl.dispatchEvent(new Event('input', { bubbles: true }));
+    inlineLoadBtn.click();
+
+    await vi.waitFor(() => {
+      expect(deferredByUrl.has('https://b.example/v1/models')).toBe(true);
+    });
+    deferredByUrl.get('https://b.example/v1/models').resolveFetch(
+      new Response(JSON.stringify({ data: [{ id: 'model-from-B', name: 'Model B' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await vi.waitFor(() => {
+      expect(inlineCount.hidden).toBe(false);
+      expect(inlineCount.textContent).toBe('1 models');
+      expect(inlineListbox.hidden).toBe(false);
+    });
+
+    // Typing a new API key invalidates the previously loaded catalog and closes the listbox
+    inlineApiKey.value = 'sk-fresh-b';
+    inlineApiKey.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(inlineCount.hidden).toBe(true);
+    expect(inlineListbox.hidden).toBe(true);
+    expect(inlineLoadBtn.textContent).toBe('Load models');
+    expect(inlineModel.getAttribute('aria-expanded')).toBe('false');
+  });
+
   describe('api-panel + custom-api-bridge end-to-end JSDOM contract', () => {
     const PROVIDER_ID = 'custom-1122334455';
 
@@ -1405,6 +1545,280 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       expect(framedStream).not.toHaveBeenCalled();
       framed.apiPanel.destroy();
       framed.bridge.dispose();
+    });
+
+    it('invalidates pending permission/key requests and active streams when provider config or credentials change, never sending B credentials to A', async () => {
+      // --- Part 1: Edit between checkPermission and key lookup (R3 credential-routing guard) ---
+      await saveCustomApiKey(PROVIDER_ID, 'key-for-A', {
+        endpointUrl: 'https://a.example/v1/chat/completions',
+      });
+
+      const descriptorA = toCustomProviderDescriptor(
+        {
+          id: PROVIDER_ID,
+          kind: 'api',
+          name: 'Gateway A',
+          endpointUrl: 'https://a.example/v1/chat/completions',
+          model: 'model-a',
+          hasApiKey: true,
+          frameRuleId: 10000,
+          createdAt: 1700000000000,
+        },
+        { extensionOrigin: EXTENSION_ORIGIN }
+      );
+      setCustomProviderDescriptors([descriptorA]);
+
+      document.body.innerHTML = API_PANEL_BODY_HTML;
+      const childDoc = document;
+      const childListeners = new Set();
+      const hostListeners = new Set();
+
+      const hostWin = {
+        addEventListener(type, fn) {
+          if (type === 'message') hostListeners.add(fn);
+        },
+        removeEventListener(type, fn) {
+          if (type === 'message') hostListeners.delete(fn);
+        },
+        postMessage(payload, targetOrigin) {
+          if (targetOrigin !== EXTENSION_ORIGIN) {
+            throw new Error(`Unexpected host targetOrigin: ${targetOrigin}`);
+          }
+          const ev = { data: payload, origin: EXTENSION_ORIGIN, source: childWinProxy };
+          for (const listener of [...hostListeners]) {
+            listener(ev);
+          }
+        },
+      };
+      hostWin.top = hostWin;
+
+      const childWinProxy = {
+        location: {
+          href: `${EXTENSION_ORIGIN}/api-panel/api-panel.html?providerId=${PROVIDER_ID}&theme=light`,
+          search: `?providerId=${PROVIDER_ID}&theme=light`,
+        },
+        parent: hostWin,
+        innerWidth: 600,
+        innerHeight: 500,
+        CSS: { supports: () => false },
+        navigator: window.navigator,
+        Event: window.Event,
+        KeyboardEvent: window.KeyboardEvent,
+        requestAnimationFrame(cb) {
+          cb(0);
+          return 1;
+        },
+        cancelAnimationFrame() {},
+        addEventListener(type, fn) {
+          if (type === 'message') childListeners.add(fn);
+        },
+        removeEventListener(type, fn) {
+          if (type === 'message') childListeners.delete(fn);
+        },
+        dispatchEvent(ev) {
+          for (const listener of [...childListeners]) {
+            listener(ev);
+          }
+        },
+        postMessage(payload, targetOrigin) {
+          if (targetOrigin !== EXTENSION_ORIGIN) {
+            throw new Error(`Unexpected child targetOrigin: ${targetOrigin}`);
+          }
+          const ev = { data: payload, origin: EXTENSION_ORIGIN, source: hostWin };
+          for (const listener of [...childListeners]) {
+            listener(ev);
+          }
+        },
+      };
+
+      let resolveFirstPerm = null;
+      let checkPermCalls = 0;
+      const checkPermission = vi.fn(() => {
+        checkPermCalls += 1;
+        if (checkPermCalls === 1) {
+          return new Promise((resolve) => {
+            resolveFirstPerm = resolve;
+          });
+        }
+        return Promise.resolve(true);
+      });
+
+      const seenStreamCalls = [];
+      let activeStreamSignal = null;
+      const streamImpl = vi.fn((params) => {
+        seenStreamCalls.push({
+          endpointUrl: params.endpointUrl,
+          model: params.model,
+          apiKey: params.apiKey,
+        });
+        activeStreamSignal = params.signal;
+        params.onDelta({ contentDelta: 'Streaming from B...', reasoningDelta: '' });
+        return new Promise((_resolve, reject) => {
+          params.signal.addEventListener('abort', () => {
+            const err = new Error('Aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      });
+
+      // Omit getApiKey override so bridge uses the real IndexedDB secret store + endpoint binding!
+      const bridge = createCustomApiHostBridge({
+        getPanels: () => [
+          {
+            id: 'panel-1',
+            providerId: PROVIDER_ID,
+            iframe: { contentWindow: childWinProxy },
+          },
+        ],
+        getTheme: () => 'light',
+        hostWindow: hostWin,
+        checkPermission,
+        streamCompletion: streamImpl,
+      });
+
+      const apiPanel = initApiPanel({
+        rootWindow: childWinProxy,
+        rootDocument: childDoc,
+      });
+
+      // Begin request r1 for endpoint A; r1 pauses inside checkPermission
+      childWinProxy.dispatchEvent({
+        data: {
+          context: 'multi-panel',
+          type: 'INJECT_TEXT',
+          text: 'Hello Gateway A',
+          autoSubmit: true,
+        },
+        origin: EXTENSION_ORIGIN,
+        source: hostWin,
+      });
+
+      await vi.waitFor(() => {
+        expect(checkPermCalls).toBe(1);
+        expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(false);
+      });
+
+      // User starts typing a new unsent draft in composer while editing provider A -> B
+      const composer = childDoc.getElementById('composer-input');
+      composer.value = 'Unsent draft for B';
+      composer.dispatchEvent(new childWinProxy.Event('input', { bubbles: true }));
+
+      // Edit provider A -> B: save key-for-B bound to B, update descriptor to B, and syncPanelsMetadata
+      await saveCustomApiKey(PROVIDER_ID, 'key-for-B', {
+        endpointUrl: 'https://b.example/v1/chat/completions',
+      });
+      const descriptorB = toCustomProviderDescriptor(
+        {
+          id: PROVIDER_ID,
+          kind: 'api',
+          name: 'Gateway B',
+          endpointUrl: 'https://b.example/v1/chat/completions',
+          model: 'model-b',
+          hasApiKey: true,
+          frameRuleId: 10000,
+          createdAt: 1700000000000,
+        },
+        { extensionOrigin: EXTENSION_ORIGIN }
+      );
+      setCustomProviderDescriptors([descriptorB]);
+      bridge.syncPanelsMetadata();
+
+      // Release delayed permission for r1 -> streamCompletion MUST NOT be called!
+      resolveFirstPerm(true);
+      await new Promise((r) => setTimeout(r, 25));
+
+      expect(seenStreamCalls).toEqual([]);
+      expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(true);
+      expect(childDoc.getElementById('api-origin-badge').textContent).toBe('https://b.example');
+      expect(childDoc.getElementById('api-model-badge').textContent).toBe('model-b');
+      expect(childDoc.querySelectorAll('.turn-item')).toHaveLength(0);
+      expect(childDoc.getElementById('empty-state').hidden).toBe(false);
+      expect(composer.value).toBe('Unsent draft for B');
+
+      // --- Part 2: Active established stream on B is aborted & reset when edited to C ---
+      childWinProxy.dispatchEvent({
+        data: {
+          context: 'multi-panel',
+          type: 'TRIGGER_SEND',
+        },
+        origin: EXTENSION_ORIGIN,
+        source: hostWin,
+      });
+
+      await vi.waitFor(() => {
+        expect(seenStreamCalls).toHaveLength(1);
+        expect(childDoc.querySelector('.turn-markdown')?.textContent).toContain(
+          'Streaming from B...'
+        );
+        expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(false);
+      });
+      expect(seenStreamCalls[0]).toEqual({
+        endpointUrl: 'https://b.example/v1/chat/completions',
+        model: 'model-b',
+        apiKey: 'key-for-B',
+      });
+      const signalOnB = activeStreamSignal;
+      expect(signalOnB.aborted).toBe(false);
+
+      // Edit B -> C while B is actively streaming
+      await saveCustomApiKey(PROVIDER_ID, 'key-for-C', {
+        endpointUrl: 'https://c.example/v1/chat/completions',
+      });
+      const descriptorC = toCustomProviderDescriptor(
+        {
+          id: PROVIDER_ID,
+          kind: 'api',
+          name: 'Gateway C',
+          endpointUrl: 'https://c.example/v1/chat/completions',
+          model: 'model-c',
+          hasApiKey: true,
+          frameRuleId: 10000,
+          createdAt: 1700000000000,
+        },
+        { extensionOrigin: EXTENSION_ORIGIN }
+      );
+      setCustomProviderDescriptors([descriptorC]);
+      bridge.syncPanelsMetadata();
+
+      await vi.waitFor(() => {
+        expect(signalOnB.aborted).toBe(true);
+        expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(true);
+      });
+      expect(childDoc.getElementById('api-origin-badge').textContent).toBe('https://c.example');
+      expect(childDoc.getElementById('api-model-badge').textContent).toBe('model-c');
+      expect(childDoc.querySelectorAll('.turn-item')).toHaveLength(0);
+
+      // --- Part 3: Rotating ONLY the credential on C immediately aborts an active stream on C ---
+      childWinProxy.dispatchEvent({
+        data: {
+          context: 'multi-panel',
+          type: 'INJECT_TEXT',
+          text: 'Ping C',
+          autoSubmit: true,
+        },
+        origin: EXTENSION_ORIGIN,
+        source: hostWin,
+      });
+
+      await vi.waitFor(() => {
+        expect(seenStreamCalls).toHaveLength(2);
+        expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(false);
+      });
+      const signalOnC = activeStreamSignal;
+      expect(signalOnC.aborted).toBe(false);
+
+      await saveCustomApiKey(PROVIDER_ID, 'key-for-C-rotated', {
+        endpointUrl: 'https://c.example/v1/chat/completions',
+      });
+
+      await vi.waitFor(() => {
+        expect(signalOnC.aborted).toBe(true);
+        expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(true);
+      });
+
+      apiPanel.destroy();
+      bridge.dispose();
     });
   });
 });

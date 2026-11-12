@@ -435,7 +435,7 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
     startAssistantStream(turn, idx);
   }
 
-  function resetConversation() {
+  function resetConversation({ preserveComposerDraft = false } = {}) {
     cancelScheduledStreamingRender();
     if (activeRequestId) {
       postBridgeMessage({
@@ -445,10 +445,14 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
       activeRequestId = null;
     }
     turns = [];
-    stagedImages = [];
-    composerInputEl.value = '';
     messagesListEl.replaceChildren();
-    renderStagedImages();
+    if (!preserveComposerDraft) {
+      stagedImages = [];
+      composerInputEl.value = '';
+      renderStagedImages();
+    } else {
+      syncComposerControls();
+    }
     syncEmptyStateVisibility();
     messagesScrollEl.scrollTop = 0;
   }
@@ -676,6 +680,9 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
 
     switch (data.type) {
       case API_PANEL_MESSAGES.INIT: {
+        if (data.resetConversation === true) {
+          resetConversation({ preserveComposerDraft: true });
+        }
         if (typeof data.model === 'string' && data.model) {
           modelBadgeEl.textContent = data.model;
           modelBadgeEl.title = data.model;

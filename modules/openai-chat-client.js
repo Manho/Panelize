@@ -228,6 +228,51 @@ export async function fetchOpenAiModels({
   const controller = new AbortController();
   let timedOut = false;
   let timeoutId = null;
+  const originLabel = new URL(modelsUrl).origin;
+
+  const makeAbortError = () => {
+    const abortErr = new Error('Request aborted');
+    abortErr.name = 'AbortError';
+    return abortErr;
+  };
+
+  const makeTimeoutError = () =>
+    new ChatApiError(`Timed out loading models from ${originLabel}`, {
+      code: 'timeout_error'
+    });
+
+  const throwIfTerminated = () => {
+    if (timedOut) {
+      throw makeTimeoutError();
+    }
+    if (controller.signal.aborted || signal?.aborted) {
+      throw makeAbortError();
+    }
+  };
+
+  const awaitWithSignal = (promise) => {
+    if (controller.signal.aborted || signal?.aborted) {
+      Promise.resolve(promise).catch(() => {});
+      return Promise.reject(timedOut ? makeTimeoutError() : makeAbortError());
+    }
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        Promise.resolve(promise).catch(() => {});
+        reject(timedOut ? makeTimeoutError() : makeAbortError());
+      };
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve(promise).then(
+        (value) => {
+          controller.signal.removeEventListener('abort', onAbort);
+          resolve(value);
+        },
+        (err) => {
+          controller.signal.removeEventListener('abort', onAbort);
+          reject(err);
+        }
+      );
+    });
+  };
 
   const onExternalAbort = () => {
     controller.abort();
@@ -235,9 +280,7 @@ export async function fetchOpenAiModels({
 
   if (signal) {
     if (signal.aborted) {
-      const abortErr = new Error('Request aborted');
-      abortErr.name = 'AbortError';
-      throw abortErr;
+      throw makeAbortError();
     }
     signal.addEventListener('abort', onExternalAbort, { once: true });
   }
@@ -249,79 +292,95 @@ export async function fetchOpenAiModels({
     }, timeoutMs);
   }
 
-  let response;
   try {
-    response = await fetchImpl(modelsUrl, {
-      method: 'GET',
-      headers,
-      signal: controller.signal
-    });
-  } catch (error) {
-    if (timedOut) {
+    let response;
+    try {
+      response = await awaitWithSignal(
+        fetchImpl(modelsUrl, {
+          method: 'GET',
+          headers,
+          signal: controller.signal
+        })
+      );
+    } catch (error) {
+      throwIfTerminated();
+      if (error?.name === 'AbortError') {
+        throw makeAbortError();
+      }
       throw new ChatApiError(
-        `Timed out loading models from ${new URL(modelsUrl).origin}`,
-        { code: 'timeout_error' }
+        `Network error reaching ${originLabel}: ${error?.message || 'Failed to fetch'}`,
+        { code: 'network_error' }
       );
     }
-    if (error?.name === 'AbortError' || signal?.aborted) {
-      const abortErr = new Error('Request aborted');
-      abortErr.name = 'AbortError';
-      throw abortErr;
+
+    throwIfTerminated();
+
+    if (!response.ok) {
+      let errorBody = '';
+      if (typeof response.text === 'function') {
+        try {
+          errorBody = await awaitWithSignal(response.text());
+        } catch (error) {
+          throwIfTerminated();
+          if (error?.name === 'AbortError') {
+            throw makeAbortError();
+          }
+          errorBody = '';
+        }
+      }
+      throwIfTerminated();
+      throw buildHttpStatusError(response.status, response.statusText, errorBody);
     }
-    throw new ChatApiError(
-      `Network error reaching ${new URL(modelsUrl).origin}: ${error?.message || 'Failed to fetch'}`,
-      { code: 'network_error' }
-    );
+
+    let parsedBody;
+    if (typeof response.text === 'function') {
+      let bodyText = '';
+      try {
+        bodyText = await awaitWithSignal(response.text());
+      } catch (error) {
+        throwIfTerminated();
+        if (error?.name === 'AbortError') {
+          throw makeAbortError();
+        }
+        throw new ChatApiError('Failed to read models response body', {
+          code: 'invalid_models_payload'
+        });
+      }
+      throwIfTerminated();
+      try {
+        parsedBody = JSON.parse(bodyText);
+      } catch {
+        throw new ChatApiError('Endpoint did not return valid JSON for /models', {
+          code: 'invalid_models_json'
+        });
+      }
+    } else if (typeof response.json === 'function') {
+      try {
+        parsedBody = await awaitWithSignal(response.json());
+      } catch (error) {
+        throwIfTerminated();
+        if (error?.name === 'AbortError') {
+          throw makeAbortError();
+        }
+        throw new ChatApiError('Endpoint did not return valid JSON for /models', {
+          code: 'invalid_models_json'
+        });
+      }
+      throwIfTerminated();
+    } else {
+      throw new ChatApiError('Failed to read models response body', {
+        code: 'invalid_models_payload'
+      });
+    }
+
+    const models = normalizeModelCatalogEntries(parsedBody);
+    return { modelsUrl, models };
   } finally {
     if (timeoutId !== null) {
       clearTimeout(timeoutId);
     }
     signal?.removeEventListener?.('abort', onExternalAbort);
   }
-
-  if (!response.ok) {
-    let errorBody = '';
-    try {
-      errorBody = await response.text();
-    } catch {
-      errorBody = '';
-    }
-    throw buildHttpStatusError(response.status, response.statusText, errorBody);
-  }
-
-  let parsedBody;
-  if (typeof response.text === 'function') {
-    let bodyText = '';
-    try {
-      bodyText = await response.text();
-    } catch {
-      throw new ChatApiError('Failed to read models response body', {
-        code: 'invalid_models_payload'
-      });
-    }
-    try {
-      parsedBody = JSON.parse(bodyText);
-    } catch {
-      throw new ChatApiError('Endpoint did not return valid JSON for /models', {
-        code: 'invalid_models_json'
-      });
-    }
-  } else if (typeof response.json === 'function') {
-    try {
-      parsedBody = await response.json();
-    } catch {
-      throw new ChatApiError('Endpoint did not return valid JSON for /models', {
-        code: 'invalid_models_json'
-      });
-    }
-  } else {
-    throw new ChatApiError('Failed to read models response body', {
-      code: 'invalid_models_payload'
-    });
-  }
-
-  const models = normalizeModelCatalogEntries(parsedBody);
-  return { modelsUrl, models };
 }
 
 const SAFE_IMAGE_DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,/i;
@@ -685,8 +744,18 @@ export async function streamChatCompletion({
     let errorBody = '';
     try {
       errorBody = await response.text();
-    } catch {
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) {
+        const abortErr = new Error('Request aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
       errorBody = '';
+    }
+    if (signal?.aborted) {
+      const abortErr = new Error('Request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
     }
     throw buildHttpStatusError(response.status, response.statusText, errorBody);
   }
@@ -695,7 +764,22 @@ export async function streamChatCompletion({
   const state = { content: '', reasoning: '', finishReason: null };
 
   if (!response.body || contentType.includes('application/json')) {
-    const bodyText = await response.text();
+    let bodyText = '';
+    try {
+      bodyText = await response.text();
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) {
+        const abortErr = new Error('Request aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+      throw error;
+    }
+    if (signal?.aborted) {
+      const abortErr = new Error('Request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     parseAndEmitPayload(bodyText, state, onDelta);
     return state;
   }

@@ -3,9 +3,63 @@ import { CUSTOM_PROVIDER_ID_PATTERN } from './provider-registry.js';
 export const CUSTOM_API_SECRETS_DB_NAME = 'PanelizeCustomApiSecretsDB';
 export const CUSTOM_API_SECRETS_DB_VERSION = 1;
 export const CUSTOM_API_SECRETS_STORE = 'apiSecrets';
+export const CUSTOM_API_SECRETS_CHANNEL = 'panelize:custom-api-secrets';
 export const MAX_CUSTOM_API_KEY_LENGTH = 4096;
 
 let cachedDb = null;
+let secretRevisionCounter = 0;
+const localSecretListeners = new Set();
+const CHANNEL_SOURCE_ID = `secrets-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+
+function nextSecretRevision() {
+  secretRevisionCounter += 1;
+  return secretRevisionCounter;
+}
+
+/**
+ * Subscribes to in-process Custom API secret mutations (`providerId` or `'*'`).
+ * Returns an unsubscribe callback.
+ *
+ * @param {(payload: { providerId: string, revision: number }) => void} listener
+ * @returns {() => void}
+ */
+export function onCustomApiSecretChanged(listener) {
+  if (typeof listener !== 'function') {
+    return () => {};
+  }
+  localSecretListeners.add(listener);
+  return () => {
+    localSecretListeners.delete(listener);
+  };
+}
+
+function broadcastSecretInvalidation(providerId, revision) {
+  for (const listener of [...localSecretListeners]) {
+    try {
+      listener({ providerId, revision });
+    } catch {
+      // Isolate listener errors from secret storage operations.
+    }
+  }
+
+  if (typeof BroadcastChannel !== 'function') {
+    return;
+  }
+  try {
+    const channel = new BroadcastChannel(CUSTOM_API_SECRETS_CHANNEL);
+    channel.postMessage({
+      type: 'SECRET_CHANGED',
+      providerId,
+      revision,
+      sourceId: CHANNEL_SOURCE_ID
+    });
+    channel.close();
+  } catch {
+    // Ignore environments where BroadcastChannel is restricted.
+  }
+}
+
+export { CHANNEL_SOURCE_ID as CUSTOM_API_SECRETS_SOURCE_ID };
 
 function isValidSecretProviderId(providerId) {
   return typeof providerId === 'string' && CUSTOM_PROVIDER_ID_PATTERN.test(providerId);
@@ -158,29 +212,67 @@ function runStoreRequest(mode, executor) {
  * extension-origin IndexedDB (`PanelizeCustomApiSecretsDB`).
  *
  * Passing an empty/whitespace string deletes any stored secret for `providerId`.
+ * When `options.endpointUrl` is supplied, the stored credential record is bound
+ * to that normalized endpoint URL so concurrent requests captured against a
+ * previous endpoint can detect a mismatch and refuse to send the replacement key.
  *
  * @param {string} providerId
  * @param {string | null | undefined} apiKey
- * @returns {Promise<{ hasApiKey: boolean }>}
+ * @param {{ endpointUrl?: string | null }} [options]
+ * @returns {Promise<{ hasApiKey: boolean, revision: number }>}
  */
-export async function saveCustomApiKey(providerId, apiKey) {
+export async function saveCustomApiKey(providerId, apiKey, options = {}) {
   validateSecretProviderId(providerId);
   const normalized = normalizeApiKeyInput(apiKey);
 
   if (normalized.length === 0) {
-    await deleteCustomApiKey(providerId);
-    return { hasApiKey: false };
+    const revision = nextSecretRevision();
+    await runStoreRequest('readwrite', (store) => store.delete(providerId));
+    broadcastSecretInvalidation(providerId, revision);
+    return { hasApiKey: false, revision };
   }
+
+  const endpointUrl =
+    typeof options?.endpointUrl === 'string' && options.endpointUrl.trim().length > 0
+      ? options.endpointUrl.trim()
+      : null;
+  const revision = nextSecretRevision();
 
   await runStoreRequest('readwrite', (store) =>
     store.put({
       providerId,
       apiKey: normalized,
+      endpointUrl,
+      revision,
       updatedAt: Date.now()
     })
   );
+  broadcastSecretInvalidation(providerId, revision);
 
-  return { hasApiKey: true };
+  return { hasApiKey: true, revision };
+}
+
+/**
+ * Reads the full local-only API key record (including optional bound `endpointUrl`
+ * and `revision` metadata) for a Custom API provider, or `null` if none is stored.
+ *
+ * @param {string} providerId
+ * @returns {Promise<{ apiKey: string, endpointUrl: string | null, revision: number | null, updatedAt: number | null } | null>}
+ */
+export async function getCustomApiKeyRecord(providerId) {
+  if (!isValidSecretProviderId(providerId)) {
+    return null;
+  }
+  const entry = await runStoreRequest('readonly', (store) => store.get(providerId));
+  if (typeof entry?.apiKey !== 'string' || entry.apiKey.length === 0) {
+    return null;
+  }
+  return {
+    apiKey: entry.apiKey,
+    endpointUrl: typeof entry.endpointUrl === 'string' && entry.endpointUrl ? entry.endpointUrl : null,
+    revision: Number.isInteger(entry.revision) ? entry.revision : null,
+    updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : null
+  };
 }
 
 /**
@@ -191,11 +283,8 @@ export async function saveCustomApiKey(providerId, apiKey) {
  * @returns {Promise<string | null>}
  */
 export async function getCustomApiKey(providerId) {
-  if (!isValidSecretProviderId(providerId)) {
-    return null;
-  }
-  const entry = await runStoreRequest('readonly', (store) => store.get(providerId));
-  return typeof entry?.apiKey === 'string' && entry.apiKey.length > 0 ? entry.apiKey : null;
+  const record = await getCustomApiKeyRecord(providerId);
+  return record ? record.apiKey : null;
 }
 
 /**
@@ -208,7 +297,9 @@ export async function deleteCustomApiKey(providerId) {
   if (!isValidSecretProviderId(providerId)) {
     return false;
   }
+  const revision = nextSecretRevision();
   await runStoreRequest('readwrite', (store) => store.delete(providerId));
+  broadcastSecretInvalidation(providerId, revision);
   return true;
 }
 
@@ -218,5 +309,7 @@ export async function deleteCustomApiKey(providerId) {
  * @returns {Promise<void>}
  */
 export async function clearAllCustomApiKeys() {
+  const revision = nextSecretRevision();
   await runStoreRequest('readwrite', (store) => store.clear());
+  broadcastSecretInvalidation('*', revision);
 }

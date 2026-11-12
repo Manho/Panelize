@@ -318,5 +318,132 @@ describe('openai-chat-client', () => {
         })
       ).rejects.toThrow(/Endpoint or model not found \(HTTP 404\).*Models endpoint unsupported/);
     });
+
+    it('keeps caller cancellation attached after response headers until body finishes on both 200 and error responses', async () => {
+      // 1. Stalled 200 OK body canceled after headers arrive and response.text() has begun
+      let signal200 = null;
+      let text200Started = false;
+      let resolveBody200 = null;
+      const body200Promise = new Promise((resolve) => {
+        resolveBody200 = resolve;
+      });
+      const callerController200 = new AbortController();
+
+      const pending200 = fetchOpenAiModels({
+        endpointUrl: 'https://slow-body.example.com/v1',
+        signal: callerController200.signal,
+        timeoutMs: 5000,
+        fetchImpl: vi.fn(async (_url, init) => {
+          signal200 = init.signal;
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            text: () => {
+              text200Started = true;
+              return body200Promise;
+            }
+          };
+        })
+      });
+
+      await vi.waitFor(() => {
+        expect(text200Started).toBe(true);
+      });
+      expect(signal200.aborted).toBe(false);
+
+      callerController200.abort();
+      expect(signal200.aborted).toBe(true);
+
+      // Even if the stalled body later resolves with valid JSON, AbortError wins.
+      resolveBody200(JSON.stringify({ data: [{ id: 'stale-model' }] }));
+      await expect(pending200).rejects.toMatchObject({ name: 'AbortError' });
+
+      // 2. Stalled 500 error body canceled after headers arrive and response.text() has begun
+      let signal500 = null;
+      let text500Started = false;
+      let rejectBody500 = null;
+      const body500Promise = new Promise((_resolve, reject) => {
+        rejectBody500 = reject;
+      });
+      const callerController500 = new AbortController();
+
+      const pending500 = fetchOpenAiModels({
+        endpointUrl: 'https://slow-error.example.com/v1',
+        signal: callerController500.signal,
+        timeoutMs: 5000,
+        fetchImpl: vi.fn(async (_url, init) => {
+          signal500 = init.signal;
+          return {
+            ok: false,
+            status: 500,
+            statusText: 'Internal Server Error',
+            text: () => {
+              text500Started = true;
+              return body500Promise;
+            }
+          };
+        })
+      });
+
+      await vi.waitFor(() => {
+        expect(text500Started).toBe(true);
+      });
+      expect(signal500.aborted).toBe(false);
+
+      callerController500.abort();
+      expect(signal500.aborted).toBe(true);
+
+      const abortErr = new Error('Body aborted');
+      abortErr.name = 'AbortError';
+      rejectBody500(abortErr);
+      await expect(pending500).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
+    it('keeps timeout attached after response headers until body finishes on both 200 and error responses', async () => {
+      // 1. Stalled 200 OK body times out after headers arrive
+      let signal200 = null;
+      const stalled200 = fetchOpenAiModels({
+        endpointUrl: 'https://timeout-body.example.com/v1',
+        timeoutMs: 25,
+        fetchImpl: vi.fn(async (_url, init) => {
+          signal200 = init.signal;
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            text: () => new Promise(() => {})
+          };
+        })
+      });
+
+      await expect(stalled200).rejects.toMatchObject({
+        name: 'ChatApiError',
+        code: 'timeout_error'
+      });
+      expect(signal200?.aborted).toBe(true);
+
+      // 2. Stalled 502 error body times out after headers arrive instead of hanging
+      let signal502 = null;
+      const stalled502 = fetchOpenAiModels({
+        endpointUrl: 'https://timeout-err.example.com/v1',
+        timeoutMs: 25,
+        fetchImpl: vi.fn(async (_url, init) => {
+          signal502 = init.signal;
+          return {
+            ok: false,
+            status: 502,
+            statusText: 'Bad Gateway',
+            text: () => new Promise(() => {})
+          };
+        })
+      });
+
+      await expect(stalled502).rejects.toMatchObject({
+        name: 'ChatApiError',
+        code: 'timeout_error'
+      });
+      expect(signal502?.aborted).toBe(true);
+    });
   });
 });

@@ -199,6 +199,8 @@ function createModelComboboxController({
 }) {
   let loadedModels = [];
   let loadedSourceKey = '';
+  let inFlightSourceKey = '';
+  let requestGeneration = 0;
   let isLoading = false;
   let disabledByForm = false;
   let isOpen = false;
@@ -407,6 +409,20 @@ function createModelComboboxController({
     modelInput.focus?.();
   }
 
+  function invalidateCatalog() {
+    requestGeneration += 1;
+    const prevController = activeAbortController;
+    activeAbortController = null;
+    inFlightSourceKey = '';
+    isLoading = false;
+    prevController?.abort();
+    loadedModels = [];
+    loadedSourceKey = '';
+    closeListbox();
+    hideHint();
+    syncUiLabels();
+  }
+
   async function loadModels({ interactive = false, openWhenLoaded = false } = {}) {
     if (destroyed || disabledByForm || !isEnabledKind() || !supportsScopedFrameRules()) {
       return false;
@@ -421,6 +437,7 @@ function createModelComboboxController({
       return false;
     }
 
+    const expectedModelsUrl = resolveModelsUrl(urlCheck.endpointUrl);
     const permissionOrigin = `${urlCheck.origin}/*`;
     let permissionPromise;
     if (interactive) {
@@ -440,25 +457,45 @@ function createModelComboboxController({
         : Promise.resolve(false);
     }
 
+    requestGeneration += 1;
+    const myGeneration = requestGeneration;
     activeAbortController?.abort();
     const abortController = new AbortController();
     activeAbortController = abortController;
+    inFlightSourceKey = expectedModelsUrl;
     isLoading = true;
     hideHint();
     syncUiLabels();
+
+    const isRequestCurrent = () => {
+      if (
+        destroyed ||
+        abortController.signal.aborted ||
+        activeAbortController !== abortController ||
+        requestGeneration !== myGeneration ||
+        !isEnabledKind()
+      ) {
+        return false;
+      }
+      const currentCheck = validateCustomApiEndpointUrl(getEndpointRawUrl());
+      if (!currentCheck.ok) {
+        return false;
+      }
+      return resolveModelsUrl(currentCheck.endpointUrl) === expectedModelsUrl;
+    };
 
     try {
       let granted = false;
       try {
         granted = Boolean(await permissionPromise);
       } catch {
-        if (interactive) {
+        if (isRequestCurrent() && interactive) {
           showHint(t('msgProviderPermissionRequestFailed', urlCheck.origin));
         }
         return false;
       }
 
-      if (destroyed || abortController.signal.aborted) {
+      if (!isRequestCurrent()) {
         return false;
       }
 
@@ -474,12 +511,11 @@ function createModelComboboxController({
       }
 
       const apiKey = await resolveEffectiveApiKey(urlCheck.origin);
-      if (destroyed || abortController.signal.aborted) {
+      if (!isRequestCurrent()) {
         return false;
       }
 
-      const modelsUrl = resolveModelsUrl(urlCheck.endpointUrl);
-      const cacheKey = `${modelsUrl}\n${apiKey || ''}`;
+      const cacheKey = `${expectedModelsUrl}\n${apiKey || ''}`;
 
       let models = null;
       if (!interactive && modelCatalogCache.has(cacheKey)) {
@@ -496,12 +532,12 @@ function createModelComboboxController({
         modelCatalogCache.set(cacheKey, models);
       }
 
-      if (destroyed || abortController.signal.aborted) {
+      if (!isRequestCurrent()) {
         return false;
       }
 
       loadedModels = models;
-      loadedSourceKey = modelsUrl;
+      loadedSourceKey = expectedModelsUrl;
       hideHint();
       syncUiLabels();
 
@@ -518,7 +554,7 @@ function createModelComboboxController({
       }
       return true;
     } catch (error) {
-      if (destroyed || abortController.signal.aborted || error?.name === 'AbortError') {
+      if (!isRequestCurrent() || error?.name === 'AbortError') {
         return false;
       }
       if (interactive) {
@@ -529,6 +565,7 @@ function createModelComboboxController({
     } finally {
       if (activeAbortController === abortController) {
         activeAbortController = null;
+        inFlightSourceKey = '';
         isLoading = false;
         syncUiLabels();
       }
@@ -539,13 +576,11 @@ function createModelComboboxController({
     const rawUrl = getEndpointRawUrl();
     const urlCheck = validateCustomApiEndpointUrl(rawUrl);
     const nextModelsUrl = urlCheck.ok ? resolveModelsUrl(urlCheck.endpointUrl) : '';
-    if (loadedSourceKey && loadedSourceKey !== nextModelsUrl) {
-      activeAbortController?.abort();
-      loadedModels = [];
-      loadedSourceKey = '';
-      closeListbox();
-      hideHint();
-      syncUiLabels();
+    if (
+      (inFlightSourceKey && inFlightSourceKey !== nextModelsUrl) ||
+      (loadedSourceKey && loadedSourceKey !== nextModelsUrl)
+    ) {
+      invalidateCatalog();
     }
   };
 
@@ -641,6 +676,7 @@ function createModelComboboxController({
     openListbox,
     closeListbox,
     syncEndpointContext,
+    invalidateCatalog,
     setDisabled(nextDisabled) {
       disabledByForm = Boolean(nextDisabled);
       if (disabledByForm) {
@@ -649,12 +685,7 @@ function createModelComboboxController({
       syncUiLabels();
     },
     reset() {
-      activeAbortController?.abort();
-      loadedModels = [];
-      loadedSourceKey = '';
-      closeListbox();
-      hideHint();
-      syncUiLabels();
+      invalidateCatalog();
     },
     refreshTranslations() {
       syncUiLabels();
@@ -664,7 +695,12 @@ function createModelComboboxController({
     },
     destroy() {
       destroyed = true;
-      activeAbortController?.abort();
+      requestGeneration += 1;
+      const prevController = activeAbortController;
+      activeAbortController = null;
+      inFlightSourceKey = '';
+      isLoading = false;
+      prevController?.abort();
       closeListbox();
     }
   };
@@ -1221,6 +1257,7 @@ function createInlineEditFormState(descriptor) {
     if (apiKeyInput.value.trim().length > 0 && clearApiKeyCheckbox?.checked) {
       clearApiKeyCheckbox.checked = false;
     }
+    modelCombobox?.invalidateCatalog();
   });
 
   clearApiKeyCheckbox?.addEventListener('change', () => {
@@ -1229,6 +1266,7 @@ function createInlineEditFormState(descriptor) {
       apiKeyInput.value = '';
       setPasswordFieldRevealedState(apiKeyInput, apiKeyToggleButton, false);
     }
+    modelCombobox?.invalidateCatalog();
   });
 
   apiKeyToggleButton?.addEventListener('click', () => {
@@ -1502,6 +1540,7 @@ async function handleInlineEditSubmit(event, inlineState) {
 
     const targetId = editingDescriptor.id;
     const previousOrigin = getCustomProviderOrigin(editingDescriptor);
+    const previousEndpointUrl = editingDescriptor.apiConfig?.endpointUrl || null;
     let previousSecret = null;
     let secretMutated = false;
 
@@ -1510,7 +1549,9 @@ async function handleInlineEditSubmit(event, inlineState) {
       if (isApiKind) {
         previousSecret = await getCustomApiKey(targetId);
         if (trimmedApiKey.length > 0) {
-          await saveCustomApiKey(targetId, trimmedApiKey);
+          await saveCustomApiKey(targetId, trimmedApiKey, {
+            endpointUrl: urlCheck.endpointUrl
+          });
           secretMutated = true;
           nextHasApiKey = true;
         } else if (inlineState.clearApiKeyCheckbox?.checked) {
@@ -1518,6 +1559,12 @@ async function handleInlineEditSubmit(event, inlineState) {
           secretMutated = true;
           nextHasApiKey = false;
         } else {
+          if (previousSecret && previousEndpointUrl !== urlCheck.endpointUrl) {
+            await saveCustomApiKey(targetId, previousSecret, {
+              endpointUrl: urlCheck.endpointUrl
+            });
+            secretMutated = true;
+          }
           nextHasApiKey =
             Boolean(previousSecret) || Boolean(editingDescriptor.apiConfig?.hasApiKey);
         }
@@ -1565,7 +1612,9 @@ async function handleInlineEditSubmit(event, inlineState) {
     } catch (persistError) {
       if (secretMutated) {
         if (previousSecret) {
-          await saveCustomApiKey(targetId, previousSecret).catch(() => {});
+          await saveCustomApiKey(targetId, previousSecret, {
+            endpointUrl: previousEndpointUrl
+          }).catch(() => {});
         } else {
           await deleteCustomApiKey(targetId).catch(() => {});
         }
@@ -1791,7 +1840,9 @@ export async function handleCustomProviderFormSubmit(event) {
     let addedToLocal = false;
     try {
       if (isApiKind && trimmedApiKey.length > 0) {
-        await saveCustomApiKey(id, trimmedApiKey);
+        await saveCustomApiKey(id, trimmedApiKey, {
+          endpointUrl: urlCheck.endpointUrl
+        });
         savedSecret = true;
       }
 
@@ -1988,6 +2039,9 @@ function setupCustomProviderForm() {
       clearCustomProviderFormError();
       syncCustomProviderKindFields();
       updateCustomProviderOriginPreview();
+      if (getSelectedCustomProviderKind() !== 'api') {
+        addFormModelCombobox?.invalidateCatalog();
+      }
     };
     kindWebRadio?.addEventListener('change', onKindChange);
     kindApiRadio?.addEventListener('change', onKindChange);
@@ -2008,6 +2062,7 @@ function setupCustomProviderForm() {
 
     apiKeyInput?.addEventListener('input', () => {
       clearCustomProviderFormError();
+      addFormModelCombobox?.invalidateCatalog();
     });
 
     apiKeyToggleButton?.addEventListener('click', () => {

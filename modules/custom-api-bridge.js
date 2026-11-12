@@ -1,4 +1,10 @@
-import { getCustomApiKey } from './custom-api-secrets.js';
+import {
+  CUSTOM_API_SECRETS_CHANNEL,
+  CUSTOM_API_SECRETS_SOURCE_ID,
+  getCustomApiKey,
+  getCustomApiKeyRecord,
+  onCustomApiSecretChanged
+} from './custom-api-secrets.js';
 import { hasOptionalProviderPermission } from './optional-provider-access.js';
 import { streamChatCompletion } from './openai-chat-client.js';
 import { findMessageSourcePanel } from './provider-open-url.js';
@@ -19,6 +25,36 @@ export const API_PANEL_MESSAGES = Object.freeze({
 
 function isCustomApiDescriptor(descriptor) {
   return Boolean(descriptor && descriptor.access === 'custom' && descriptor.customKind === 'api');
+}
+
+function captureDescriptorConfig(descriptor) {
+  return Object.freeze({
+    providerId: descriptor.id,
+    endpointUrl: descriptor.apiConfig.endpointUrl,
+    model: descriptor.apiConfig.model,
+    hasApiKey: Boolean(descriptor.apiConfig.hasApiKey)
+  });
+}
+
+function isSameConfig(left, right) {
+  return Boolean(
+    left &&
+      right &&
+      left.providerId === right.providerId &&
+      left.endpointUrl === right.endpointUrl &&
+      left.model === right.model &&
+      left.hasApiKey === right.hasApiKey
+  );
+}
+
+function didEndpointOrModelChange(left, right) {
+  return Boolean(
+    left &&
+      right &&
+      (left.providerId !== right.providerId ||
+        left.endpointUrl !== right.endpointUrl ||
+        left.model !== right.model)
+  );
 }
 
 function postToApiPanelFrame(panel, descriptor, payload) {
@@ -46,7 +82,7 @@ function postToApiPanelFrame(panel, descriptor, payload) {
  *   getPanels: () => Array<{ id: string, providerId: string, iframe?: HTMLIFrameElement }>,
  *   getTheme: () => 'light' | 'dark',
  *   hostWindow?: Window,
- *   getApiKey?: (providerId: string) => Promise<string | null>,
+ *   getApiKey?: (providerId: string, context?: { endpointUrl: string }) => Promise<string | null>,
  *   checkPermission?: (providerId: string) => Promise<boolean>,
  *   streamCompletion?: typeof streamChatCompletion
  * }} options
@@ -60,15 +96,70 @@ export function createCustomApiHostBridge({
   streamCompletion = streamChatCompletion
 }) {
   const activeStreams = new Map();
+  const panelSnapshots = new Map();
+  const providerGenerations = new Map();
+  const usesDefaultSecretStore = getApiKey === getCustomApiKey;
+
+  function getProviderGeneration(providerId) {
+    return providerGenerations.get(providerId) || 0;
+  }
+
+  function bumpProviderGeneration(providerId) {
+    const next = getProviderGeneration(providerId) + 1;
+    providerGenerations.set(providerId, next);
+    return next;
+  }
+
+  function finalizeStreamAbort(entry) {
+    if (!entry || entry.finalized) {
+      return false;
+    }
+    entry.finalized = true;
+    if (activeStreams.get(entry.panel.id) === entry) {
+      activeStreams.delete(entry.panel.id);
+    }
+    entry.controller.abort();
+    const targetDescriptor = getProviderDescriptor(entry.panel.providerId) || entry.descriptor;
+    postToApiPanelFrame(entry.panel, targetDescriptor, {
+      type: API_PANEL_MESSAGES.CHAT_DONE,
+      requestId: entry.requestId,
+      aborted: true
+    });
+    return true;
+  }
 
   function abortPanelStream(panelId) {
     const existing = activeStreams.get(panelId);
     if (!existing) {
       return false;
     }
-    activeStreams.delete(panelId);
-    existing.controller.abort();
-    return true;
+    return finalizeStreamAbort(existing);
+  }
+
+  function invalidateProviderCredentials(providerId) {
+    if (providerId === '*') {
+      const knownIds = new Set([
+        ...providerGenerations.keys(),
+        ...[...activeStreams.values()].map((entry) => entry.panel.providerId)
+      ]);
+      for (const id of knownIds) {
+        bumpProviderGeneration(id);
+      }
+      for (const entry of [...activeStreams.values()]) {
+        finalizeStreamAbort(entry);
+      }
+      return;
+    }
+
+    if (typeof providerId !== 'string' || !providerId) {
+      return;
+    }
+    bumpProviderGeneration(providerId);
+    for (const entry of [...activeStreams.values()]) {
+      if (entry.panel.providerId === providerId) {
+        finalizeStreamAbort(entry);
+      }
+    }
   }
 
   async function handleChatRequest(panel, descriptor, data) {
@@ -78,17 +169,48 @@ export function createCustomApiHostBridge({
     }
 
     abortPanelStream(panel.id);
-    const controller = new AbortController();
-    activeStreams.set(panel.id, { requestId, controller });
 
-    const isCurrentRequest = () => activeStreams.get(panel.id)?.requestId === requestId;
+    const capturedConfig = captureDescriptorConfig(descriptor);
+    if (!panelSnapshots.has(panel.id)) {
+      panelSnapshots.set(panel.id, capturedConfig);
+    }
+    const capturedGeneration = getProviderGeneration(panel.providerId);
+    const controller = new AbortController();
+    const streamEntry = {
+      requestId,
+      controller,
+      panel,
+      descriptor,
+      capturedConfig,
+      capturedGeneration,
+      finalized: false
+    };
+    activeStreams.set(panel.id, streamEntry);
+
+    const isCurrentRequest = () => activeStreams.get(panel.id) === streamEntry && !streamEntry.finalized;
+
+    const isSnapshotStillValid = () => {
+      if (!isCurrentRequest() || controller.signal.aborted) {
+        return false;
+      }
+      if (getProviderGeneration(panel.providerId) !== capturedGeneration) {
+        return false;
+      }
+      const liveDescriptor = getProviderDescriptor(panel.providerId);
+      if (!isCustomApiDescriptor(liveDescriptor)) {
+        return false;
+      }
+      return isSameConfig(captureDescriptorConfig(liveDescriptor), capturedConfig);
+    };
 
     try {
       const permitted = await checkPermission(panel.providerId);
-      if (!isCurrentRequest() || controller.signal.aborted) {
+      if (!isSnapshotStillValid()) {
+        finalizeStreamAbort(streamEntry);
         return;
       }
       if (!permitted) {
+        streamEntry.finalized = true;
         activeStreams.delete(panel.id);
         postToApiPanelFrame(panel, descriptor, {
           type: API_PANEL_MESSAGES.CHAT_ERROR,
@@ -101,12 +223,32 @@ export function createCustomApiHostBridge({
         return;
       }
 
-      const storedKey = await getApiKey(panel.providerId);
-      if (!isCurrentRequest() || controller.signal.aborted) {
-        return;
+      let storedKey = null;
+      if (usesDefaultSecretStore) {
+        const keyRecord = await getCustomApiKeyRecord(panel.providerId);
+        if (!isSnapshotStillValid()) {
+          finalizeStreamAbort(streamEntry);
+          return;
+        }
+        if (keyRecord?.endpointUrl && keyRecord.endpointUrl !== capturedConfig.endpointUrl) {
+          // Stored credential is already bound to a different endpoint; refuse to send it.
+          finalizeStreamAbort(streamEntry);
+          return;
+        }
+        storedKey = keyRecord ? keyRecord.apiKey : null;
+      } else {
+        storedKey = await getApiKey(panel.providerId, {
+          endpointUrl: capturedConfig.endpointUrl
+        });
+        if (!isSnapshotStillValid()) {
+          finalizeStreamAbort(streamEntry);
+          return;
+        }
       }
+
       const apiKey = typeof storedKey === 'string' ? storedKey : '';
-      if (descriptor.apiConfig.hasApiKey && apiKey.length === 0) {
+      if (capturedConfig.hasApiKey && apiKey.length === 0) {
+        streamEntry.finalized = true;
         activeStreams.delete(panel.id);
         postToApiPanelFrame(panel, descriptor, {
           type: API_PANEL_MESSAGES.CHAT_ERROR,
@@ -120,13 +262,14 @@ export function createCustomApiHostBridge({
       }
 
       const result = await streamCompletion({
-        endpointUrl: descriptor.apiConfig.endpointUrl,
-        model: descriptor.apiConfig.model,
+        endpointUrl: capturedConfig.endpointUrl,
+        model: capturedConfig.model,
         apiKey,
         messages: data.messages,
         signal: controller.signal,
         onDelta({ contentDelta, reasoningDelta }) {
-          if (!isCurrentRequest() || controller.signal.aborted) {
+          if (!isSnapshotStillValid()) {
+            finalizeStreamAbort(streamEntry);
             return;
           }
           postToApiPanelFrame(panel, descriptor, {
@@ -138,9 +281,11 @@ export function createCustomApiHostBridge({
         }
       });
 
-      if (!isCurrentRequest()) {
+      if (!isSnapshotStillValid()) {
+        finalizeStreamAbort(streamEntry);
         return;
       }
+      streamEntry.finalized = true;
       activeStreams.delete(panel.id);
       postToApiPanelFrame(panel, descriptor, {
         type: API_PANEL_MESSAGES.CHAT_DONE,
@@ -151,19 +296,15 @@ export function createCustomApiHostBridge({
         finishReason: result.finishReason
       });
     } catch (error) {
-      const wasCurrent = isCurrentRequest();
-      if (wasCurrent) {
-        activeStreams.delete(panel.id);
-      }
-      if (controller.signal.aborted || error?.name === 'AbortError') {
-        postToApiPanelFrame(panel, descriptor, {
-          type: API_PANEL_MESSAGES.CHAT_DONE,
-          requestId,
-          aborted: true
-        });
+      if (controller.signal.aborted || error?.name === 'AbortError' || !isSnapshotStillValid()) {
+        finalizeStreamAbort(streamEntry);
         return;
       }
-      if (!wasCurrent) {
+      const wasCurrent = isCurrentRequest();
+      streamEntry.finalized = true;
+      if (wasCurrent) {
+        activeStreams.delete(panel.id);
+      } else {
         return;
       }
       postToApiPanelFrame(panel, descriptor, {
@@ -201,6 +342,7 @@ export function createCustomApiHostBridge({
 
     switch (data.type) {
       case API_PANEL_MESSAGES.READY:
+        panelSnapshots.set(panel.id, captureDescriptorConfig(descriptor));
         postToApiPanelFrame(panel, descriptor, {
           type: API_PANEL_MESSAGES.INIT,
           name: descriptor.name,
@@ -208,7 +350,8 @@ export function createCustomApiHostBridge({
           apiOrigin: descriptor.apiConfig.apiOrigin,
           endpointUrl: descriptor.apiConfig.endpointUrl,
           hasApiKey: descriptor.apiConfig.hasApiKey,
-          theme: getTheme()
+          theme: getTheme(),
+          resetConversation: false
         });
         break;
       case API_PANEL_MESSAGES.CHAT_REQUEST:
@@ -216,12 +359,13 @@ export function createCustomApiHostBridge({
         break;
       case API_PANEL_MESSAGES.CHAT_ABORT:
         if (!data.requestId || activeStreams.get(panel.id)?.requestId === data.requestId) {
-          abortPanelStream(panel.id);
-          postToApiPanelFrame(panel, descriptor, {
-            type: API_PANEL_MESSAGES.CHAT_DONE,
-            requestId: data.requestId || null,
-            aborted: true
-          });
+          if (!abortPanelStream(panel.id)) {
+            postToApiPanelFrame(panel, descriptor, {
+              type: API_PANEL_MESSAGES.CHAT_DONE,
+              requestId: data.requestId || null,
+              aborted: true
+            });
+          }
         }
         break;
       default:
@@ -229,10 +373,35 @@ export function createCustomApiHostBridge({
     }
   }
 
+  const unsubscribeLocalSecrets = onCustomApiSecretChanged(({ providerId }) => {
+    invalidateProviderCredentials(providerId);
+  });
+
+  let secretChannel = null;
+  if (typeof BroadcastChannel === 'function') {
+    try {
+      secretChannel = new BroadcastChannel(CUSTOM_API_SECRETS_CHANNEL);
+      secretChannel.onmessage = (event) => {
+        const msg = event?.data;
+        if (
+          msg?.type === 'SECRET_CHANGED' &&
+          typeof msg.providerId === 'string' &&
+          msg.sourceId !== CUSTOM_API_SECRETS_SOURCE_ID
+        ) {
+          invalidateProviderCredentials(msg.providerId);
+        }
+      };
+      secretChannel.unref?.();
+    } catch {
+      secretChannel = null;
+    }
+  }
+
   hostWindow.addEventListener('message', onMessage);
 
   return {
     abortPanelStream,
+    invalidateProviderCredentials,
     broadcastTheme(theme) {
       if (hostWindow.top !== hostWindow) {
         return;
@@ -251,26 +420,63 @@ export function createCustomApiHostBridge({
       if (hostWindow.top !== hostWindow) {
         return;
       }
-      for (const panel of getPanels()) {
-        const descriptor = getProviderDescriptor(panel.providerId);
-        if (isCustomApiDescriptor(descriptor)) {
-          postToApiPanelFrame(panel, descriptor, {
-            type: API_PANEL_MESSAGES.INIT,
-            name: descriptor.name,
-            model: descriptor.apiConfig.model,
-            apiOrigin: descriptor.apiConfig.apiOrigin,
-            endpointUrl: descriptor.apiConfig.endpointUrl,
-            hasApiKey: descriptor.apiConfig.hasApiKey,
-            theme: getTheme()
-          });
+      const currentPanels = getPanels();
+      const livePanelIds = new Set(currentPanels.map((panel) => panel.id));
+      for (const trackedPanelId of [...panelSnapshots.keys()]) {
+        if (!livePanelIds.has(trackedPanelId)) {
+          panelSnapshots.delete(trackedPanelId);
         }
+      }
+
+      for (const panel of currentPanels) {
+        const descriptor = getProviderDescriptor(panel.providerId);
+        if (!isCustomApiDescriptor(descriptor)) {
+          panelSnapshots.delete(panel.id);
+          abortPanelStream(panel.id);
+          continue;
+        }
+        const nextConfig = captureDescriptorConfig(descriptor);
+        const prevConfig = panelSnapshots.get(panel.id);
+        const activeEntry = activeStreams.get(panel.id);
+        const activeEntryStale =
+          activeEntry !== undefined && !isSameConfig(activeEntry.capturedConfig, nextConfig);
+        const configChanged =
+          (prevConfig !== undefined && !isSameConfig(prevConfig, nextConfig)) || activeEntryStale;
+        const resetConversation =
+          (prevConfig !== undefined && didEndpointOrModelChange(prevConfig, nextConfig)) ||
+          (activeEntryStale && didEndpointOrModelChange(activeEntry.capturedConfig, nextConfig));
+        panelSnapshots.set(panel.id, nextConfig);
+
+        if (configChanged) {
+          bumpProviderGeneration(panel.providerId);
+          abortPanelStream(panel.id);
+        }
+
+        postToApiPanelFrame(panel, descriptor, {
+          type: API_PANEL_MESSAGES.INIT,
+          name: descriptor.name,
+          model: descriptor.apiConfig.model,
+          apiOrigin: descriptor.apiConfig.apiOrigin,
+          endpointUrl: descriptor.apiConfig.endpointUrl,
+          hasApiKey: descriptor.apiConfig.hasApiKey,
+          theme: getTheme(),
+          resetConversation
+        });
       }
     },
     dispose() {
       hostWindow.removeEventListener('message', onMessage);
+      unsubscribeLocalSecrets();
+      try {
+        secretChannel?.close?.();
+      } catch {
+        // Ignore BroadcastChannel close errors.
+      }
+      secretChannel = null;
       for (const panelId of [...activeStreams.keys()]) {
         abortPanelStream(panelId);
       }
+      panelSnapshots.clear();
     }
   };
 }
