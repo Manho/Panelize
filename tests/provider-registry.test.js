@@ -76,6 +76,10 @@ describe('provider-registry module', () => {
         'https://example.com?foo=1',
         'https://example.com#frag',
         'https://example.com:443',
+        'https://*',
+        'https://*.example.com',
+        'https://%2a',
+        'https://chatgpt.com.',
       ]) {
         const errors = validateProviderDescriptor(
           makeValidDescriptor({ frameOrigins: [badOrigin] })

@@ -632,9 +632,16 @@
         moveCaretToEnd(el);
         return true;
       }
+      if (getComposerText(el) !== beforeRaw) {
+        moveCaretToEnd(el);
+        return true;
+      }
       if (beforeInputCancelled) {
         controlledCancelObserved = true;
       }
+    } else if (getComposerText(el) !== beforeRaw) {
+      moveCaretToEnd(el);
+      return true;
     }
 
     // Fallback 1: synthetic ClipboardEvent('paste') for editors that ignore execCommand.
@@ -653,8 +660,15 @@
           moveCaretToEnd(el);
           return true;
         }
+        if (getComposerText(el) !== beforeRaw) {
+          moveCaretToEnd(el);
+          return true;
+        }
         controlledCancelObserved = true;
-      } else if (hasAcceptedInjectedText(beforeRaw, getComposerText(el), text)) {
+      } else if (
+        hasAcceptedInjectedText(beforeRaw, getComposerText(el), text) ||
+        getComposerText(el) !== beforeRaw
+      ) {
         moveCaretToEnd(el);
         return true;
       }
@@ -677,7 +691,17 @@
           moveCaretToEnd(el);
           return true;
         }
+        if (getComposerText(el) !== beforeRaw) {
+          moveCaretToEnd(el);
+          return true;
+        }
         controlledCancelObserved = true;
+      } else if (
+        hasAcceptedInjectedText(beforeRaw, getComposerText(el), text) ||
+        getComposerText(el) !== beforeRaw
+      ) {
+        moveCaretToEnd(el);
+        return true;
       }
     } catch {
       // Ignore.

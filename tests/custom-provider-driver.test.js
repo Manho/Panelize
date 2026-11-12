@@ -808,4 +808,60 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('does not dispatch fallback paste or duplicate text when execCommand auto-formats input (e.g. "# Title" -> "Title")', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <div id="editor" contenteditable="true" role="textbox"></div>
+      `;
+      const editor = setLayoutRect(env.document.getElementById('editor'));
+      const pasteSpy = vi.fn((ev) => {
+        ev.preventDefault();
+        const clip = ev.clipboardData?.getData('text/plain') || '';
+        editor.textContent += clip;
+      });
+      editor.addEventListener('paste', pasteSpy);
+
+      env.document.execCommand = vi.fn((cmd, _ui, val) => {
+        if (cmd === 'insertText' && typeof val === 'string') {
+          editor.innerHTML = `<h1>${val.replace(/^#\s+/, '')}</h1>`;
+          return true;
+        }
+        return false;
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-markdown-autoformat',
+        action: 'fill',
+        text: '# Title',
+        images: [],
+        autoSubmit: false,
+      });
+
+      await wait(120);
+      expect(editor.textContent).toBe('Title');
+      expect(pasteSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-markdown-autoformat',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'succeeded',
+          succeededImageIds: [],
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });

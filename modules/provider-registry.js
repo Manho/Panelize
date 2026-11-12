@@ -93,13 +93,36 @@ function freezeDescriptor(descriptor) {
   return frozen;
 }
 
+function isValidHttpHostname(hostname) {
+  if (typeof hostname !== 'string' || hostname.length === 0) {
+    return false;
+  }
+  if (/^\[[0-9a-f:]+\]$/i.test(hostname)) {
+    return true;
+  }
+  if (!/^[a-z0-9.-]+$/i.test(hostname)) {
+    return false;
+  }
+  if (
+    hostname.startsWith('.') ||
+    hostname.endsWith('.') ||
+    hostname.includes('..')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function isHttpOrHttpsUrl(rawUrl) {
   if (typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
     return false;
   }
   try {
     const parsed = new URL(rawUrl);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    return isValidHttpHostname(parsed.hostname);
   } catch {
     return false;
   }
@@ -112,6 +135,9 @@ function isExactHttpOrigin(origin) {
   try {
     const parsed = new URL(origin);
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    if (!isValidHttpHostname(parsed.hostname)) {
       return false;
     }
     return origin === parsed.origin;

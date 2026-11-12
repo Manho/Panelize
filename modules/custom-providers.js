@@ -91,6 +91,26 @@ function parseIpv4Octets(hostname) {
   return octets;
 }
 
+function isValidHttpHostname(hostname) {
+  if (typeof hostname !== 'string' || hostname.length === 0) {
+    return false;
+  }
+  if (/^\[[0-9a-f:]+\]$/i.test(hostname)) {
+    return true;
+  }
+  if (!/^[a-z0-9.-]+$/i.test(hostname)) {
+    return false;
+  }
+  if (
+    hostname.startsWith('.') ||
+    hostname.endsWith('.') ||
+    hostname.includes('..')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function isAllowedHttpHost(hostname) {
   if (hostname === 'localhost' || hostname === '[::1]') {
     return true;
@@ -209,6 +229,10 @@ export function validateCustomProviderUrl(raw, options = {}) {
 
   if (parsed.username || parsed.password) {
     return { ok: false, url: null, origin: null, reason: 'credentials_not_allowed' };
+  }
+
+  if (!isValidHttpHostname(parsed.hostname)) {
+    return { ok: false, url: null, origin: null, reason: 'invalid_url' };
   }
 
   if (parsed.protocol === 'http:' && !isAllowedHttpHost(parsed.hostname)) {
