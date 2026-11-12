@@ -1092,5 +1092,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "APIキーが最大文字数を超えています。"
+  },
+  "ariaEditCustomProvider": {
+    "message": "$1 を編集"
+  },
+  "headingEditCustomProvider": {
+    "message": "カスタムAIを編集"
+  },
+  "btnSaveCustomProvider": {
+    "message": "変更を保存"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "空欄のままで保存済みキーを維持、または新しいキーを入力"
+  },
+  "labelClearSavedApiKey": {
+    "message": "保存済みのAPIキーを削除"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "カスタムAIを更新しました: $1"
   }
 }

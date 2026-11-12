@@ -1092,5 +1092,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "API 키가 허용된 최대 길이를 초과했습니다."
+  },
+  "ariaEditCustomProvider": {
+    "message": "$1 편집"
+  },
+  "headingEditCustomProvider": {
+    "message": "사용자 지정 AI 편집"
+  },
+  "btnSaveCustomProvider": {
+    "message": "변경 사항 저장"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "비워 두면 저장된 키 유지, 새 키 입력 시 교체"
+  },
+  "labelClearSavedApiKey": {
+    "message": "저장된 API 키 제거"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "사용자 지정 AI 업데이트됨: $1"
   }
 }

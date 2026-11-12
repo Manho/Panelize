@@ -790,6 +790,171 @@ export async function addCustomProvider(record) {
 }
 
 /**
+ * Updates an existing custom provider record in place inside `chrome.storage.local`
+ * and updates the in-memory custom provider registry, preserving `id`, `frameRuleId`,
+ * `createdAt`, and connection kind (`web` vs `api`). Does not touch permissions or DNR.
+ *
+ * @param {string} id
+ * @param {object} patch
+ * @returns {Promise<object>}
+ */
+export async function updateCustomProvider(id, patch) {
+  if (!isCustomProviderId(id)) {
+    throw createValidationError(
+      `Custom provider id must match ${CUSTOM_PROVIDER_ID_PATTERN}`,
+      'invalid_id'
+    );
+  }
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw createValidationError('Custom provider update must be an object', 'invalid_record');
+  }
+  if ('apiKey' in patch) {
+    throw createValidationError(
+      'Raw apiKey must not be passed to updateCustomProvider; use saveCustomApiKey instead',
+      'forbidden_secret_field'
+    );
+  }
+
+  const stored = await chrome.storage.local.get({ [CUSTOM_PROVIDERS_STORAGE_KEY]: [] });
+  const existingEntries = parseValidCustomProvidersArray(
+    stored ? stored[CUSTOM_PROVIDERS_STORAGE_KEY] : [],
+    { warnOnInvalid: false }
+  );
+  const targetIndex = existingEntries.findIndex(({ record }) => record.id === id);
+  if (targetIndex === -1) {
+    throw createValidationError(`Custom provider not found: "${id}"`, 'not_found');
+  }
+
+  const existingRecord = existingEntries[targetIndex].record;
+  const isApiKind = existingRecord.kind === 'api';
+  if (
+    patch.kind !== undefined &&
+    patch.kind !== 'web' &&
+    patch.kind !== 'api'
+  ) {
+    throw createValidationError(
+      `Unsupported custom provider kind: "${String(patch.kind)}"`,
+      'invalid_kind'
+    );
+  }
+  if (patch.kind !== undefined && (patch.kind === 'api') !== isApiKind) {
+    throw createValidationError(
+      `Cannot change custom provider kind for "${id}"`,
+      'kind_mismatch'
+    );
+  }
+
+  const rawName = patch.name !== undefined ? patch.name : existingRecord.name;
+  if (typeof rawName !== 'string') {
+    throw createValidationError('Custom provider name must be a string', 'invalid_name');
+  }
+  const trimmedName = rawName.trim();
+  if (trimmedName.length === 0 || trimmedName.length > MAX_CUSTOM_PROVIDER_NAME_LENGTH) {
+    throw createValidationError(
+      `Custom provider name must be 1..${MAX_CUSTOM_PROVIDER_NAME_LENGTH} characters`,
+      'invalid_name'
+    );
+  }
+
+  let updatedRecord;
+  if (isApiKind) {
+    const rawEndpoint =
+      patch.endpointUrl !== undefined ? patch.endpointUrl : existingRecord.endpointUrl;
+    const endpointCheck = validateCustomApiEndpointUrl(rawEndpoint);
+    if (!endpointCheck.ok) {
+      throw createValidationError(
+        `Invalid custom API endpoint URL: ${endpointCheck.reason}`,
+        endpointCheck.reason
+      );
+    }
+
+    const rawModel = patch.model !== undefined ? patch.model : existingRecord.model;
+    if (typeof rawModel !== 'string') {
+      throw createValidationError('Custom API provider model must be a string', 'invalid_model');
+    }
+    const trimmedModel = rawModel.trim();
+    if (trimmedModel.length === 0 || trimmedModel.length > MAX_CUSTOM_API_MODEL_LENGTH) {
+      throw createValidationError(
+        `Custom API provider model must be 1..${MAX_CUSTOM_API_MODEL_LENGTH} characters`,
+        'invalid_model'
+      );
+    }
+
+    const nextHasApiKey =
+      patch.hasApiKey !== undefined ? patch.hasApiKey : existingRecord.hasApiKey;
+    if (nextHasApiKey !== undefined && typeof nextHasApiKey !== 'boolean') {
+      throw createValidationError(
+        'Custom API provider hasApiKey must be a boolean',
+        'invalid_has_api_key'
+      );
+    }
+
+    updatedRecord = {
+      id: existingRecord.id,
+      kind: 'api',
+      name: trimmedName,
+      endpointUrl: endpointCheck.endpointUrl,
+      model: trimmedModel,
+      hasApiKey: Boolean(nextHasApiKey),
+      frameRuleId: existingRecord.frameRuleId,
+      createdAt: existingRecord.createdAt
+    };
+  } else {
+    const otherOrigins = new Set([
+      ...existingEntries
+        .filter(({ record: item, descriptor }) => item.id !== id && descriptor.customKind !== 'api')
+        .flatMap(({ descriptor }) => descriptor.frameOrigins),
+      ...listProviderDescriptors()
+        .filter(
+          (descriptor) =>
+            descriptor.access === 'custom' &&
+            descriptor.customKind !== 'api' &&
+            descriptor.id !== id
+        )
+        .flatMap((descriptor) => descriptor.frameOrigins)
+    ]);
+
+    const rawUrl = patch.url !== undefined ? patch.url : existingRecord.url;
+    const urlCheck = validateCustomProviderUrl(rawUrl, {
+      ignoreProviderId: id,
+      existingCustomOrigins: otherOrigins
+    });
+    if (!urlCheck.ok) {
+      throw createValidationError(
+        `Invalid custom provider URL: ${urlCheck.reason}`,
+        urlCheck.reason
+      );
+    }
+
+    updatedRecord = {
+      id: existingRecord.id,
+      name: trimmedName,
+      url: urlCheck.url,
+      frameRuleId: existingRecord.frameRuleId,
+      createdAt: existingRecord.createdAt
+    };
+  }
+
+  const updatedDescriptor = toCustomProviderDescriptor(updatedRecord);
+  const errors = validateProviderDescriptor(updatedDescriptor);
+  if (errors.length > 0) {
+    throw createValidationError(errors.join('; '), 'invalid_descriptor');
+  }
+
+  const nextRecords = existingEntries.map(({ record: item }, index) =>
+    index === targetIndex ? updatedRecord : item
+  );
+  const nextDescriptors = existingEntries.map(({ descriptor }, index) =>
+    index === targetIndex ? updatedDescriptor : descriptor
+  );
+
+  await chrome.storage.local.set({ [CUSTOM_PROVIDERS_STORAGE_KEY]: nextRecords });
+  setCustomProviderDescriptors(nextDescriptors);
+
+  return { ...updatedRecord };
+}
+
+/**
  * Removes a custom provider record from `chrome.storage.local` and updates the
  * in-memory custom provider registry. Does not touch permissions, DNR, or sync lists.
  *

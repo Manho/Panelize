@@ -1086,5 +1086,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "API密钥超出允许的最大长度。"
+  },
+  "ariaEditCustomProvider": {
+    "message": "编辑$1"
+  },
+  "headingEditCustomProvider": {
+    "message": "编辑自定义AI"
+  },
+  "btnSaveCustomProvider": {
+    "message": "保存修改"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "留空保持现有Key不变，或输入新Key替换"
+  },
+  "labelClearSavedApiKey": {
+    "message": "清除已保存的API Key"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "已更新自定义AI：$1"
   }
 }

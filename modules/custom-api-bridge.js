@@ -114,7 +114,7 @@ export function createCustomApiHostBridge({
           status: null,
           code: 'missing_api_key',
           message:
-            'API key is missing on this device. Remove and re-add this API provider in Settings to enter the key locally.'
+            'API key is missing on this device. Edit this API provider in Settings to enter the key locally.'
         });
         return;
       }
@@ -243,6 +243,25 @@ export function createCustomApiHostBridge({
           postToApiPanelFrame(panel, descriptor, {
             type: API_PANEL_MESSAGES.THEME_UPDATE,
             theme
+          });
+        }
+      }
+    },
+    syncPanelsMetadata() {
+      if (hostWindow.top !== hostWindow) {
+        return;
+      }
+      for (const panel of getPanels()) {
+        const descriptor = getProviderDescriptor(panel.providerId);
+        if (isCustomApiDescriptor(descriptor)) {
+          postToApiPanelFrame(panel, descriptor, {
+            type: API_PANEL_MESSAGES.INIT,
+            name: descriptor.name,
+            model: descriptor.apiConfig.model,
+            apiOrigin: descriptor.apiConfig.apiOrigin,
+            endpointUrl: descriptor.apiConfig.endpointUrl,
+            hasApiKey: descriptor.apiConfig.hasApiKey,
+            theme: getTheme()
           });
         }
       }

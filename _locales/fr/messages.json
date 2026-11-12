@@ -1092,5 +1092,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "La clé API dépasse la longueur maximale autorisée."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Modifier $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Modifier l’IA personnalisée"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Enregistrer les modifications"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Laissez vide pour garder la clé actuelle ou saisissez une nouvelle clé"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Supprimer la clé API enregistrée"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "IA personnalisée mise à jour : $1"
   }
 }

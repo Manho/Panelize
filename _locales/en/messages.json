@@ -1107,5 +1107,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "API key exceeds the maximum allowed length."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Edit $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Edit custom AI"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Save changes"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Leave blank to keep saved key, or enter a new key"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Remove saved API key"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "Updated custom AI: $1"
   }
 }

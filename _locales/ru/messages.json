@@ -1092,5 +1092,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "API-ключ превышает максимально допустимую длину."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Редактировать $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Редактировать пользовательский ИИ"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Сохранить изменения"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Оставьте пустым, чтобы сохранить текущий ключ, или введите новый"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Удалить сохранённый API-ключ"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "Пользовательский ИИ обновлён: $1"
   }
 }

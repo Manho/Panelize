@@ -1092,5 +1092,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "Der API-Schlüssel überschreitet die maximal zulässige Länge."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Bearbeiten: $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Benutzerdefinierte KI bearbeiten"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Änderungen speichern"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Leer lassen, um den gespeicherten Schlüssel zu behalten, oder neuen eingeben"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Gespeicherten API-Schlüssel entfernen"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "Benutzerdefinierte KI aktualisiert: $1"
   }
 }

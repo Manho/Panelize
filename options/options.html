@@ -237,10 +237,19 @@
                       data-i18n="btnShowApiKey"
                     >Show</button>
                   </div>
+                  <div class="custom-provider-clear-key-row" id="custom-provider-clear-key-row" hidden>
+                    <input
+                      type="checkbox"
+                      id="custom-provider-clear-api-key"
+                      name="clearCustomProviderApiKey"
+                    />
+                    <label for="custom-provider-clear-api-key" data-i18n="labelClearSavedApiKey">Remove saved API key</label>
+                  </div>
                 </div>
               </div>
               <div class="custom-provider-submit">
                 <button type="submit" class="btn btn-primary" id="custom-provider-add-btn" data-i18n="btnAddCustomProvider">Add</button>
+                <button type="button" class="btn btn-secondary" id="custom-provider-cancel-btn" data-i18n="btnCancel" hidden>Cancel</button>
               </div>
             </div>
             <p class="custom-provider-api-note" id="custom-provider-api-note" data-i18n="noteCustomApiLocalOnly" hidden>

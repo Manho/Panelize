@@ -1092,5 +1092,23 @@
   },
   "errCustomApiKeyTooLong": {
     "message": "La chiave API supera la lunghezza massima consentita."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Modifica $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Modifica IA personalizzata"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Salva modifiche"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Lascia vuoto per mantenere la chiave salvata o inseriscine una nuova"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Rimuovi chiave API salvata"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "IA personalizzata aggiornata: $1"
   }
 }

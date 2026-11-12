@@ -15,11 +15,13 @@ import {
   MAX_CUSTOM_PROVIDER_NAME_LENGTH,
   removeCustomProvider,
   subscribeCustomProvidersChanged,
+  updateCustomProvider,
   validateCustomApiEndpointUrl,
   validateCustomProviderUrl
 } from '../modules/custom-providers.js';
 import {
   deleteCustomApiKey,
+  getCustomApiKey,
   MAX_CUSTOM_API_KEY_LENGTH,
   saveCustomApiKey
 } from '../modules/custom-api-secrets.js';
@@ -67,6 +69,42 @@ export const CUSTOM_URL_REASON_MESSAGE_KEYS = Object.freeze({
 });
 
 let isSubmittingCustomProvider = false;
+let editingCustomProviderId = null;
+
+function getEditingCustomProviderDescriptor() {
+  if (!editingCustomProviderId) {
+    return null;
+  }
+  const descriptor = getProviderDescriptor(editingCustomProviderId);
+  return descriptor?.access === 'custom' ? descriptor : null;
+}
+
+function syncEditingRowHighlight() {
+  document
+    .querySelectorAll('#provider-list .provider-item[data-custom-provider="true"]')
+    .forEach((row) => {
+      if (editingCustomProviderId && row.dataset.providerId === editingCustomProviderId) {
+        row.dataset.editing = 'true';
+      } else {
+        delete row.dataset.editing;
+      }
+    });
+}
+
+function focusCustomProviderEditButton(providerId) {
+  if (!providerId) {
+    return;
+  }
+  const buttons = document.querySelectorAll(
+    '#provider-list [data-action="edit-custom-provider"]'
+  );
+  for (const button of buttons) {
+    if (button.dataset.providerId === providerId) {
+      button.focus?.();
+      return;
+    }
+  }
+}
 
 export function getCustomProviderUrlErrorMessage(reason) {
   const key = CUSTOM_URL_REASON_MESSAGE_KEYS[reason] || 'errCustomUrlInvalid';
@@ -95,6 +133,7 @@ export function isOriginUsedByAnyProvider(origin, { excludeProviderId = null } =
 function getCustomProviderFormElements() {
   return {
     form: document.getElementById('custom-provider-form'),
+    formTitle: document.getElementById('custom-provider-form-title'),
     kindWebRadio: document.getElementById('custom-provider-kind-web'),
     kindApiRadio: document.getElementById('custom-provider-kind-api'),
     nameInput: document.getElementById('custom-provider-name'),
@@ -104,8 +143,11 @@ function getCustomProviderFormElements() {
     modelInput: document.getElementById('custom-provider-model'),
     apiKeyInput: document.getElementById('custom-provider-api-key'),
     apiKeyToggleButton: document.getElementById('custom-provider-api-key-toggle'),
+    clearKeyRow: document.getElementById('custom-provider-clear-key-row'),
+    clearApiKeyCheckbox: document.getElementById('custom-provider-clear-api-key'),
     apiNote: document.getElementById('custom-provider-api-note'),
     addButton: document.getElementById('custom-provider-add-btn'),
+    cancelButton: document.getElementById('custom-provider-cancel-btn'),
     originPreview: document.getElementById('custom-provider-origin-preview'),
     errorMessage: document.getElementById('custom-provider-error'),
     unsupportedNote: document.getElementById('custom-provider-unsupported')
@@ -131,13 +173,42 @@ function setApiKeyRevealedState(revealed) {
 
 export function syncCustomProviderKindFields() {
   const {
+    formTitle,
     urlLabel,
     urlInput,
     apiFieldsWrapper,
     modelInput,
-    apiNote
+    apiKeyInput,
+    clearKeyRow,
+    clearApiKeyCheckbox,
+    apiNote,
+    addButton,
+    cancelButton
   } = getCustomProviderFormElements();
-  const isApi = getSelectedCustomProviderKind() === 'api';
+  const editingDescriptor = getEditingCustomProviderDescriptor();
+  const isEditing = Boolean(editingDescriptor);
+  const isApi = isEditing
+    ? editingDescriptor.customKind === 'api'
+    : getSelectedCustomProviderKind() === 'api';
+  const editingHasSavedApiKey = Boolean(
+    isEditing && isApi && editingDescriptor.apiConfig?.hasApiKey
+  );
+
+  if (formTitle) {
+    const titleKey = isEditing ? 'headingEditCustomProvider' : 'headingAddCustomProvider';
+    formTitle.dataset.i18n = titleKey;
+    formTitle.textContent = t(titleKey);
+  }
+  if (addButton) {
+    const submitKey = isEditing ? 'btnSaveCustomProvider' : 'btnAddCustomProvider';
+    addButton.dataset.i18n = submitKey;
+    addButton.textContent = t(submitKey);
+  }
+  if (cancelButton) {
+    cancelButton.dataset.i18n = 'btnCancel';
+    cancelButton.textContent = t('btnCancel');
+    cancelButton.hidden = !isEditing;
+  }
 
   if (apiFieldsWrapper) {
     apiFieldsWrapper.hidden = !isApi;
@@ -160,6 +231,19 @@ export function syncCustomProviderKindFields() {
     urlInput.dataset.i18nPlaceholder = placeholderKey;
     urlInput.placeholder = t(placeholderKey);
   }
+  if (apiKeyInput) {
+    const apiKeyPlaceholderKey = editingHasSavedApiKey
+      ? 'placeholderCustomProviderApiKeyKeepExisting'
+      : 'placeholderCustomProviderApiKey';
+    apiKeyInput.dataset.i18nPlaceholder = apiKeyPlaceholderKey;
+    apiKeyInput.placeholder = t(apiKeyPlaceholderKey);
+  }
+  if (clearKeyRow) {
+    clearKeyRow.hidden = !editingHasSavedApiKey;
+  }
+  if (clearApiKeyCheckbox && !editingHasSavedApiKey) {
+    clearApiKeyCheckbox.checked = false;
+  }
 }
 
 export function syncCustomProviderFormAvailability() {
@@ -171,11 +255,14 @@ export function syncCustomProviderFormAvailability() {
     modelInput,
     apiKeyInput,
     apiKeyToggleButton,
+    clearApiKeyCheckbox,
     addButton,
+    cancelButton,
     unsupportedNote
   } = getCustomProviderFormElements();
   const supported = supportsScopedFrameRules();
   const disabled = !supported || isSubmittingCustomProvider;
+  const isEditing = Boolean(getEditingCustomProviderDescriptor());
 
   syncCustomProviderKindFields();
 
@@ -184,10 +271,10 @@ export function syncCustomProviderFormAvailability() {
     unsupportedNote.hidden = supported;
   }
   if (kindWebRadio) {
-    kindWebRadio.disabled = disabled;
+    kindWebRadio.disabled = disabled || isEditing;
   }
   if (kindApiRadio) {
-    kindApiRadio.disabled = disabled;
+    kindApiRadio.disabled = disabled || isEditing;
   }
   if (nameInput) {
     nameInput.disabled = disabled;
@@ -204,8 +291,116 @@ export function syncCustomProviderFormAvailability() {
   if (apiKeyToggleButton) {
     apiKeyToggleButton.disabled = disabled;
   }
+  if (clearApiKeyCheckbox) {
+    clearApiKeyCheckbox.disabled = disabled;
+  }
   if (addButton) {
     addButton.disabled = disabled;
+  }
+  if (cancelButton) {
+    cancelButton.disabled = isSubmittingCustomProvider;
+  }
+}
+
+export function startEditingCustomProvider(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (!descriptor || descriptor.access !== 'custom') {
+    return false;
+  }
+
+  const {
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    clearApiKeyCheckbox
+  } = getCustomProviderFormElements();
+
+  editingCustomProviderId = descriptor.id;
+  const isApi = descriptor.customKind === 'api';
+
+  if (kindWebRadio) {
+    kindWebRadio.checked = !isApi;
+  }
+  if (kindApiRadio) {
+    kindApiRadio.checked = isApi;
+  }
+  if (nameInput) {
+    nameInput.value = descriptor.name || '';
+  }
+  if (urlInput) {
+    urlInput.value = isApi ? (descriptor.apiConfig?.endpointUrl || '') : (descriptor.url || '');
+  }
+  if (modelInput) {
+    modelInput.value = isApi ? (descriptor.apiConfig?.model || '') : '';
+  }
+  // Never populate stored IndexedDB API keys into the DOM.
+  if (apiKeyInput) {
+    apiKeyInput.value = '';
+  }
+  if (clearApiKeyCheckbox) {
+    clearApiKeyCheckbox.checked = false;
+  }
+
+  setApiKeyRevealedState(false);
+  clearCustomProviderFormError();
+  syncCustomProviderFormAvailability();
+  updateCustomProviderOriginPreview();
+  syncEditingRowHighlight();
+
+  document
+    .getElementById('custom-provider-card')
+    ?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  nameInput?.focus?.();
+  return true;
+}
+
+export function cancelEditingCustomProvider({ restoreFocus = true } = {}) {
+  const previousProviderId = editingCustomProviderId;
+  editingCustomProviderId = null;
+
+  const {
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    clearApiKeyCheckbox
+  } = getCustomProviderFormElements();
+
+  if (kindWebRadio) {
+    kindWebRadio.checked = true;
+  }
+  if (kindApiRadio) {
+    kindApiRadio.checked = false;
+  }
+  if (nameInput) {
+    nameInput.value = '';
+  }
+  if (urlInput) {
+    urlInput.value = '';
+  }
+  if (modelInput) {
+    modelInput.value = '';
+  }
+  if (apiKeyInput) {
+    apiKeyInput.value = '';
+  }
+  if (clearApiKeyCheckbox) {
+    clearApiKeyCheckbox.checked = false;
+  }
+
+  setApiKeyRevealedState(false);
+  clearCustomProviderFormError();
+  syncCustomProviderFormAvailability();
+  updateCustomProviderOriginPreview();
+  syncEditingRowHighlight();
+
+  if (restoreFocus && previousProviderId) {
+    focusCustomProviderEditButton(previousProviderId);
   }
 }
 
@@ -250,7 +445,12 @@ export function updateCustomProviderOriginPreview() {
     return;
   }
 
-  if (getSelectedCustomProviderKind() === 'api') {
+  const editingDescriptor = getEditingCustomProviderDescriptor();
+  const isApi = editingDescriptor
+    ? editingDescriptor.customKind === 'api'
+    : getSelectedCustomProviderKind() === 'api';
+
+  if (isApi) {
     const endpointCheck = validateCustomApiEndpointUrl(raw);
     if (endpointCheck.ok && endpointCheck.origin && endpointCheck.endpointUrl) {
       originPreview.textContent = t('msgCustomApiEndpointPreview', [
@@ -265,7 +465,10 @@ export function updateCustomProviderOriginPreview() {
     return;
   }
 
-  const check = validateCustomProviderUrl(raw);
+  const check = validateCustomProviderUrl(
+    raw,
+    editingDescriptor ? { ignoreProviderId: editingDescriptor.id } : undefined
+  );
   if (check.ok && check.origin) {
     originPreview.textContent = t('msgCustomProviderOriginPreview', check.origin);
     originPreview.hidden = false;
@@ -283,7 +486,15 @@ export async function handleCustomProviderFormSubmit(event) {
     return;
   }
 
-  const { nameInput, urlInput, modelInput, apiKeyInput } = getCustomProviderFormElements();
+  const {
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    clearApiKeyCheckbox
+  } = getCustomProviderFormElements();
   if (!supportsScopedFrameRules()) {
     const message = t('msgCustomProviderUnsupportedChrome');
     setCustomProviderFormError(message);
@@ -291,7 +502,18 @@ export async function handleCustomProviderFormSubmit(event) {
     return;
   }
 
-  const isApiKind = getSelectedCustomProviderKind() === 'api';
+  const editingDescriptor = getEditingCustomProviderDescriptor();
+  if (editingCustomProviderId && !editingDescriptor) {
+    cancelEditingCustomProvider({ restoreFocus: false });
+    const message = t('errCustomProviderSaveFailed');
+    setCustomProviderFormError(message);
+    showStatus('error', message);
+    return;
+  }
+
+  const isApiKind = editingDescriptor
+    ? editingDescriptor.customKind === 'api'
+    : getSelectedCustomProviderKind() === 'api';
 
   const rawName = typeof nameInput?.value === 'string' ? nameInput.value : '';
   const trimmedName = rawName.trim();
@@ -309,7 +531,10 @@ export async function handleCustomProviderFormSubmit(event) {
   const rawUrl = typeof urlInput?.value === 'string' ? urlInput.value : '';
   const urlCheck = isApiKind
     ? validateCustomApiEndpointUrl(rawUrl)
-    : validateCustomProviderUrl(rawUrl);
+    : validateCustomProviderUrl(
+        rawUrl,
+        editingDescriptor ? { ignoreProviderId: editingDescriptor.id } : undefined
+      );
   if (!urlCheck.ok) {
     const message = getCustomProviderUrlErrorMessage(urlCheck.reason);
     setCustomProviderFormError(message, urlInput);
@@ -342,16 +567,18 @@ export async function handleCustomProviderFormSubmit(event) {
     }
   }
 
-  let id;
-  let frameRuleId;
-  try {
-    id = generateCustomProviderId();
-    frameRuleId = allocateCustomFrameRuleId();
-  } catch (allocationError) {
-    const message = t('errCustomProviderSaveFailed');
-    setCustomProviderFormError(message);
-    showStatus('error', message);
-    return;
+  let id = editingDescriptor?.id ?? null;
+  let frameRuleId = editingDescriptor?.frameRuleId ?? null;
+  if (!editingDescriptor) {
+    try {
+      id = generateCustomProviderId();
+      frameRuleId = allocateCustomFrameRuleId();
+    } catch (allocationError) {
+      const message = t('errCustomProviderSaveFailed');
+      setCustomProviderFormError(message);
+      showStatus('error', message);
+      return;
+    }
   }
 
   const createdAt = Date.now();
@@ -362,7 +589,7 @@ export async function handleCustomProviderFormSubmit(event) {
   syncCustomProviderFormAvailability();
 
   // Synchronously invoke chrome.permissions.request before any await so Chrome
-  // preserves the transient user activation from clicking Add / pressing Enter.
+  // preserves the transient user activation from clicking Add / Save / pressing Enter.
   let permissionPromise;
   try {
     permissionPromise = chrome?.permissions?.request
@@ -392,6 +619,97 @@ export async function handleCustomProviderFormSubmit(event) {
       const message = t('msgCustomProviderPermissionDenied', urlCheck.origin);
       setCustomProviderFormError(message);
       showStatus('error', message);
+      return;
+    }
+
+    if (editingDescriptor) {
+      const targetId = editingDescriptor.id;
+      const previousOrigin = getCustomProviderOrigin(editingDescriptor);
+      let previousSecret = null;
+      let secretMutated = false;
+
+      try {
+        let nextHasApiKey = false;
+        if (isApiKind) {
+          previousSecret = await getCustomApiKey(targetId);
+          if (trimmedApiKey.length > 0) {
+            await saveCustomApiKey(targetId, trimmedApiKey);
+            secretMutated = true;
+            nextHasApiKey = true;
+          } else if (clearApiKeyCheckbox?.checked) {
+            await deleteCustomApiKey(targetId);
+            secretMutated = true;
+            nextHasApiKey = false;
+          } else {
+            nextHasApiKey =
+              Boolean(previousSecret) || Boolean(editingDescriptor.apiConfig?.hasApiKey);
+          }
+        }
+
+        const savedRecord = await updateCustomProvider(
+          targetId,
+          isApiKind
+            ? {
+                name: trimmedName,
+                endpointUrl: urlCheck.endpointUrl,
+                model: trimmedModel,
+                hasApiKey: nextHasApiKey
+              }
+            : {
+                name: trimmedName,
+                url: urlCheck.url
+              }
+        );
+
+        if (
+          previousOrigin &&
+          previousOrigin !== urlCheck.origin &&
+          !isOriginUsedByAnyProvider(previousOrigin) &&
+          chrome?.permissions?.remove
+        ) {
+          await chrome.permissions.remove({ origins: [`${previousOrigin}/*`] }).catch((error) => {
+            console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
+          });
+        }
+
+        editingCustomProviderId = null;
+        if (kindWebRadio) kindWebRadio.checked = true;
+        if (kindApiRadio) kindApiRadio.checked = false;
+        if (nameInput) nameInput.value = '';
+        if (urlInput) urlInput.value = '';
+        if (modelInput) modelInput.value = '';
+        if (apiKeyInput) apiKeyInput.value = '';
+        if (clearApiKeyCheckbox) clearApiKeyCheckbox.checked = false;
+        setApiKeyRevealedState(false);
+        syncCustomProviderFormAvailability();
+        updateCustomProviderOriginPreview();
+        clearCustomProviderFormError();
+        await renderProviderList();
+        focusCustomProviderEditButton(targetId);
+        showStatus('success', t('msgCustomProviderUpdated', savedRecord.name));
+      } catch (persistError) {
+        if (secretMutated) {
+          if (previousSecret) {
+            await saveCustomApiKey(targetId, previousSecret).catch(() => {});
+          } else {
+            await deleteCustomApiKey(targetId).catch(() => {});
+          }
+        }
+        await loadCustomProviders().catch(() => {});
+        if (
+          previousOrigin !== urlCheck.origin &&
+          !isOriginUsedByAnyProvider(urlCheck.origin) &&
+          chrome?.permissions?.remove
+        ) {
+          await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+        }
+        const message =
+          persistError?.reason && CUSTOM_URL_REASON_MESSAGE_KEYS[persistError.reason]
+            ? getCustomProviderUrlErrorMessage(persistError.reason)
+            : t('errCustomProviderSaveFailed');
+        setCustomProviderFormError(message);
+        showStatus('error', message);
+      }
       return;
     }
 
@@ -496,6 +814,10 @@ export async function deleteCustomProviderEntry(providerId) {
   const origin = getCustomProviderOrigin(descriptor);
   const providerName = descriptor.name;
 
+  if (editingCustomProviderId === providerId) {
+    cancelEditingCustomProvider({ restoreFocus: false });
+  }
+
   await removeCustomProvider(providerId);
   await deleteCustomApiKey(providerId).catch(() => {});
 
@@ -538,7 +860,9 @@ function setupCustomProviderForm() {
     urlInput,
     modelInput,
     apiKeyInput,
-    apiKeyToggleButton
+    apiKeyToggleButton,
+    clearApiKeyCheckbox,
+    cancelButton
   } = getCustomProviderFormElements();
   syncCustomProviderFormAvailability();
   updateCustomProviderOriginPreview();
@@ -571,11 +895,26 @@ function setupCustomProviderForm() {
 
   apiKeyInput?.addEventListener('input', () => {
     clearCustomProviderFormError();
+    if (apiKeyInput.value.trim().length > 0 && clearApiKeyCheckbox?.checked) {
+      clearApiKeyCheckbox.checked = false;
+    }
+  });
+
+  clearApiKeyCheckbox?.addEventListener('change', () => {
+    clearCustomProviderFormError();
+    if (clearApiKeyCheckbox.checked && apiKeyInput) {
+      apiKeyInput.value = '';
+      setApiKeyRevealedState(false);
+    }
   });
 
   apiKeyToggleButton?.addEventListener('click', () => {
     const isRevealed = apiKeyToggleButton.getAttribute('aria-pressed') === 'true';
     setApiKeyRevealedState(!isRevealed);
+  });
+
+  cancelButton?.addEventListener('click', () => {
+    cancelEditingCustomProvider({ restoreFocus: true });
   });
 
   urlInput?.addEventListener('blur', () => {
@@ -586,9 +925,16 @@ function setupCustomProviderForm() {
     if (!raw || raw.trim().length === 0) {
       return;
     }
-    const check = getSelectedCustomProviderKind() === 'api'
+    const editingDescriptor = getEditingCustomProviderDescriptor();
+    const isApi = editingDescriptor
+      ? editingDescriptor.customKind === 'api'
+      : getSelectedCustomProviderKind() === 'api';
+    const check = isApi
       ? validateCustomApiEndpointUrl(raw)
-      : validateCustomProviderUrl(raw);
+      : validateCustomProviderUrl(
+          raw,
+          editingDescriptor ? { ignoreProviderId: editingDescriptor.id } : undefined
+        );
     if (!check.ok) {
       setCustomProviderFormError(getCustomProviderUrlErrorMessage(check.reason), urlInput);
     }
@@ -825,6 +1171,7 @@ function updateShortcutHelperVisibility(isEnabled) {
 
 // T050: Initialize settings page
 async function init() {
+  editingCustomProviderId = null;
   await loadCustomProviders();
   await applyTheme();  // Apply theme first
   await initializeLanguage();  // Initialize language from user settings
@@ -922,6 +1269,14 @@ function createCustomProviderDeleteControlElement(provider) {
     event.stopPropagation();
   });
 
+  const editButton = document.createElement('button');
+  editButton.type = 'button';
+  editButton.className = 'btn-provider-edit';
+  editButton.dataset.action = 'edit-custom-provider';
+  editButton.dataset.providerId = provider.id;
+  editButton.textContent = t('btnEdit');
+  editButton.setAttribute('aria-label', t('ariaEditCustomProvider', provider.name));
+
   const deleteButton = document.createElement('button');
   deleteButton.type = 'button';
   deleteButton.className = 'btn-provider-delete';
@@ -952,9 +1307,16 @@ function createCustomProviderDeleteControlElement(provider) {
   cancelButton.dataset.providerId = provider.id;
   cancelButton.textContent = t('btnCancel');
 
+  editButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    startEditingCustomProvider(provider.id);
+  });
+
   deleteButton.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
+    editButton.hidden = true;
     deleteButton.hidden = true;
     confirmBox.hidden = false;
     confirmButton.focus?.();
@@ -964,6 +1326,7 @@ function createCustomProviderDeleteControlElement(provider) {
     event.preventDefault();
     event.stopPropagation();
     confirmBox.hidden = true;
+    editButton.hidden = false;
     deleteButton.hidden = false;
     deleteButton.focus?.();
   });
@@ -983,7 +1346,7 @@ function createCustomProviderDeleteControlElement(provider) {
   });
 
   confirmBox.append(promptSpan, confirmButton, cancelButton);
-  group.append(deleteButton, confirmBox);
+  group.append(editButton, deleteButton, confirmBox);
   return group;
 }
 
@@ -1001,6 +1364,9 @@ function createProviderListItemElement(
   item.dataset.hasAccess = String(hasAccess);
   if (isCustom) {
     item.dataset.customProvider = 'true';
+    if (editingCustomProviderId === provider.id) {
+      item.dataset.editing = 'true';
+    }
   }
   item.setAttribute('draggable', String(isEnabled));
 
@@ -1104,7 +1470,25 @@ export async function renderProviderList() {
       descriptor
     });
   });
+  const activeElement = document.activeElement;
+  const activeControlAction = listContainer?.contains(activeElement)
+    ? activeElement?.dataset?.action || null
+    : null;
+  const activeControlProviderId = listContainer?.contains(activeElement)
+    ? activeElement?.dataset?.providerId || null
+    : null;
   listContainer.replaceChildren(...providerItems);
+  if (activeControlAction && activeControlProviderId) {
+    const replacement = Array.from(
+      listContainer.querySelectorAll(`[data-action="${activeControlAction}"]`)
+    ).find(
+      (el) =>
+        el.dataset.providerId === activeControlProviderId &&
+        !el.hidden &&
+        !el.closest('[hidden]')
+    );
+    replacement?.focus?.();
+  }
 
   // Add click listeners to toggles
   listContainer.querySelectorAll('.toggle-switch').forEach(toggle => {
@@ -1180,6 +1564,11 @@ function setupStorageChangeListener() {
   }
 
   subscribeCustomProvidersChanged(() => {
+    if (editingCustomProviderId && !getProviderDescriptor(editingCustomProviderId)) {
+      cancelEditingCustomProvider({ restoreFocus: false });
+    } else {
+      syncCustomProviderFormAvailability();
+    }
     updateCustomProviderOriginPreview();
     renderProviderList().catch((error) => {
       console.error('Error syncing custom providers:', error);
@@ -1322,19 +1711,29 @@ export async function toggleProvider(providerId) {
 
 // T056: Load and display data statistics
 async function loadDataStats() {
+  const statPromptsEl = document.getElementById('stat-prompts');
+  const statStorageEl = document.getElementById('stat-storage');
   try {
     const prompts = await getAllPrompts();
 
-    document.getElementById('stat-prompts').textContent = prompts.length;
+    if (statPromptsEl) {
+      statPromptsEl.textContent = prompts.length;
+    }
 
     // Estimate storage size
     const promptsSize = JSON.stringify(prompts).length;
     const sizeKB = Math.round(promptsSize / 1024);
-    document.getElementById('stat-storage').textContent = `~${sizeKB} KB`;
+    if (statStorageEl) {
+      statStorageEl.textContent = `~${sizeKB} KB`;
+    }
   } catch (error) {
     // Silently handle data stats errors
-    document.getElementById('stat-prompts').textContent = '0';
-    document.getElementById('stat-storage').textContent = '0 KB';
+    if (statPromptsEl) {
+      statPromptsEl.textContent = '0';
+    }
+    if (statStorageEl) {
+      statStorageEl.textContent = '0 KB';
+    }
   }
 }
 
@@ -2018,15 +2417,22 @@ async function saveCustomEnterSettings() {
 // T073: Version Check Functions
 async function loadVersionDisplay(shouldCheckForUpdates = true) {
   const versionInfo = await loadVersionInfo();
+  const versionEl = document.getElementById('version');
+  const commitHashEl = document.getElementById('commit-hash');
   if (!versionInfo) {
-    document.getElementById('version').textContent = t('msgVersionUnknown');
-    document.getElementById('commit-hash').textContent = '';
+    if (versionEl) {
+      versionEl.textContent = t('msgVersionUnknown');
+    }
+    if (commitHashEl) {
+      commitHashEl.textContent = '';
+    }
     return;
   }
 
-  document.getElementById('version').textContent = t('labelVersion', versionInfo.version);
+  if (versionEl) {
+    versionEl.textContent = t('labelVersion', versionInfo.version);
+  }
   // Hide commit-hash element since we no longer use it
-  const commitHashEl = document.getElementById('commit-hash');
   if (commitHashEl) {
     commitHashEl.style.display = 'none';
   }
