@@ -199,6 +199,35 @@ describe('openai-chat-client', () => {
           fetchImpl: streamErrorFetch
         })
       ).rejects.toThrow(/Context length exceeded/);
+
+      const openRouter429Fetch = vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'Provider returned error',
+              code: 429,
+              metadata: {
+                raw: 'google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream.',
+                provider_name: 'Google AI Studio',
+                limit_source: 'upstream_provider_shared_pool'
+              }
+            }
+          }),
+          { status: 429, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      await expect(
+        streamChatCompletion({
+          endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
+          model: 'openrouter/free',
+          apiKey: 'sk-or-test',
+          messages: [{ role: 'user', content: 'Hi' }],
+          fetchImpl: openRouter429Fetch
+        })
+      ).rejects.toThrow(
+        /Rate limit or quota exceeded \(HTTP 429\): \[Google AI Studio\] google\/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream\./
+      );
     });
   });
 });

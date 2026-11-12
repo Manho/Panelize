@@ -189,6 +189,38 @@ function extractChoiceDelta(choice) {
   return { contentDelta, reasoningDelta };
 }
 
+function extractUpstreamMetadataDetail(metadata) {
+  if (!metadata || typeof metadata !== 'object') {
+    return '';
+  }
+  const providerName =
+    typeof metadata.provider_name === 'string' ? metadata.provider_name.trim() : '';
+  const raw = typeof metadata.raw === 'string' ? metadata.raw.trim() : '';
+  let rawMessage = raw;
+  if (raw.startsWith('{')) {
+    try {
+      const parsedRaw = JSON.parse(raw);
+      const inner =
+        parsedRaw?.error?.message ??
+        (typeof parsedRaw?.error === 'string' ? parsedRaw.error : null) ??
+        parsedRaw?.message;
+      if (typeof inner === 'string' && inner.trim().length > 0) {
+        rawMessage = inner.trim();
+      }
+    } catch {
+      // Keep plain string `metadata.raw` when it is not JSON.
+    }
+  }
+  rawMessage = rawMessage.replace(/\s+/g, ' ').trim();
+  if (!rawMessage) {
+    return providerName;
+  }
+  if (providerName && !rawMessage.toLowerCase().includes(providerName.toLowerCase())) {
+    return `[${providerName}] ${rawMessage}`;
+  }
+  return rawMessage;
+}
+
 function extractServerErrorDetail(bodyText) {
   if (typeof bodyText !== 'string') {
     return '';
@@ -205,8 +237,22 @@ function extractServerErrorDetail(bodyText) {
       (typeof parsed?.error === 'string' ? parsed.error : null) ??
       parsed?.message ??
       parsed?.detail;
+    const metadataDetail = extractUpstreamMetadataDetail(parsed?.error?.metadata);
+
     if (typeof candidate === 'string' && candidate.trim().length > 0) {
-      return candidate.trim().slice(0, 500);
+      const cleanCandidate = candidate.trim();
+      if (metadataDetail) {
+        if (/^provider returned error\.?$/i.test(cleanCandidate)) {
+          return metadataDetail.slice(0, 500);
+        }
+        if (!cleanCandidate.includes(metadataDetail)) {
+          return `${cleanCandidate} (${metadataDetail})`.slice(0, 500);
+        }
+      }
+      return cleanCandidate.slice(0, 500);
+    }
+    if (metadataDetail) {
+      return metadataDetail.slice(0, 500);
     }
   } catch {
     // Fall back to plain-text snippet when server returns non-JSON error text.
@@ -278,14 +324,10 @@ function parseAndEmitPayload(rawData, state, onDelta) {
   }
 
   if (parsed && typeof parsed === 'object' && parsed.error) {
-    const detail =
-      typeof parsed.error === 'string'
-        ? parsed.error
-        : (typeof parsed.error?.message === 'string'
-            ? parsed.error.message
-            : 'Stream returned an error');
+    const detail = extractServerErrorDetail(trimmed) || 'Stream returned an error';
+    const rawStatus = parsed.error?.status ?? parsed.error?.code;
     throw new ChatApiError(detail, {
-      status: Number.isInteger(parsed.error?.status) ? parsed.error.status : null,
+      status: Number.isInteger(rawStatus) ? rawStatus : null,
       code: 'stream_error'
     });
   }
