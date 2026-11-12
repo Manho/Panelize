@@ -296,6 +296,9 @@ async function init() {
 }
 
 function focusUnifiedInput({ force = false } = {}) {
+  if (typeof document === 'undefined') {
+    return;
+  }
   const inputTextarea = document.getElementById('unified-input');
   if (!inputTextarea) {
     return;
@@ -310,7 +313,11 @@ function focusUnifiedInput({ force = false } = {}) {
   // A click into a panel can cancel the protection before this frame runs.
   const generation = focusRestoreGeneration;
   requestAnimationFrame(() => {
-    if (generation !== focusRestoreGeneration || (!force && !shouldPreserveUnifiedInputFocus())) {
+    if (
+      typeof document === 'undefined' ||
+      generation !== focusRestoreGeneration ||
+      (!force && !shouldPreserveUnifiedInputFocus())
+    ) {
       return;
     }
     // The user moved on to a dialog, e.g. to edit a snapshot title.
