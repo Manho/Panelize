@@ -702,4 +702,110 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('reports injection-error without mutating DOM or auto-submitting an existing draft when paste is canceled without inserting', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="editor" contenteditable="true" role="textbox"><p>Existing draft</p></div>
+          <button id="send-btn" type="submit" aria-label="Send">Send</button>
+        </form>
+      `;
+      const editor = setLayoutRect(env.document.getElementById('editor'));
+      const sendBtn = setLayoutRect(env.document.getElementById('send-btn'), {
+        left: 360,
+        top: 500,
+        width: 40,
+        height: 40,
+      });
+      const sendClickSpy = vi.fn((e) => e.preventDefault());
+      sendBtn.addEventListener('click', sendClickSpy);
+
+      env.document.execCommand = vi.fn(() => false);
+      // Controlled editor rejects synthetic paste (e.g. max-length or security policy)
+      editor.addEventListener('paste', (ev) => {
+        ev.preventDefault();
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-paste-rejected',
+        action: 'fill',
+        text: 'Blocked new prompt',
+        images: [],
+        autoSubmit: true,
+      });
+
+      await wait(120);
+      expect(editor.textContent).toBe('Existing draft');
+      expect(sendClickSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-paste-rejected',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'failed',
+          reason: 'injection-error',
+          succeededImageIds: [],
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('reports injection-error without forcing raw DOM text nodes when beforeinput is canceled without inserting', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <div id="editor" contenteditable="true" role="textbox"></div>
+      `;
+      const editor = setLayoutRect(env.document.getElementById('editor'));
+      env.document.execCommand = vi.fn(() => false);
+      editor.addEventListener('beforeinput', (ev) => {
+        ev.preventDefault();
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-beforeinput-rejected',
+        action: 'fill',
+        text: 'Rejected prompt',
+        images: [],
+        autoSubmit: false,
+      });
+
+      await wait(120);
+      expect(editor.textContent).toBe('');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-beforeinput-rejected',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'failed',
+          reason: 'injection-error',
+          succeededImageIds: [],
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });

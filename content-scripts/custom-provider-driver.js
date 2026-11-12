@@ -549,6 +549,44 @@
     }
   }
 
+  function collapseComposerWhitespace(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function hasAcceptedInjectedText(beforeRaw, afterRaw, injectedText) {
+    if (afterRaw === beforeRaw) {
+      return false;
+    }
+    const trimmedInjected = String(injectedText || '').trim();
+    if (trimmedInjected.length === 0) {
+      return afterRaw.length > beforeRaw.length;
+    }
+    const collapsedBefore = collapseComposerWhitespace(beforeRaw);
+    const collapsedAfter = collapseComposerWhitespace(afterRaw);
+    const collapsedInjected = collapseComposerWhitespace(injectedText);
+    const containsInjected =
+      afterRaw.includes(trimmedInjected) || collapsedAfter.includes(collapsedInjected);
+    if (!containsInjected) {
+      return false;
+    }
+    if (beforeRaw.includes(trimmedInjected) || collapsedBefore.includes(collapsedInjected)) {
+      return collapsedAfter.length > collapsedBefore.length || afterRaw.length > beforeRaw.length;
+    }
+    return true;
+  }
+
+  async function waitForAcceptedInjectedText(el, beforeRaw, text) {
+    if (hasAcceptedInjectedText(beforeRaw, getComposerText(el), text)) {
+      return true;
+    }
+    await sleep(25);
+    if (hasAcceptedInjectedText(beforeRaw, getComposerText(el), text)) {
+      return true;
+    }
+    await sleep(25);
+    return hasAcceptedInjectedText(beforeRaw, getComposerText(el), text);
+  }
+
   async function injectIntoContentEditable(el, text) {
     try {
       el.focus({ preventScroll: true });
@@ -557,12 +595,13 @@
     }
     moveCaretToEnd(el);
 
-    const beforeNormalized = getComposerText(el).trim();
+    const beforeRaw = getComposerText(el);
+    let controlledCancelObserved = false;
 
     // Primary strategy: execCommand('insertText') fires native beforeinput + mutates DOM + fires input,
     // which ProseMirror, TipTap, Lexical, Quill, and Svelte/React contenteditables observe.
     // Note: Lexical/Slate call preventDefault() on beforeinput and reconcile the DOM asynchronously
-    // in a microtask, so we observe beforeinput and allow a brief settle tick before falling back.
+    // in a microtask, so we observe beforeinput and verify actual text acceptance after reconciliation.
     let execSucceeded = false;
     let beforeInputObserved = false;
     let beforeInputCancelled = false;
@@ -583,18 +622,18 @@
       document.removeEventListener('beforeinput', onBeforeInput);
     }
 
-    let afterExec = getComposerText(el).trim();
-    if (execSucceeded && (afterExec !== beforeNormalized || afterExec.includes(text.trim()))) {
+    if (execSucceeded && hasAcceptedInjectedText(beforeRaw, getComposerText(el), text)) {
       moveCaretToEnd(el);
       return true;
     }
 
     if (beforeInputCancelled || beforeInputObserved || execSucceeded) {
-      await sleep(25);
-      afterExec = getComposerText(el).trim();
-      if (afterExec !== beforeNormalized || afterExec.includes(text.trim())) {
+      if (await waitForAcceptedInjectedText(el, beforeRaw, text)) {
         moveCaretToEnd(el);
         return true;
+      }
+      if (beforeInputCancelled) {
+        controlledCancelObserved = true;
       }
     }
 
@@ -610,10 +649,12 @@
       });
       const notCancelled = el.dispatchEvent(pasteEvent);
       if (!notCancelled) {
-        await sleep(25);
-      }
-      const afterPaste = getComposerText(el).trim();
-      if (!notCancelled || afterPaste !== beforeNormalized) {
+        if (await waitForAcceptedInjectedText(el, beforeRaw, text)) {
+          moveCaretToEnd(el);
+          return true;
+        }
+        controlledCancelObserved = true;
+      } else if (hasAcceptedInjectedText(beforeRaw, getComposerText(el), text)) {
         moveCaretToEnd(el);
         return true;
       }
@@ -621,7 +662,7 @@
       // Ignore ClipboardEvent construction errors.
     }
 
-    // Fallback 2: cancelable beforeinput + DOM text node + input event.
+    // Fallback 2: cancelable beforeinput + uncontrolled DOM text node fallback.
     try {
       const beforeInput = new InputEvent('beforeinput', {
         bubbles: true,
@@ -630,20 +671,28 @@
         inputType: 'insertText',
         data: text,
       });
-      if (!el.dispatchEvent(beforeInput)) {
-        await sleep(25);
-        moveCaretToEnd(el);
-        return true;
+      const notCancelled = el.dispatchEvent(beforeInput);
+      if (!notCancelled) {
+        if (await waitForAcceptedInjectedText(el, beforeRaw, text)) {
+          moveCaretToEnd(el);
+          return true;
+        }
+        controlledCancelObserved = true;
       }
     } catch {
       // Ignore.
+    }
+
+    // Never force raw DOM text mutation past a controlled editor's explicit preventDefault() rejection.
+    if (controlledCancelObserved) {
+      return false;
     }
 
     el.appendChild(document.createTextNode(text));
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
     moveCaretToEnd(el);
-    return true;
+    return hasAcceptedInjectedText(beforeRaw, getComposerText(el), text);
   }
 
   async function injectTextIntoComposer(composer, text, { skipIfAlreadyPresent = false } = {}) {
@@ -656,9 +705,10 @@
     }
 
     if (composer.tagName === 'TEXTAREA' || composer.tagName === 'INPUT') {
-      const nextValue = (composer.value || '') + text;
+      const beforeVal = composer.value || '';
+      const nextValue = beforeVal + text;
       setFormControlValue(composer, nextValue, text);
-      return true;
+      return hasAcceptedInjectedText(beforeVal, composer.value || '', text);
     }
 
     if (isContentEditableElement(composer)) {
