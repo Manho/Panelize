@@ -680,6 +680,8 @@ function parseAndEmitPayload(rawData, state, onDelta) {
  *   model: string,
  *   messages: Array<{ role: 'system' | 'user' | 'assistant', content?: string, images?: Array<{ dataUrl: string }> }>,
  *   signal?: AbortSignal,
+ *   connectTimeoutMs?: number,
+ *   idleTimeoutMs?: number,
  *   fetchImpl?: typeof fetch,
  *   onDelta?: (delta: { contentDelta: string, reasoningDelta: string, content: string, reasoning: string }) => void
  * }} params
@@ -691,6 +693,8 @@ export async function streamChatCompletion({
   model,
   messages,
   signal,
+  connectTimeoutMs = 30_000,
+  idleTimeoutMs = 60_000,
   fetchImpl = globalThis.fetch,
   onDelta
 }) {
@@ -705,6 +709,7 @@ export async function streamChatCompletion({
   }
 
   const resolvedUrl = resolveChatCompletionsUrl(endpointUrl.trim());
+  const originLabel = new URL(resolvedUrl).origin;
   const trimmedKey = typeof apiKey === 'string' ? apiKey.trim() : '';
   const formattedMessages = buildOpenAiChatMessages(messages);
 
@@ -716,171 +721,267 @@ export async function streamChatCompletion({
     headers.Authorization = `Bearer ${trimmedKey}`;
   }
 
-  let response;
-  try {
-    response = await fetchImpl(resolvedUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: model.trim(),
-        messages: formattedMessages,
-        stream: true
-      }),
-      signal
-    });
-  } catch (error) {
-    if (error?.name === 'AbortError' || signal?.aborted) {
-      const abortErr = new Error('Request aborted');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-    throw new ChatApiError(
-      `Network error reaching ${new URL(resolvedUrl).origin}: ${error?.message || 'Failed to fetch'}`,
-      { code: 'network_error' }
-    );
-  }
+  const controller = new AbortController();
+  let timedOut = false;
+  let activeTimerId = null;
 
-  if (!response.ok) {
-    let errorBody = '';
-    try {
-      errorBody = await response.text();
-    } catch (error) {
-      if (error?.name === 'AbortError' || signal?.aborted) {
-        const abortErr = new Error('Request aborted');
-        abortErr.name = 'AbortError';
-        throw abortErr;
-      }
-      errorBody = '';
-    }
-    if (signal?.aborted) {
-      const abortErr = new Error('Request aborted');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-    throw buildHttpStatusError(response.status, response.statusText, errorBody);
-  }
-
-  const contentType = (response.headers?.get?.('content-type') || '').toLowerCase();
-  const state = { content: '', reasoning: '', finishReason: null };
-
-  if (!response.body || contentType.includes('application/json')) {
-    let bodyText = '';
-    try {
-      bodyText = await response.text();
-    } catch (error) {
-      if (error?.name === 'AbortError' || signal?.aborted) {
-        const abortErr = new Error('Request aborted');
-        abortErr.name = 'AbortError';
-        throw abortErr;
-      }
-      throw error;
-    }
-    if (signal?.aborted) {
-      const abortErr = new Error('Request aborted');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-    parseAndEmitPayload(bodyText, state, onDelta);
-    return state;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let lineBuffer = '';
-  let eventDataLines = [];
-  let doneReceived = false;
-
-  const flushBufferedEvent = () => {
-    if (eventDataLines.length === 0) {
-      return;
-    }
-    const eventPayload = eventDataLines.join('\n');
-    eventDataLines = [];
-    if (parseAndEmitPayload(eventPayload, state, onDelta)) {
-      doneReceived = true;
+  const clearActiveTimer = () => {
+    if (activeTimerId !== null) {
+      clearTimeout(activeTimerId);
+      activeTimerId = null;
     }
   };
 
-  const processLine = (rawLine) => {
-    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+  const armTimer = (ms) => {
+    clearActiveTimer();
+    if (Number.isFinite(ms) && ms > 0) {
+      activeTimerId = setTimeout(() => {
+        activeTimerId = null;
+        if (!signal?.aborted) {
+          timedOut = true;
+          controller.abort();
+        }
+      }, ms);
+    }
+  };
 
-    if (line === '') {
-      flushBufferedEvent();
-      return;
+  const makeAbortError = () => {
+    const abortErr = new Error('Request aborted');
+    abortErr.name = 'AbortError';
+    return abortErr;
+  };
+
+  const makeTimeoutError = () =>
+    new ChatApiError(`Timed out waiting for response from ${originLabel}`, {
+      code: 'timeout_error'
+    });
+
+  const throwIfTerminated = () => {
+    if (signal?.aborted) {
+      throw makeAbortError();
+    }
+    if (timedOut) {
+      throw makeTimeoutError();
+    }
+    if (controller.signal.aborted) {
+      throw makeAbortError();
+    }
+  };
+
+  const awaitWithSignal = (promise) => {
+    if (controller.signal.aborted || signal?.aborted) {
+      Promise.resolve(promise).catch(() => {});
+      return Promise.reject(
+        signal?.aborted ? makeAbortError() : (timedOut ? makeTimeoutError() : makeAbortError())
+      );
+    }
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        Promise.resolve(promise).catch(() => {});
+        reject(
+          signal?.aborted ? makeAbortError() : (timedOut ? makeTimeoutError() : makeAbortError())
+        );
+      };
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve(promise).then(
+        (value) => {
+          controller.signal.removeEventListener('abort', onAbort);
+          resolve(value);
+        },
+        (err) => {
+          controller.signal.removeEventListener('abort', onAbort);
+          reject(err);
+        }
+      );
+    });
+  };
+
+  const onExternalAbort = () => {
+    clearActiveTimer();
+    controller.abort();
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      throw makeAbortError();
+    }
+    signal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+
+  try {
+    armTimer(connectTimeoutMs);
+
+    let response;
+    try {
+      response = await awaitWithSignal(
+        fetchImpl(resolvedUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: model.trim(),
+            messages: formattedMessages,
+            stream: true
+          }),
+          signal: controller.signal
+        })
+      );
+    } catch (error) {
+      throwIfTerminated();
+      if (error?.name === 'AbortError') {
+        throw makeAbortError();
+      }
+      throw new ChatApiError(
+        `Network error reaching ${originLabel}: ${error?.message || 'Failed to fetch'}`,
+        { code: 'network_error' }
+      );
     }
 
-    if (line.startsWith(':')) {
-      return;
-    }
+    throwIfTerminated();
 
-    if (line.startsWith('data:')) {
-      if (eventDataLines.length > 0 && isCompleteSsePayload(eventDataLines.join('\n'))) {
-        flushBufferedEvent();
-        if (doneReceived) {
-          return;
+    if (!response.ok) {
+      let errorBody = '';
+      if (typeof response.text === 'function') {
+        try {
+          errorBody = await awaitWithSignal(response.text());
+        } catch (error) {
+          throwIfTerminated();
+          if (error?.name === 'AbortError') {
+            throw makeAbortError();
+          }
+          errorBody = '';
         }
       }
-      const value = line.slice(5);
-      eventDataLines.push(value.startsWith(' ') ? value.slice(1) : value);
-    }
-  };
-
-  try {
-    while (!doneReceived) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      lineBuffer += decoder.decode(value, { stream: true });
-      let newlineIdx = lineBuffer.indexOf('\n');
-      while (newlineIdx !== -1 && !doneReceived) {
-        const rawLine = lineBuffer.slice(0, newlineIdx);
-        lineBuffer = lineBuffer.slice(newlineIdx + 1);
-        processLine(rawLine);
-        newlineIdx = lineBuffer.indexOf('\n');
-      }
+      clearActiveTimer();
+      throwIfTerminated();
+      throw buildHttpStatusError(response.status, response.statusText, errorBody);
     }
 
-    if (!doneReceived) {
-      lineBuffer += decoder.decode();
-      if (lineBuffer.length > 0) {
-        const remainingLines = lineBuffer.split('\n');
-        for (const rawLine of remainingLines) {
-          processLine(rawLine);
+    const contentType = (response.headers?.get?.('content-type') || '').toLowerCase();
+    const state = { content: '', reasoning: '', finishReason: null };
+
+    if (!response.body || contentType.includes('application/json')) {
+      let bodyText = '';
+      try {
+        bodyText = await awaitWithSignal(response.text());
+      } catch (error) {
+        throwIfTerminated();
+        if (error?.name === 'AbortError') {
+          throw makeAbortError();
+        }
+        throw error;
+      }
+      clearActiveTimer();
+      throwIfTerminated();
+      parseAndEmitPayload(bodyText, state, onDelta);
+      return state;
+    }
+
+    clearActiveTimer();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let lineBuffer = '';
+    let eventDataLines = [];
+    let doneReceived = false;
+
+    const flushBufferedEvent = () => {
+      if (eventDataLines.length === 0) {
+        return;
+      }
+      const eventPayload = eventDataLines.join('\n');
+      eventDataLines = [];
+      if (parseAndEmitPayload(eventPayload, state, onDelta)) {
+        doneReceived = true;
+      }
+    };
+
+    const processLine = (rawLine) => {
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+
+      if (line === '') {
+        flushBufferedEvent();
+        return;
+      }
+
+      if (line.startsWith(':')) {
+        return;
+      }
+
+      if (line.startsWith('data:')) {
+        if (eventDataLines.length > 0 && isCompleteSsePayload(eventDataLines.join('\n'))) {
+          flushBufferedEvent();
           if (doneReceived) {
-            break;
+            return;
           }
         }
+        const value = line.slice(5);
+        eventDataLines.push(value.startsWith(' ') ? value.slice(1) : value);
       }
-      if (!doneReceived && eventDataLines.length > 0) {
-        const trailingPayload = eventDataLines.join('\n');
-        eventDataLines = [];
-        // If a server ignored Accept: text/event-stream without setting content-type: application/json
-        parseAndEmitPayload(trailingPayload, state, onDelta);
-      } else if (
-        !doneReceived &&
-        state.content === '' &&
-        state.reasoning === '' &&
-        lineBuffer.trim().startsWith('{')
-      ) {
-        parseAndEmitPayload(lineBuffer, state, onDelta);
-      }
-    }
-  } catch (error) {
-    if (error?.name === 'AbortError' || signal?.aborted) {
-      const abortErr = new Error('Request aborted');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-    throw error;
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      // Ignore reader cancel errors after completion/abort.
-    }
-  }
+    };
 
-  return state;
+    try {
+      while (!doneReceived) {
+        armTimer(idleTimeoutMs);
+        const { value, done } = await awaitWithSignal(reader.read());
+        clearActiveTimer();
+        throwIfTerminated();
+        if (done) {
+          break;
+        }
+
+        lineBuffer += decoder.decode(value, { stream: true });
+        let newlineIdx = lineBuffer.indexOf('\n');
+        while (newlineIdx !== -1 && !doneReceived) {
+          const rawLine = lineBuffer.slice(0, newlineIdx);
+          lineBuffer = lineBuffer.slice(newlineIdx + 1);
+          processLine(rawLine);
+          newlineIdx = lineBuffer.indexOf('\n');
+        }
+      }
+
+      if (!doneReceived) {
+        lineBuffer += decoder.decode();
+        if (lineBuffer.length > 0) {
+          const remainingLines = lineBuffer.split('\n');
+          for (const rawLine of remainingLines) {
+            processLine(rawLine);
+            if (doneReceived) {
+              break;
+            }
+          }
+        }
+        if (!doneReceived && eventDataLines.length > 0) {
+          const trailingPayload = eventDataLines.join('\n');
+          eventDataLines = [];
+          // If a server ignored Accept: text/event-stream without setting content-type: application/json
+          parseAndEmitPayload(trailingPayload, state, onDelta);
+        } else if (
+          !doneReceived &&
+          state.content === '' &&
+          state.reasoning === '' &&
+          lineBuffer.trim().startsWith('{')
+        ) {
+          parseAndEmitPayload(lineBuffer, state, onDelta);
+        }
+      }
+    } catch (error) {
+      clearActiveTimer();
+      throwIfTerminated();
+      if (error?.name === 'AbortError') {
+        throw makeAbortError();
+      }
+      throw error;
+    } finally {
+      clearActiveTimer();
+      try {
+        await reader.cancel();
+      } catch {
+        // Ignore reader cancel errors after completion/abort.
+      }
+    }
+
+    return state;
+  } finally {
+    clearActiveTimer();
+    signal?.removeEventListener?.('abort', onExternalAbort);
+  }
 }

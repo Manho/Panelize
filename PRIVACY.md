@@ -45,7 +45,7 @@ The following data is stored in browser-managed storage. Prompt library data rem
 - Custom AI site URLs, names, and OpenAI-compatible API endpoint URLs / model IDs you add in Settings (stored in device-local `chrome.storage.local`)
 - Optional API keys you enter for Custom API providers (stored **strictly on your local device** in extension-origin `IndexedDB`, never stored in `chrome.storage.sync`, never included in exported JSON backups, and deleted from local `IndexedDB` when you remove that Custom API provider)
 
-**Purpose:** To let you compare self-hosted or OpenAI-compatible models side by side. Optional API keys are transmitted solely in requests to the exact endpoint URL you configured and authorized, and conversations in the built-in API comparison panel remain in memory only for the active session without persistent chat history.
+**Purpose:** To let you compare self-hosted or OpenAI-compatible models side by side. Optional API keys are transmitted solely in `Authorization: Bearer` headers to the user-configured endpoint URL (and its same-origin `/models` discovery endpoint when loading models in Settings), and conversations in the built-in API comparison panel remain in memory only for the active session without persistent chat history.
 
 ### 2. Data We Do NOT Collect
 
@@ -57,7 +57,7 @@ Panelize does **NOT** collect, store on Panelize servers, or transmit to Paneliz
 - ❌ Analytics or telemetry data
 - ❌ Usage statistics sent to external servers
 - ❌ Persistent AI conversation history
-- ❌ Website login credentials, or any collection/syncing of optional Custom API keys by Panelize (optional API keys remain on your device only and are sent solely to your configured endpoint)
+- ❌ Website login credentials, or any collection/syncing of optional Custom API keys by Panelize (optional API keys remain on your device only and are sent solely in `Authorization: Bearer` headers to your configured endpoint and its same-origin `/models` discovery endpoint)
 - ❌ Any data to Panelize-operated servers or unrelated third parties
 
 ---

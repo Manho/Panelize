@@ -231,8 +231,17 @@ export function createCustomApiHostBridge({
           return;
         }
         if (keyRecord?.endpointUrl && keyRecord.endpointUrl !== capturedConfig.endpointUrl) {
-          // Stored credential is already bound to a different endpoint; refuse to send it.
-          finalizeStreamAbort(streamEntry);
+          // Stored credential is bound to a different endpoint; refuse to send it and surface error.
+          streamEntry.finalized = true;
+          activeStreams.delete(panel.id);
+          postToApiPanelFrame(panel, descriptor, {
+            type: API_PANEL_MESSAGES.CHAT_ERROR,
+            requestId,
+            status: null,
+            code: 'endpoint_mismatch',
+            message:
+              'Stored API key does not match this endpoint URL. Edit this API provider in Settings to re-enter the key.'
+          });
           return;
         }
         storedKey = keyRecord ? keyRecord.apiKey : null;

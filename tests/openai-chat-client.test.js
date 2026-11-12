@@ -445,5 +445,98 @@ describe('openai-chat-client', () => {
       });
       expect(signal502?.aborted).toBe(true);
     });
+
+    it('enforces connectTimeoutMs and idleTimeoutMs on streamChatCompletion while preserving caller AbortError', async () => {
+      // 1. Stalled connection headers -> timeout_error
+      let connectSignal = null;
+      const stalledConnect = streamChatCompletion({
+        endpointUrl: 'https://stalled-connect.example.com/v1',
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'Hello' }],
+        connectTimeoutMs: 25,
+        idleTimeoutMs: 200,
+        fetchImpl: vi.fn((_url, init) => {
+          connectSignal = init.signal;
+          return new Promise(() => {});
+        })
+      });
+
+      await expect(stalledConnect).rejects.toMatchObject({
+        name: 'ChatApiError',
+        code: 'timeout_error'
+      });
+      expect(connectSignal?.aborted).toBe(true);
+
+      // 2. Stalled mid-stream reader.read() after first SSE chunk -> timeout_error
+      const encoder = new TextEncoder();
+      const deltas = [];
+      let streamSignal = null;
+      let readerCanceled = false;
+      let readCalls = 0;
+
+      const stalledStream = streamChatCompletion({
+        endpointUrl: 'https://stalled-stream.example.com/v1',
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'Stream test' }],
+        connectTimeoutMs: 200,
+        idleTimeoutMs: 30,
+        onDelta: ({ contentDelta }) => {
+          if (contentDelta) deltas.push(contentDelta);
+        },
+        fetchImpl: vi.fn(async (_url, init) => {
+          streamSignal = init.signal;
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'text/event-stream' }),
+            body: {
+              getReader() {
+                return {
+                  read() {
+                    readCalls += 1;
+                    if (readCalls === 1) {
+                      return Promise.resolve({
+                        done: false,
+                        value: encoder.encode(
+                          'data: {"choices":[{"delta":{"content":"Partial "}}]}\n\n'
+                        )
+                      });
+                    }
+                    return new Promise(() => {});
+                  },
+                  cancel() {
+                    readerCanceled = true;
+                    return Promise.resolve();
+                  }
+                };
+              }
+            }
+          };
+        })
+      });
+
+      await expect(stalledStream).rejects.toMatchObject({
+        name: 'ChatApiError',
+        code: 'timeout_error'
+      });
+      expect(deltas).toEqual(['Partial ']);
+      expect(streamSignal?.aborted).toBe(true);
+      expect(readerCanceled).toBe(true);
+
+      // 3. Caller signal.abort() still rejects with AbortError
+      const callerController = new AbortController();
+      const abortedByCaller = streamChatCompletion({
+        endpointUrl: 'https://caller-abort.example.com/v1',
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'Abort me' }],
+        signal: callerController.signal,
+        connectTimeoutMs: 5000,
+        idleTimeoutMs: 5000,
+        fetchImpl: vi.fn(() => new Promise(() => {}))
+      });
+
+      callerController.abort();
+      await expect(abortedByCaller).rejects.toMatchObject({ name: 'AbortError' });
+    });
   });
 });

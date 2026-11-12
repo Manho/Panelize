@@ -838,12 +838,49 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
     expect(apiEditBtn.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(apiEditBtn);
 
-    // 5. Re-open Inline Edit, change Name + Endpoint Origin + Model while keeping saved key
-    chrome.permissions.remove.mockClear();
+    // 5a. Re-open Inline Edit, change endpoint path on the SAME origin (localhost:11434 -> localhost:11434/api/v1) with blank key input -> preserves saved key!
     apiEditBtn.click();
-    const editForm2 = apiRow.querySelector('form.custom-provider-inline-edit');
+    const editFormSameOrigin = apiRow.querySelector('form.custom-provider-inline-edit');
+    const sameOriginUrlInput = editFormSameOrigin.querySelector('input[name="customProviderUrl"]');
+    const sameOriginApiKeyInput = editFormSameOrigin.querySelector(
+      'input[name="customProviderApiKey"]'
+    );
+    const sameOriginClearRow = editFormSameOrigin.querySelector('.custom-provider-clear-key-row');
+    sameOriginUrlInput.value = 'http://localhost:11434/api/v1';
+    sameOriginUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(sameOriginApiKeyInput.placeholder).toBe(
+      'Leave blank to keep saved key, or enter a new key'
+    );
+    expect(sameOriginClearRow.hidden).toBe(false);
+
+    editFormSameOrigin.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      const updatedSame = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY].find(
+        (r) => r.id === apiRecord.id
+      );
+      expect(updatedSame?.endpointUrl).toBe('http://localhost:11434/api/v1/chat/completions');
+      expect(updatedSame?.hasApiKey).toBe(true);
+    });
+    expect(await secretsMod.getCustomApiKeyRecord(apiRecord.id)).toMatchObject({
+      apiKey: 'sk-secret-never-in-dom',
+      endpointUrl: 'http://localhost:11434/api/v1/chat/completions',
+    });
+
+    // 5b. Re-open Inline Edit, change Endpoint Origin (localhost:11434 -> openrouter.ai) with blank key input -> drops old key so it is never sent cross-origin!
+    chrome.permissions.remove.mockClear();
+    const sameOriginRow = document.querySelector(
+      `#provider-list .provider-item[data-provider-id="${apiRecord.id}"]`
+    );
+    sameOriginRow.querySelector('[data-action="edit-custom-provider"]').click();
+    const editForm2 = sameOriginRow.querySelector('form.custom-provider-inline-edit');
     editForm2.querySelector('input[name="customProviderName"]').value = 'OpenRouter DeepSeek';
-    editForm2.querySelector('input[name="customProviderUrl"]').value = 'https://openrouter.ai/api/v1';
+    const crossOriginUrlInput = editForm2.querySelector('input[name="customProviderUrl"]');
+    const crossOriginApiKeyInput = editForm2.querySelector('input[name="customProviderApiKey"]');
+    const crossOriginClearRow = editForm2.querySelector('.custom-provider-clear-key-row');
+    crossOriginUrlInput.value = 'https://openrouter.ai/api/v1';
+    crossOriginUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(crossOriginApiKeyInput.placeholder).toBe('sk-... (stored on this device only)');
+    expect(crossOriginClearRow.hidden).toBe(true);
     editForm2.querySelector('input[name="customProviderModel"]').value = 'deepseek/deepseek-v4.1-flash';
 
     let syncPermissionCalled = false;
@@ -865,16 +902,16 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       expect(updated?.name).toBe('OpenRouter DeepSeek');
       expect(updated?.endpointUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
       expect(updated?.model).toBe('deepseek/deepseek-v4.1-flash');
-      expect(updated?.hasApiKey).toBe(true);
+      expect(updated?.hasApiKey).toBe(false);
       expect(updated?.frameRuleId).toBe(apiRecord.frameRuleId);
     });
 
-    // Old unused origin permission (http://localhost:11434/*) was automatically revoked!
+    // Old unused origin permission (http://localhost:11434/*) was automatically revoked and old key deleted!
     expect(chrome.permissions.remove).toHaveBeenCalledWith({
       origins: ['http://localhost:11434/*'],
     });
     expect(grantedSet.has('https://openrouter.ai/*')).toBe(true);
-    expect(await secretsMod.getCustomApiKey(apiRecord.id)).toBe('sk-secret-never-in-dom');
+    expect(await secretsMod.getCustomApiKey(apiRecord.id)).toBeNull();
     expect(areas.sync.enabledProviders).toContain(apiRecord.id);
 
     await vi.waitFor(() => {
@@ -889,6 +926,25 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       expect(refreshedRow.querySelector('.provider-model-badge')?.textContent).toBe(
         'deepseek/deepseek-v4.1-flash'
       );
+    });
+
+    // 5c. Enter a new key for https://openrouter.ai/api/v1 so it is saved bound to the new origin
+    const crossOriginRow = document.querySelector(
+      `#provider-list .provider-item[data-provider-id="${apiRecord.id}"]`
+    );
+    crossOriginRow.querySelector('[data-action="edit-custom-provider"]').click();
+    const editFormNewKey = crossOriginRow.querySelector('form.custom-provider-inline-edit');
+    editFormNewKey.querySelector('input[name="customProviderApiKey"]').value = 'sk-or-new-bound';
+    editFormNewKey.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      const updatedWithKey = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY].find(
+        (r) => r.id === apiRecord.id
+      );
+      expect(updatedWithKey?.hasApiKey).toBe(true);
+    });
+    expect(await secretsMod.getCustomApiKeyRecord(apiRecord.id)).toMatchObject({
+      apiKey: 'sk-or-new-bound',
+      endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
     });
 
     // 6. Edit again to test mutual exclusion between typing a key and "Remove saved API key", then remove key
@@ -1816,6 +1872,29 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
         expect(signalOnC.aborted).toBe(true);
         expect(childDoc.getElementById('stop-stream-btn').hidden).toBe(true);
       });
+
+      // --- Part 4: Persistent keyRecord.endpointUrl mismatch surfaces endpoint_mismatch error ---
+      await saveCustomApiKey(PROVIDER_ID, 'key-bound-to-wrong-endpoint', {
+        endpointUrl: 'https://mismatch.example/v1/chat/completions',
+      });
+
+      childWinProxy.dispatchEvent({
+        data: {
+          context: 'multi-panel',
+          type: 'INJECT_TEXT',
+          text: 'Should show endpoint_mismatch error',
+          autoSubmit: true,
+        },
+        origin: EXTENSION_ORIGIN,
+        source: hostWin,
+      });
+
+      await vi.waitFor(() => {
+        const errorEls = childDoc.querySelectorAll('.turn-error:not([hidden])');
+        expect(errorEls).toHaveLength(1);
+        expect(errorEls[0].textContent).toContain('Stored API key does not match this endpoint URL');
+      });
+      expect(seenStreamCalls).toHaveLength(2);
 
       apiPanel.destroy();
       bridge.dispose();

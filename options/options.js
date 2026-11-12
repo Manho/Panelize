@@ -1160,7 +1160,38 @@ function createInlineEditFormState(descriptor) {
     errorMessageEl.hidden = false;
   };
 
+  const syncSavedApiKeyFieldState = () => {
+    if (!isApi) {
+      return;
+    }
+    const latestDescriptor = getProviderDescriptor(providerId) || descriptor;
+    const latestHasSavedKey = Boolean(latestDescriptor.apiConfig?.hasApiKey);
+    const savedOrigin = getCustomProviderOrigin(latestDescriptor);
+    const raw = (urlInput.value || '').trim();
+    let staysOnSavedOrigin = true;
+    if (raw.length > 0) {
+      const endpointCheck = validateCustomApiEndpointUrl(raw);
+      if (endpointCheck.ok && endpointCheck.origin && savedOrigin) {
+        staysOnSavedOrigin = endpointCheck.origin === savedOrigin;
+      } else if (!endpointCheck.ok) {
+        staysOnSavedOrigin = false;
+      }
+    }
+    const canKeepExistingKey = latestHasSavedKey && staysOnSavedOrigin;
+    if (apiKeyInput) {
+      apiKeyInput.placeholder = t(
+        canKeepExistingKey
+          ? 'placeholderCustomProviderApiKeyKeepExisting'
+          : 'placeholderCustomProviderApiKey'
+      );
+    }
+    if (clearKeyRow) {
+      clearKeyRow.hidden = !canKeepExistingKey;
+    }
+  };
+
   const updatePreview = () => {
+    syncSavedApiKeyFieldState();
     const raw = urlInput.value;
     if (!raw || raw.trim().length === 0) {
       originPreviewEl.textContent = '';
@@ -1541,8 +1572,10 @@ async function handleInlineEditSubmit(event, inlineState) {
     const targetId = editingDescriptor.id;
     const previousOrigin = getCustomProviderOrigin(editingDescriptor);
     const previousEndpointUrl = editingDescriptor.apiConfig?.endpointUrl || null;
+    const sameOriginAsSaved = Boolean(previousOrigin && previousOrigin === urlCheck.origin);
     let previousSecret = null;
     let secretMutated = false;
+    let providerRecordPersisted = false;
 
     try {
       let nextHasApiKey = false;
@@ -1554,9 +1587,11 @@ async function handleInlineEditSubmit(event, inlineState) {
           });
           secretMutated = true;
           nextHasApiKey = true;
-        } else if (inlineState.clearApiKeyCheckbox?.checked) {
-          await deleteCustomApiKey(targetId);
-          secretMutated = true;
+        } else if (inlineState.clearApiKeyCheckbox?.checked || !sameOriginAsSaved) {
+          if (previousSecret || editingDescriptor.apiConfig?.hasApiKey) {
+            await deleteCustomApiKey(targetId);
+            secretMutated = true;
+          }
           nextHasApiKey = false;
         } else {
           if (previousSecret && previousEndpointUrl !== urlCheck.endpointUrl) {
@@ -1584,6 +1619,7 @@ async function handleInlineEditSubmit(event, inlineState) {
               url: urlCheck.url
             }
       );
+      providerRecordPersisted = true;
 
       if (
         previousOrigin &&
@@ -1610,22 +1646,24 @@ async function handleInlineEditSubmit(event, inlineState) {
       focusCustomProviderEditButton(targetId);
       showStatus('success', t('msgCustomProviderUpdated', savedRecord.name));
     } catch (persistError) {
-      if (secretMutated) {
-        if (previousSecret) {
-          await saveCustomApiKey(targetId, previousSecret, {
-            endpointUrl: previousEndpointUrl
-          }).catch(() => {});
-        } else {
-          await deleteCustomApiKey(targetId).catch(() => {});
+      if (!providerRecordPersisted) {
+        if (secretMutated) {
+          if (previousSecret) {
+            await saveCustomApiKey(targetId, previousSecret, {
+              endpointUrl: previousEndpointUrl
+            }).catch(() => {});
+          } else {
+            await deleteCustomApiKey(targetId).catch(() => {});
+          }
         }
-      }
-      await loadCustomProviders().catch(() => {});
-      if (
-        previousOrigin !== urlCheck.origin &&
-        !isOriginUsedByAnyProvider(urlCheck.origin) &&
-        chrome?.permissions?.remove
-      ) {
-        await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+        await loadCustomProviders().catch(() => {});
+        if (
+          previousOrigin !== urlCheck.origin &&
+          !isOriginUsedByAnyProvider(urlCheck.origin) &&
+          chrome?.permissions?.remove
+        ) {
+          await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+        }
       }
       const message =
         persistError?.reason && CUSTOM_URL_REASON_MESSAGE_KEYS[persistError.reason]
@@ -1946,7 +1984,9 @@ export async function deleteCustomProviderEntry(providerId) {
   }
 
   await removeCustomProvider(providerId);
-  await deleteCustomApiKey(providerId).catch(() => {});
+  await deleteCustomApiKey(providerId).catch((error) => {
+    console.warn(`Failed to delete API key for ${providerId}:`, error);
+  });
 
   const syncState = await chrome.storage.sync.get({
     enabledProviders: DEFAULT_ENABLED_PROVIDERS,
