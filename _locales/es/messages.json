@@ -1110,5 +1110,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "IA personalizada actualizada: $1"
+  },
+  "btnLoadModels": {
+    "message": "Cargar modelos"
+  },
+  "btnRefreshModels": {
+    "message": "Actualizar"
+  },
+  "msgModelsLoading": {
+    "message": "Cargando…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 modelos"
+  },
+  "msgModelsNoMatch": {
+    "message": "Sin coincidencias — se usará el ID de modelo escrito"
+  },
+  "errModelsLoadFailed": {
+    "message": "No se pudo cargar la lista de modelos ($1). Puedes escribir el ID del modelo manualmente."
   }
 }

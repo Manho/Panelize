@@ -66,6 +66,264 @@ export function resolveChatCompletionsUrl(normalizedOrRawUrl) {
   return parsed.toString();
 }
 
+const MAX_MODEL_ID_CHARS = 200;
+
+/**
+ * Resolves a user-entered OpenAI-compatible base URL or full endpoint URL into
+ * the concrete `GET .../models` discovery endpoint URL.
+ *
+ * Examples:
+ * - `http://localhost:11434` -> `http://localhost:11434/v1/models`
+ * - `https://openrouter.ai/api/v1` -> `https://openrouter.ai/api/v1/models`
+ * - `https://openrouter.ai/api/v1/chat/completions` -> `https://openrouter.ai/api/v1/models`
+ * - `https://api.openai.com/v1/models` -> `https://api.openai.com/v1/models`
+ *
+ * @param {string} normalizedOrRawUrl
+ * @returns {string}
+ */
+export function resolveModelsUrl(normalizedOrRawUrl) {
+  if (typeof normalizedOrRawUrl !== 'string' || normalizedOrRawUrl.trim().length === 0) {
+    throw new ChatApiError('Invalid API endpoint URL', { code: 'invalid_endpoint' });
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(normalizedOrRawUrl.trim());
+  } catch {
+    throw new ChatApiError('Invalid API endpoint URL', { code: 'invalid_endpoint' });
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new ChatApiError('API endpoint URL must use http:// or https://', {
+      code: 'invalid_endpoint'
+    });
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new ChatApiError('API endpoint URL must not include embedded credentials', {
+      code: 'invalid_endpoint'
+    });
+  }
+
+  parsed.hash = '';
+
+  const trimmedPath = parsed.pathname.replace(/\/+$/, '');
+  if (trimmedPath === '') {
+    parsed.pathname = '/v1/models';
+  } else if (trimmedPath.endsWith('/chat/completions')) {
+    const prefix = trimmedPath.slice(0, -'/chat/completions'.length);
+    parsed.pathname = `${prefix || '/v1'}/models`;
+  } else if (trimmedPath.endsWith('/models')) {
+    parsed.pathname = trimmedPath;
+  } else {
+    parsed.pathname = `${trimmedPath}/models`;
+  }
+
+  return parsed.toString();
+}
+
+function normalizeModelCatalogEntries(parsedBody) {
+  const rawList = Array.isArray(parsedBody?.data)
+    ? parsedBody.data
+    : Array.isArray(parsedBody?.models)
+      ? parsedBody.models
+      : Array.isArray(parsedBody)
+        ? parsedBody
+        : null;
+
+  if (!rawList) {
+    throw new ChatApiError('Endpoint response did not contain a models array', {
+      code: 'invalid_models_payload'
+    });
+  }
+
+  const seenIds = new Set();
+  const models = [];
+
+  for (const item of rawList) {
+    let rawId = '';
+    let rawName = '';
+
+    if (typeof item === 'string') {
+      rawId = item.trim();
+    } else if (item && typeof item === 'object') {
+      if (typeof item.id === 'string' && item.id.trim().length > 0) {
+        rawId = item.id.trim();
+        rawName =
+          typeof item.name === 'string'
+            ? item.name.trim()
+            : typeof item.display_name === 'string'
+              ? item.display_name.trim()
+              : typeof item.displayName === 'string'
+                ? item.displayName.trim()
+                : '';
+      } else if (typeof item.model === 'string' && item.model.trim().length > 0) {
+        rawId = item.model.trim();
+        rawName = typeof item.name === 'string' ? item.name.trim() : '';
+      } else if (typeof item.name === 'string' && item.name.trim().length > 0) {
+        rawId = item.name.trim();
+        rawName =
+          typeof item.displayName === 'string'
+            ? item.displayName.trim()
+            : typeof item.display_name === 'string'
+              ? item.display_name.trim()
+              : '';
+      }
+    }
+
+    if (
+      rawId.length === 0 ||
+      rawId.length > MAX_MODEL_ID_CHARS ||
+      seenIds.has(rawId)
+    ) {
+      continue;
+    }
+
+    seenIds.add(rawId);
+    models.push({
+      id: rawId,
+      name: rawName && rawName !== rawId ? rawName : null
+    });
+  }
+
+  return models;
+}
+
+/**
+ * Fetches available models from an OpenAI-compatible `GET .../models` endpoint.
+ *
+ * @param {{
+ *   endpointUrl: string,
+ *   apiKey?: string,
+ *   signal?: AbortSignal,
+ *   timeoutMs?: number,
+ *   fetchImpl?: typeof fetch
+ * }} params
+ * @returns {Promise<{ modelsUrl: string, models: Array<{ id: string, name: string | null }> }>}
+ */
+export async function fetchOpenAiModels({
+  endpointUrl,
+  apiKey = '',
+  signal,
+  timeoutMs = 15000,
+  fetchImpl = globalThis.fetch
+}) {
+  if (typeof endpointUrl !== 'string' || endpointUrl.trim().length === 0) {
+    throw new ChatApiError('Endpoint URL is required', { code: 'invalid_endpoint' });
+  }
+  if (typeof fetchImpl !== 'function') {
+    throw new ChatApiError('Fetch API is unavailable', { code: 'network_error' });
+  }
+
+  const modelsUrl = resolveModelsUrl(endpointUrl.trim());
+  const trimmedKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+
+  const headers = {
+    Accept: 'application/json'
+  };
+  if (trimmedKey.length > 0) {
+    headers.Authorization = `Bearer ${trimmedKey}`;
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeoutId = null;
+
+  const onExternalAbort = () => {
+    controller.abort();
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      const abortErr = new Error('Request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+    signal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  let response;
+  try {
+    response = await fetchImpl(modelsUrl, {
+      method: 'GET',
+      headers,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new ChatApiError(
+        `Timed out loading models from ${new URL(modelsUrl).origin}`,
+        { code: 'timeout_error' }
+      );
+    }
+    if (error?.name === 'AbortError' || signal?.aborted) {
+      const abortErr = new Error('Request aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+    throw new ChatApiError(
+      `Network error reaching ${new URL(modelsUrl).origin}: ${error?.message || 'Failed to fetch'}`,
+      { code: 'network_error' }
+    );
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+    signal?.removeEventListener?.('abort', onExternalAbort);
+  }
+
+  if (!response.ok) {
+    let errorBody = '';
+    try {
+      errorBody = await response.text();
+    } catch {
+      errorBody = '';
+    }
+    throw buildHttpStatusError(response.status, response.statusText, errorBody);
+  }
+
+  let parsedBody;
+  if (typeof response.text === 'function') {
+    let bodyText = '';
+    try {
+      bodyText = await response.text();
+    } catch {
+      throw new ChatApiError('Failed to read models response body', {
+        code: 'invalid_models_payload'
+      });
+    }
+    try {
+      parsedBody = JSON.parse(bodyText);
+    } catch {
+      throw new ChatApiError('Endpoint did not return valid JSON for /models', {
+        code: 'invalid_models_json'
+      });
+    }
+  } else if (typeof response.json === 'function') {
+    try {
+      parsedBody = await response.json();
+    } catch {
+      throw new ChatApiError('Endpoint did not return valid JSON for /models', {
+        code: 'invalid_models_json'
+      });
+    }
+  } else {
+    throw new ChatApiError('Failed to read models response body', {
+      code: 'invalid_models_payload'
+    });
+  }
+
+  const models = normalizeModelCatalogEntries(parsedBody);
+  return { modelsUrl, models };
+}
+
 const SAFE_IMAGE_DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,/i;
 
 /**

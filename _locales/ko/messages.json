@@ -1110,5 +1110,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "사용자 지정 AI 업데이트됨: $1"
+  },
+  "btnLoadModels": {
+    "message": "모델 불러오기"
+  },
+  "btnRefreshModels": {
+    "message": "새로고침"
+  },
+  "msgModelsLoading": {
+    "message": "불러오는 중…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "모델 $1개"
+  },
+  "msgModelsNoMatch": {
+    "message": "일치하는 모델 없음 — 입력한 모델 ID를 그대로 사용할 수 있습니다"
+  },
+  "errModelsLoadFailed": {
+    "message": "모델 목록을 불러오지 못했습니다($1). 모델 ID를 직접 입력할 수 있습니다."
   }
 }

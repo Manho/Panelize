@@ -1110,5 +1110,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "Benutzerdefinierte KI aktualisiert: $1"
+  },
+  "btnLoadModels": {
+    "message": "Modelle laden"
+  },
+  "btnRefreshModels": {
+    "message": "Aktualisieren"
+  },
+  "msgModelsLoading": {
+    "message": "Wird geladen…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 Modelle"
+  },
+  "msgModelsNoMatch": {
+    "message": "Keine passenden Modelle — eingegebene Modell-ID wird übernommen"
+  },
+  "errModelsLoadFailed": {
+    "message": "Modellliste konnte nicht geladen werden ($1). Sie können die Modell-ID weiterhin manuell eingeben."
   }
 }

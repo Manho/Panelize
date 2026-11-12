@@ -1110,5 +1110,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "カスタムAIを更新しました: $1"
+  },
+  "btnLoadModels": {
+    "message": "モデル取得"
+  },
+  "btnRefreshModels": {
+    "message": "更新"
+  },
+  "msgModelsLoading": {
+    "message": "取得中…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 件のモデル"
+  },
+  "msgModelsNoMatch": {
+    "message": "一致するモデルがありません（入力したモデルIDをそのまま使用できます）"
+  },
+  "errModelsLoadFailed": {
+    "message": "モデル一覧を取得できませんでした（$1）。モデルIDは手動で直接入力できます。"
   }
 }

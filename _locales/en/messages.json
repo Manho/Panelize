@@ -1125,5 +1125,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "Updated custom AI: $1"
+  },
+  "btnLoadModels": {
+    "message": "Load models"
+  },
+  "btnRefreshModels": {
+    "message": "Refresh"
+  },
+  "msgModelsLoading": {
+    "message": "Loading…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 models"
+  },
+  "msgModelsNoMatch": {
+    "message": "No matching models — press Save/Add to use your typed Model ID"
+  },
+  "errModelsLoadFailed": {
+    "message": "Could not load model list ($1). You can still type a Model ID manually."
   }
 }

@@ -1104,5 +1104,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "已更新自定义AI：$1"
+  },
+  "btnLoadModels": {
+    "message": "加载模型"
+  },
+  "btnRefreshModels": {
+    "message": "刷新"
+  },
+  "msgModelsLoading": {
+    "message": "加载中…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1个模型"
+  },
+  "msgModelsNoMatch": {
+    "message": "无匹配模型，可直接保存当前输入的模型ID"
+  },
+  "errModelsLoadFailed": {
+    "message": "无法加载模型列表（$1），你仍可直接手动输入模型ID。"
   }
 }

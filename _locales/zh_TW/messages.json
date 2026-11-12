@@ -1104,5 +1104,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "已更新自訂AI：$1"
+  },
+  "btnLoadModels": {
+    "message": "載入模型"
+  },
+  "btnRefreshModels": {
+    "message": "重新整理"
+  },
+  "msgModelsLoading": {
+    "message": "載入中…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1個模型"
+  },
+  "msgModelsNoMatch": {
+    "message": "找不到相符模型，可直接儲存目前輸入的模型ID"
+  },
+  "errModelsLoadFailed": {
+    "message": "無法載入模型清單（$1），你仍可直接手動輸入模型ID。"
   }
 }

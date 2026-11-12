@@ -1110,5 +1110,23 @@
   },
   "msgCustomProviderUpdated": {
     "message": "Пользовательский ИИ обновлён: $1"
+  },
+  "btnLoadModels": {
+    "message": "Загрузить модели"
+  },
+  "btnRefreshModels": {
+    "message": "Обновить"
+  },
+  "msgModelsLoading": {
+    "message": "Загрузка…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "Моделей: $1"
+  },
+  "msgModelsNoMatch": {
+    "message": "Совпадений нет — будет использован введённый ID модели"
+  },
+  "errModelsLoadFailed": {
+    "message": "Не удалось загрузить список моделей ($1). Вы можете ввести ID модели вручную."
   }
 }

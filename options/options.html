@@ -140,6 +140,12 @@
             <div class="setting-label" data-i18n="labelEnabledProviders">Enabled Providers</div>
             <div class="setting-description" data-i18n="descEnabledProviders">Select which AI providers appear in Panelize</div>
           </div>
+          <div class="setting-control">
+            <button type="button" class="btn btn-secondary btn-jump-add-custom" id="jump-add-custom-provider-btn">
+              <span class="material-symbols-outlined" aria-hidden="true">add</span>
+              <span data-i18n="headingAddCustomProvider">Add custom AI</span>
+            </button>
+          </div>
         </div>
 
         <div class="provider-list" id="provider-list">
@@ -199,20 +205,42 @@
               </div>
               <div class="custom-provider-api-fields" id="custom-provider-api-fields" hidden>
                 <div class="custom-provider-field custom-provider-field-model">
-                  <label for="custom-provider-model" data-i18n="labelCustomProviderModel">Model ID</label>
-                  <input
-                    type="text"
-                    id="custom-provider-model"
-                    name="customProviderModel"
-                    maxlength="200"
-                    autocomplete="off"
-                    autocorrect="off"
-                    autocapitalize="none"
-                    spellcheck="false"
-                    data-i18n-placeholder="placeholderCustomProviderModel"
-                    placeholder="gpt-4o-mini or qwen2.5:14b"
-                    aria-describedby="custom-provider-error"
-                  />
+                  <div class="custom-provider-label-row">
+                    <label for="custom-provider-model" data-i18n="labelCustomProviderModel">Model ID</label>
+                    <span class="custom-provider-model-count" id="custom-provider-model-count" hidden></span>
+                  </div>
+                  <div class="custom-provider-model-wrap">
+                    <input
+                      type="text"
+                      id="custom-provider-model"
+                      name="customProviderModel"
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded="false"
+                      aria-controls="custom-provider-model-listbox"
+                      maxlength="200"
+                      autocomplete="off"
+                      autocorrect="off"
+                      autocapitalize="none"
+                      spellcheck="false"
+                      data-i18n-placeholder="placeholderCustomProviderModel"
+                      placeholder="gpt-4o-mini or qwen2.5:14b"
+                      aria-describedby="custom-provider-error"
+                    />
+                    <button
+                      type="button"
+                      class="btn-load-models"
+                      id="custom-provider-load-models-btn"
+                      data-i18n="btnLoadModels"
+                    >Load models</button>
+                    <div
+                      class="custom-provider-model-listbox"
+                      id="custom-provider-model-listbox"
+                      role="listbox"
+                      hidden
+                    ></div>
+                  </div>
+                  <p class="custom-provider-model-hint" id="custom-provider-model-hint" hidden></p>
                 </div>
                 <div class="custom-provider-field custom-provider-field-api-key">
                   <label for="custom-provider-api-key" data-i18n="labelCustomProviderApiKey">API Key (optional for local endpoints)</label>
@@ -237,19 +265,10 @@
                       data-i18n="btnShowApiKey"
                     >Show</button>
                   </div>
-                  <div class="custom-provider-clear-key-row" id="custom-provider-clear-key-row" hidden>
-                    <input
-                      type="checkbox"
-                      id="custom-provider-clear-api-key"
-                      name="clearCustomProviderApiKey"
-                    />
-                    <label for="custom-provider-clear-api-key" data-i18n="labelClearSavedApiKey">Remove saved API key</label>
-                  </div>
                 </div>
               </div>
               <div class="custom-provider-submit">
                 <button type="submit" class="btn btn-primary" id="custom-provider-add-btn" data-i18n="btnAddCustomProvider">Add</button>
-                <button type="button" class="btn btn-secondary" id="custom-provider-cancel-btn" data-i18n="btnCancel" hidden>Cancel</button>
               </div>
             </div>
             <p class="custom-provider-api-note" id="custom-provider-api-note" data-i18n="noteCustomApiLocalOnly" hidden>
