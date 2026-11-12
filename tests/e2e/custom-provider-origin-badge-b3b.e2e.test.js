@@ -280,19 +280,38 @@ test.describe('B3b origin badge start-truncation and host-tail/port visibility E
       expect(wideMetrics.lastCharInsideBadge).toBe(true);
       expect(wideMetrics.firstCharClippedAtStart).toBe(false);
 
-      // 2. Below 300px (240px): badge truncates at the START; port's last char stays inside visible box
-      await customPanel.evaluate((el) => {
-        el.style.width = '240px';
-      });
-      const below300Metrics = await measureBadgeGlyphs(mpPage, panelBadgeSelector, primaryPortTail);
-      expect(below300Metrics.monotonicLtr).toBe(true);
-      expect(below300Metrics.lastCharInsideBadge).toBe(true);
-      expect(below300Metrics.firstCharClippedAtStart).toBe(true);
-      expect(below300Metrics.tailRect.left).toBeGreaterThanOrEqual(below300Metrics.badgeLeft - 0.5);
-      expect(below300Metrics.tailRect.right).toBeLessThanOrEqual(below300Metrics.badgeRight + 0.5);
+      // 2. Below 300px (240px and 215px, still > 180px): badge truncates at the START; port's last char stays inside visible box
+      for (const midNarrowWidth of ['240px', '215px']) {
+        await customPanel.evaluate((el, w) => {
+          el.style.width = w;
+        }, midNarrowWidth);
+        const below300Metrics = await measureBadgeGlyphs(
+          mpPage,
+          panelBadgeSelector,
+          primaryPortTail
+        );
+        expect(below300Metrics.monotonicLtr).toBe(true);
+        expect(below300Metrics.lastCharInsideBadge).toBe(true);
+        if (midNarrowWidth === '215px') {
+          expect(below300Metrics.firstCharClippedAtStart).toBe(true);
+        } else {
+          expect(
+            below300Metrics.firstCharClippedAtStart ||
+              below300Metrics.firstChar.left >= below300Metrics.badgeLeft - 0.5
+          ).toBe(true);
+        }
+        expect(below300Metrics.tailRect.left).toBeGreaterThanOrEqual(
+          below300Metrics.badgeLeft - 0.5
+        );
+        expect(below300Metrics.tailRect.right).toBeLessThanOrEqual(
+          below300Metrics.badgeRight + 0.5
+        );
+      }
 
-      // 3. Below 180px (150px and 125px): port's last char stays inside the badge's visible box
-      for (const narrowWidth of ['150px', '125px']) {
+      // 3. Below 180px (150px, 125px, and 110px): @container (max-width: 180px) hides icon + 2 buttons
+      // and shrinks badge font-size to 10px (so on narrower Linux monospace glyphs 150px may fit the
+      // entire 22-char loopback origin without clipping, whereas 110px always start-clips).
+      for (const narrowWidth of ['150px', '125px', '110px']) {
         await customPanel.evaluate((el, w) => {
           el.style.width = w;
         }, narrowWidth);
@@ -303,7 +322,14 @@ test.describe('B3b origin badge start-truncation and host-tail/port visibility E
         );
         expect(below180Metrics.monotonicLtr).toBe(true);
         expect(below180Metrics.lastCharInsideBadge).toBe(true);
-        expect(below180Metrics.firstCharClippedAtStart).toBe(true);
+        if (narrowWidth === '110px') {
+          expect(below180Metrics.firstCharClippedAtStart).toBe(true);
+        } else {
+          expect(
+            below180Metrics.firstCharClippedAtStart ||
+              below180Metrics.firstChar.left >= below180Metrics.badgeLeft - 0.5
+          ).toBe(true);
+        }
         expect(below180Metrics.tailRect.left).toBeGreaterThanOrEqual(
           below180Metrics.badgeLeft - 0.5
         );
