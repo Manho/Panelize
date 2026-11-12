@@ -100,7 +100,13 @@ async function isStaticFrameRulesetEnabled() {
   return enabledRulesetIds.includes(STATIC_FRAME_RULESET_ID);
 }
 
-async function installScopedFrameRules(optionalRules, customRules, isManagedId, topDomains) {
+async function installScopedFrameRules(
+  optionalRules,
+  customRules,
+  customApiOriginRules,
+  isManagedId,
+  topDomains
+) {
   const scopedStaticRules = (await loadStaticFrameRules()).map((rule) => restrictRuleToTopDomains(
     { ...rule, id: SCOPED_RULE_ID_OFFSET + rule.id },
     topDomains
@@ -111,14 +117,18 @@ async function installScopedFrameRules(optionalRules, customRules, isManagedId, 
   const scopedOptionalRules = optionalRules.map((rule) => restrictRuleToTopDomains(rule, topDomains));
   const scopedCustomRules = customRules.map((rule) => restrictRuleToTopDomains(rule, topDomains));
   await applyManagedDynamicRules(
-    [...scopedStaticRules, ...scopedOptionalRules, ...scopedCustomRules],
+    [...scopedStaticRules, ...scopedOptionalRules, ...scopedCustomRules, ...customApiOriginRules],
     isManagedId
   );
 
   // Turn the unscoped ruleset off only once every scoped copy is in place, so
   // provider frames are never left without a rule.
   const installedRules = await chrome.declarativeNetRequest.getDynamicRules();
-  const allInstalled = [...scopedStaticRules, ...scopedCustomRules].every((desiredRule) => installedRules
+  const allInstalled = [
+    ...scopedStaticRules,
+    ...scopedCustomRules,
+    ...customApiOriginRules
+  ].every((desiredRule) => installedRules
     .some((installedRule) => isSameRule(installedRule, desiredRule)));
   if (!allInstalled) {
     throw new Error('Scoped frame header rules are not installed');
@@ -145,6 +155,7 @@ export async function syncFrameHeaderRulesWithStatus({
   optionalRules = [],
   optionalRuleIds = [],
   customRules = [],
+  customApiOriginRules = [],
   isManagedCustomRuleId = () => false
 } = {}) {
   const dnr = typeof chrome === 'undefined' ? null : chrome.declarativeNetRequest;
@@ -171,7 +182,13 @@ export async function syncFrameHeaderRulesWithStatus({
 
   if (topDomains) {
     try {
-      await installScopedFrameRules(optionalRules, customRules, isManagedId, topDomains);
+      await installScopedFrameRules(
+        optionalRules,
+        customRules,
+        customApiOriginRules,
+        isManagedId,
+        topDomains
+      );
       return { scopedInstalled: true };
     } catch (error) {
       console.warn('[Background] Keeping unscoped frame header rules:', error);
