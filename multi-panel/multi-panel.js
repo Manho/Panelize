@@ -20,10 +20,12 @@ import {
   hasProviderDescriptor
 } from '../modules/provider-registry.js';
 import {
+  getCustomProviderOrigin,
   isCustomProviderId,
   loadCustomProviders,
   subscribeCustomProvidersChanged
 } from '../modules/custom-providers.js';
+import { createCustomApiHostBridge } from '../modules/custom-api-bridge.js';
 import { preserveForeignCustomIds } from '../modules/provider-order.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
@@ -154,6 +156,11 @@ let tempChatCleanupTimerId = null;
 let tempChatPendingPanelIds = new Set();
 let tempChatButtonRestoreTimerId = null;
 let isTemporaryChatModeEnabled = false;
+let customApiHostBridge = null;
+
+function getResolvedHostTheme() {
+  return isDarkThemeActive() ? 'dark' : 'light';
+}
 
 function getThemeAwareProviderIcon(provider) {
   return getProviderIcon(provider);
@@ -238,11 +245,21 @@ function normalizeLayout(layout) {
   return '1x3';
 }
 
+function handleHostThemeChanged() {
+  refreshThemeAwareProviderIcons();
+  customApiHostBridge?.broadcastTheme(getResolvedHostTheme());
+}
+
 // ===== Initialization =====
 async function init() {
-  document.addEventListener('panelize:themechange', refreshThemeAwareProviderIcons);
+  document.addEventListener('panelize:themechange', handleHostThemeChanged);
   await loadCustomProviders();
   await applyTheme();
+  customApiHostBridge?.dispose();
+  customApiHostBridge = createCustomApiHostBridge({
+    getPanels: () => panels,
+    getTheme: getResolvedHostTheme
+  });
   await initializeLanguage();
   translatePage();
   registerRuntimeMessageListener();
@@ -388,6 +405,8 @@ function postNewChatToPanel(panel, { reloadUrl = null } = {}) {
     return;
   }
 
+  customApiHostBridge?.abortPanelStream(panel.id);
+
   if (!supportsInPageNewChat(panel.providerId)) {
     reloadPanelIframe(panel, reloadUrl || getProviderFrameUrl(panel.providerId));
     return;
@@ -408,6 +427,12 @@ function getProviderFrameUrl(providerId) {
   const provider = getProviderById(providerId);
   if (!provider) {
     return '';
+  }
+
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access === 'custom' && descriptor.customKind === 'api') {
+    const separator = provider.url.includes('?') ? '&' : '?';
+    return `${provider.url}${separator}theme=${encodeURIComponent(getResolvedHostTheme())}`;
   }
 
   if (isTemporaryChatModeEnabled && isUrlDrivenTemporaryChatProvider(providerId)) {
@@ -503,12 +528,17 @@ function populatePanelHeaderRight(headerRightEl, providerId) {
   if (isGoogleProvider(providerId)) {
     children.push(createGoogleModeSelectElement());
   }
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.topLevelUrl !== null) {
+    children.push(
+      createIconButtonWithMarkup(
+        'open-provider-top-level-btn',
+        getLocalizedText('openProviderTopLevelTitle', 'Open in new tab'),
+        '<span class="material-symbols-outlined">open_in_new</span>'
+      )
+    );
+  }
   children.push(
-    createIconButtonWithMarkup(
-      'open-provider-top-level-btn',
-      getLocalizedText('openProviderTopLevelTitle', 'Open in new tab'),
-      '<span class="material-symbols-outlined">open_in_new</span>'
-    ),
     createIconButtonWithMarkup(
       'refresh-panel-btn',
       'Refresh',
@@ -551,6 +581,7 @@ function showPanelLoadingState(panelEl, provider) {
 }
 
 function reloadPanelIframe(panel, overrideUrl = null) {
+  customApiHostBridge?.abortPanelStream(panel.id);
   const panelEl = document.getElementById(panel.id);
   const provider = getProviderById(panel.providerId);
   if (!panelEl || !provider) {
@@ -1377,14 +1408,6 @@ async function initializePanels() {
 
 // ===== Panel Management =====
 
-function getCustomProviderOrigin(providerId) {
-  const descriptor = getProviderDescriptor(providerId);
-  if (descriptor?.access !== 'custom') {
-    return null;
-  }
-  return descriptor.frameOrigins[0] || null;
-}
-
 function setOriginBadgeText(badgeEl, origin) {
   if (!badgeEl.shadowRoot) {
     const shadow = badgeEl.attachShadow({ mode: 'open' });
@@ -1569,6 +1592,7 @@ function removePanel(panelId, { saveConfig = true } = {}) {
   const panelIndex = panels.findIndex(p => p.id === panelId);
   if (panelIndex === -1) return;
 
+  customApiHostBridge?.abortPanelStream(panelId);
   clearTemporaryChatRetriesForPanel(panelId);
 
   const fitContainer = panels[panelIndex].iframe?.parentElement;
@@ -1625,6 +1649,7 @@ async function switchPanelProvider(panelId, newProviderId) {
   if (!panelEl) return;
 
   resetFillRetryState();
+  customApiHostBridge?.abortPanelStream(panelId);
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();

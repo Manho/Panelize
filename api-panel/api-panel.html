@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Panelize API Panel</title>
+  <link rel="stylesheet" href="../libs/material-symbols/material-symbols-outlined.css">
+  <link rel="stylesheet" href="api-panel.css">
+</head>
+<body>
+  <div class="api-panel-shell">
+    <div class="api-panel-meta-bar">
+      <div class="api-panel-meta-badges">
+        <span id="api-model-badge" class="api-model-badge" title="Model">model</span>
+        <span id="api-origin-badge" class="api-origin-badge" dir="ltr"></span>
+      </div>
+      <button
+        type="button"
+        id="local-new-chat-btn"
+        class="meta-icon-btn"
+        title="New conversation"
+        aria-label="New conversation"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">add_comment</span>
+      </button>
+    </div>
+
+    <main id="messages-scroll" class="messages-scroll" role="log" aria-live="polite" tabindex="0">
+      <div id="empty-state" class="empty-state">
+        <span class="material-symbols-outlined empty-state-icon" aria-hidden="true">swap_horiz</span>
+        <p id="empty-state-title" class="empty-state-title">Ready for side-by-side comparison</p>
+        <p class="empty-state-subtitle">
+          Send from the unified prompt bar below or type directly in this panel. Conversations stay in memory only for this session.
+        </p>
+      </div>
+      <div id="messages-list" class="messages-list" hidden></div>
+    </main>
+
+    <form id="composer-form" class="composer-form" novalidate>
+      <div id="staged-images" class="staged-images" hidden></div>
+      <div class="composer-row">
+        <input type="file" id="image-file-input" accept="image/*" multiple hidden>
+        <button
+          type="button"
+          id="attach-image-btn"
+          class="composer-icon-btn"
+          title="Attach image"
+          aria-label="Attach image"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>
+        </button>
+        <label for="composer-input" class="visually-hidden">Message</label>
+        <textarea
+          id="composer-input"
+          class="composer-input"
+          rows="1"
+          placeholder="Message this model..."
+          autocomplete="off"
+        ></textarea>
+        <button
+          type="button"
+          id="stop-stream-btn"
+          class="composer-action-btn stop-btn"
+          title="Stop generating"
+          aria-label="Stop generating"
+          hidden
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+        <button
+          type="submit"
+          id="send-msg-btn"
+          class="composer-action-btn send-btn"
+          title="Send message"
+          aria-label="Send message"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">send</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <script type="module" src="api-panel.js"></script>
+</body>
+</html>
