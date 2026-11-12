@@ -309,7 +309,7 @@ describe('temporary chat content script', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores Claude citation links whose URL contains /new when the sidebar is collapsed', async () => {
+  it('ignores Claude citation links and hidden collapsed-sidebar links, falling back to /new URL', async () => {
     window.happyDOM.setURL('https://claude.ai/chat/abc');
     document.body.innerHTML = `
       <main>
@@ -332,7 +332,31 @@ describe('temporary chat content script', () => {
     await wait(50);
 
     expect(citationSpy).not.toHaveBeenCalled();
-    expect(newChatSpy).toHaveBeenCalledTimes(1);
+    expect(newChatSpy).not.toHaveBeenCalled();
+    expect(window.location.href).toBe('https://claude.ai/new');
+  });
+
+  it('clicks a visible same-origin control in the new chat text fallback after skipping off-origin links', async () => {
+    window.happyDOM.setURL('https://claude.ai/chat/abc');
+    document.body.innerHTML = `
+      <main><a id="citation" href="https://example.com/start-new-chat">Start new chat guide</a></main>
+      <header><a id="claude-visible-new" href="/chat">Start new chat</a></header>
+    `;
+    const citation = document.getElementById('citation');
+    const visibleNew = document.getElementById('claude-visible-new');
+    markVisible(citation);
+    markVisible(visibleNew);
+
+    const citationSpy = vi.fn((event) => event.preventDefault());
+    const visibleNewSpy = vi.fn((event) => event.preventDefault());
+    citation.addEventListener('click', citationSpy);
+    visibleNew.addEventListener('click', visibleNewSpy);
+
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+    await wait(50);
+
+    expect(citationSpy).not.toHaveBeenCalled();
+    expect(visibleNewSpy).toHaveBeenCalledTimes(1);
   });
 
   it('never clicks an off-origin link from the new chat text fallback', async () => {

@@ -47,10 +47,9 @@ function handleEnterSwap(event) {
   const activeElement = document.activeElement;
 
   // Check if this is ChatGPT's input area:
-  // 1. Main prompt: contenteditable composer editor (see chatgpt-composer.js)
+  // 1. Main prompt: desktop contenteditable or narrow mobile textarea (see chatgpt-composer.js)
   // 2. Editing area: Regular textarea element (appears when editing old messages)
-  const isMainPrompt = Boolean(window.PanelizeChatgptComposer?.isEditor(activeElement)) &&
-                       activeElement.contentEditable === "true";
+  const isMainPrompt = Boolean(window.PanelizeChatgptComposer?.isEditor(activeElement));
 
   const isEditingTextarea = activeElement &&
                            activeElement.tagName === "TEXTAREA" &&
@@ -62,7 +61,7 @@ function handleEnterSwap(event) {
 
   // Check if this matches newline action
   if (matchesModifiers(event, enterKeyConfig.newlineModifiers)) {
-    if (isEditingTextarea) {
+    if (activeElement.tagName === "TEXTAREA") {
       // For regular textarea: let native Enter behavior work
       // Don't preventDefault - just return and let browser handle it
       return;

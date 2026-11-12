@@ -5,10 +5,12 @@
 (function() {
   'use strict';
 
-  // Current composer first; `#prompt-textarea` is the legacy layout, still
-  // served to some accounts.
+  // Current desktop composer first, narrow/mobile Octane composer second, and
+  // `#prompt-textarea` last for legacy layouts still served to some accounts.
   const EDITOR_SELECTORS = Object.freeze([
     'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"]',
+    'form[data-mobile-composer] textarea[data-mobile-composer-prompt]',
+    '#mobile-composer-prompt',
     '#prompt-textarea'
   ]);
 

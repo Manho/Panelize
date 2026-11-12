@@ -349,5 +349,114 @@ describe('chatgpt content script provider status', () => {
 
       expect(editor.textContent).toBe('Fresh prompt');
     });
+
+    it('never clicks hidden or offscreen Octane New chat links in narrow columns (avoids Home navigation identity unavailable crash)', async () => {
+      window.happyDOM.setURL('https://chatgpt.com/c/existing-thread');
+      window.sessionStorage.clear();
+      document.body.innerHTML = `
+        <aside style="display: none;">
+          <a id="desktop-octane-new-chat" data-octane-navigation-item="new_chat">New chat</a>
+        </aside>
+        <div id="mobile-drawer">
+          <a id="drawer-octane-new-chat" aria-label="New chat" data-octane-navigation-item="new_chat" style="visibility: hidden;">New chat</a>
+        </div>
+        <form data-chatgpt-composer data-composer-placement="thread">
+          <div data-composer-markdown contenteditable="true" class="ProseMirror"><p>narrow column draft</p></div>
+          <button type="submit" aria-label="Send">Send</button>
+        </form>
+      `;
+
+      const desktopLink = document.getElementById('desktop-octane-new-chat');
+      const drawerLink = document.getElementById('drawer-octane-new-chat');
+      const editor = document.querySelector('[data-composer-markdown]');
+      Object.defineProperty(editor, 'offsetParent', { configurable: true, get: () => document.body });
+      editor.getBoundingClientRect = () => ({ x: 16, y: 500, width: 420, height: 48, top: 500, left: 16, right: 436, bottom: 548 });
+
+      Object.defineProperty(desktopLink, 'offsetParent', { configurable: true, get: () => null });
+      desktopLink.getBoundingClientRect = () => ({ x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 });
+
+      Object.defineProperty(drawerLink, 'offsetParent', { configurable: true, get: () => document.body });
+      drawerLink.getBoundingClientRect = () => ({ x: -306, y: 8, width: 260, height: 40, top: 8, left: -306, right: -46, bottom: 48 });
+
+      const desktopClickSpy = vi.fn(() => {
+        throw new Error('Home navigation identity unavailable');
+      });
+      const drawerClickSpy = vi.fn(() => {
+        throw new Error('Home navigation identity unavailable');
+      });
+      desktopLink.addEventListener('click', desktopClickSpy);
+      drawerLink.addEventListener('click', drawerClickSpy);
+
+      dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+      await wait(50);
+
+      expect(desktopClickSpy).not.toHaveBeenCalled();
+      expect(drawerClickSpy).not.toHaveBeenCalled();
+      expect(editor.textContent).toBe('');
+      expect(window.sessionStorage.getItem('panelize:chatgpt-pending-new-chat-clear')).not.toBeNull();
+      expect(window.location.href).toBe('https://chatgpt.com/');
+    });
+
+    it('supports narrow ChatGPT Temporary chat header button aria-label', async () => {
+      window.happyDOM.setURL('https://chatgpt.com/');
+      const postMessageSpy = vi.fn();
+      Object.defineProperty(window, 'parent', {
+        configurable: true,
+        value: { postMessage: postMessageSpy },
+      });
+
+      document.body.innerHTML = '<button id="narrow-temp-chat" aria-label="Temporary chat"></button>';
+      const tempButton = document.getElementById('narrow-temp-chat');
+      Object.defineProperty(tempButton, 'offsetParent', { configurable: true, get: () => document.body });
+      tempButton.getBoundingClientRect = () => ({ x: 418, y: 8, width: 36, height: 36, top: 8, left: 418, right: 454, bottom: 44 });
+
+      const clickSpy = vi.fn();
+      tempButton.addEventListener('click', clickSpy);
+
+      dispatchMultiPanelMessage({ type: 'ENABLE_TEMP_CHAT', context: 'multi-panel' });
+      await wait(50);
+
+      expect(clickSpy).toHaveBeenCalledOnce();
+      expect(
+        postMessageSpy.mock.calls.some(
+          ([payload]) => payload?.type === 'PANELIZE_TEMP_CHAT_ENABLED' && payload?.provider === 'chatgpt'
+        )
+      ).toBe(true);
+    });
+
+    it('fills, clears, and sends narrow ChatGPT mobile-composer-prompt textarea', async () => {
+      window.happyDOM.setURL('https://chatgpt.com/');
+      document.body.innerHTML = `
+        <form data-mobile-composer>
+          <textarea id="mobile-composer-prompt" data-mobile-composer-prompt name="prompt"></textarea>
+          <button id="mobile-send" type="submit" aria-label="Send message"></button>
+        </form>
+      `;
+      const textarea = document.getElementById('mobile-composer-prompt');
+      const sendBtn = document.getElementById('mobile-send');
+      Object.defineProperty(textarea, 'offsetParent', { configurable: true, get: () => document.body });
+      Object.defineProperty(sendBtn, 'offsetParent', { configurable: true, get: () => document.body });
+      const sendClick = vi.fn((e) => e.preventDefault());
+      sendBtn.addEventListener('click', sendClick);
+
+      dispatchMultiPanelMessage({
+        type: 'INJECT_TEXT',
+        text: 'Narrow column prompt',
+        autoSubmit: true,
+        context: 'multi-panel',
+      });
+      await wait(600);
+
+      expect(textarea.value).toBe('Narrow column prompt');
+      expect(sendClick).toHaveBeenCalledOnce();
+
+      dispatchMultiPanelMessage({
+        type: 'CLEAR_INPUT',
+        context: 'multi-panel',
+      });
+      await wait(50);
+
+      expect(textarea.value).toBe('');
+    });
   });
 });

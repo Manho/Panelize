@@ -296,6 +296,7 @@
     chatgpt: [
       'button[data-testid="send-button"]',
       'button[aria-label="Send prompt"]',
+      'button[aria-label="Send message"]',
       'button[aria-label="Send"]',
       'form button[type="submit"]'
     ],
@@ -485,7 +486,10 @@
   };
 
   const TEMP_CHAT_BUTTON_SELECTORS = {
-    chatgpt: ['button[aria-label="Turn on temporary chat"]'],
+    chatgpt: [
+      'button[aria-label="Turn on temporary chat"]',
+      'button[aria-label="Temporary chat"]'
+    ],
     claude: ['button[aria-label="Use incognito"]'],
     gemini: [
       'button[data-test-id="temp-chat-button"]',
@@ -563,6 +567,13 @@
 
   function isVisibleElement(element) {
     if (!element || element.offsetParent === null || element.getAttribute('aria-hidden') === 'true') {
+      return false;
+    }
+
+    const style = typeof window.getComputedStyle === 'function'
+      ? window.getComputedStyle(element)
+      : null;
+    if (style && (style.visibility === 'hidden' || style.visibility === 'collapse' || style.display === 'none')) {
       return false;
     }
 
@@ -1937,11 +1948,50 @@
   // must clear it explicitly. The composer re-renders after navigation and may
   // restore the draft late, so clear a few times, stopping once the user types.
   const CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS = [0, 250, 600, 1200, 2000];
+  const CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY = 'panelize:chatgpt-pending-new-chat-clear';
+  const CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS = 15000;
   let chatgptNewChatClearTimerIds = [];
 
-  function cancelChatgptNewChatComposerClear() {
+  function clearPendingChatgptNewChatComposerClearMarker() {
+    try {
+      window.sessionStorage?.removeItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY);
+    } catch (error) {
+      // Ignore restricted storage contexts.
+    }
+  }
+
+  function markPendingChatgptNewChatComposerClear() {
+    try {
+      window.sessionStorage?.setItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY, String(Date.now()));
+    } catch (error) {
+      // Ignore restricted storage contexts.
+    }
+  }
+
+  function clearChatgptComposerDraftOnce() {
+    const editor = findProviderInput('chatgpt');
+    if (!editor) {
+      return;
+    }
+    const currentText = editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT'
+      ? (editor.value || '')
+      : (editor.textContent || '');
+    if (currentText.trim().length > 0) {
+      if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+        setFormControlValue(editor, '');
+      } else {
+        clearRichTextInput('chatgpt', editor);
+      }
+      console.log('[Text Injection] Cleared persisted ChatGPT draft after new chat');
+    }
+  }
+
+  function cancelChatgptNewChatComposerClear({ clearReloadMarker = true } = {}) {
     chatgptNewChatClearTimerIds.forEach(timerId => clearTimeout(timerId));
     chatgptNewChatClearTimerIds = [];
+    if (clearReloadMarker) {
+      clearPendingChatgptNewChatComposerClearMarker();
+    }
     document.removeEventListener('keydown', handleChatgptNewChatUserInput, true);
     document.removeEventListener('beforeinput', handleChatgptNewChatUserInput, true);
   }
@@ -1953,26 +2003,39 @@
   }
 
   function scheduleChatgptNewChatComposerClear() {
-    cancelChatgptNewChatComposerClear();
+    cancelChatgptNewChatComposerClear({ clearReloadMarker: false });
     document.addEventListener('keydown', handleChatgptNewChatUserInput, true);
     document.addEventListener('beforeinput', handleChatgptNewChatUserInput, true);
     CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.forEach((delay, index) => {
       const timerId = setTimeout(() => {
-        const editor = findProviderInput('chatgpt');
-        if (editor && editor.textContent.trim().length > 0) {
-          if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
-            setFormControlValue(editor, '');
-          } else {
-            clearRichTextInput('chatgpt', editor);
-          }
-          console.log('[Text Injection] Cleared persisted ChatGPT draft after new chat');
-        }
+        clearChatgptComposerDraftOnce();
         if (index === CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.length - 1) {
-          cancelChatgptNewChatComposerClear();
+          cancelChatgptNewChatComposerClear({ clearReloadMarker: false });
         }
       }, delay);
       chatgptNewChatClearTimerIds.push(timerId);
     });
+  }
+
+  function resumePendingChatgptNewChatComposerClear() {
+    if (window.self === window.top || detectProvider() !== 'chatgpt') {
+      return;
+    }
+
+    let rawTimestamp = null;
+    try {
+      rawTimestamp = window.sessionStorage?.getItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY) || null;
+      if (rawTimestamp !== null) {
+        window.sessionStorage?.removeItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY);
+      }
+    } catch (error) {
+      return;
+    }
+
+    const timestamp = Number(rawTimestamp);
+    if (Number.isFinite(timestamp) && Date.now() - timestamp < CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS) {
+      scheduleChatgptNewChatComposerClear();
+    }
   }
 
   // Find and click new chat button
@@ -2004,11 +2067,13 @@
       return true;
     }
 
-    // Fallback: Try to find any link or button containing "new" text
+    // Fallback: Try to find any visible, enabled link or button containing "new" text.
+    // Never click hidden or collapsed sidebar controls (e.g. narrow ChatGPT's unmounted
+    // desktop Octane link, which throws "Home navigation identity unavailable").
     try {
       const allButtons = document.querySelectorAll('button, a, div[role="button"]');
       for (const elem of allButtons) {
-        if (!isSameOriginNewChatCandidate(elem)) {
+        if (!isVisibleElement(elem) || !isElementEnabled(elem) || !isSameOriginNewChatCandidate(elem)) {
           continue;
         }
 
@@ -2040,11 +2105,18 @@
     // Ultimate fallback: navigate to new chat URL
     const fallbackUrl = NEW_CHAT_URLS[provider];
     if (fallbackUrl) {
-      console.log('[Text Injection] Using fallback URL for new chat:', fallbackUrl);
-      if (fallbackUrl.startsWith('http')) {
-        window.location.href = fallbackUrl;
+      const resolvedFallbackUrl = (provider === 'chatgpt' && options?.temporaryChat === true)
+        ? 'https://chatgpt.com/?temporary-chat=true'
+        : fallbackUrl;
+      if (provider === 'chatgpt') {
+        clearChatgptComposerDraftOnce();
+        markPendingChatgptNewChatComposerClear();
+      }
+      console.log('[Text Injection] Using fallback URL for new chat:', resolvedFallbackUrl);
+      if (resolvedFallbackUrl.startsWith('http')) {
+        window.location.href = resolvedFallbackUrl;
       } else {
-        window.location.href = window.location.origin + fallbackUrl;
+        window.location.href = window.location.origin + resolvedFallbackUrl;
       }
       return true;
     }
@@ -5012,5 +5084,6 @@
   // Listen for messages from the multi-panel host
   setupProviderLocationReporting();
   setupPageWidthReporting();
+  resumePendingChatgptNewChatComposerClear();
   window.addEventListener('message', handleTextInjection);
 })();
