@@ -73,6 +73,10 @@ Panelize是一个免费、开源的Chrome / Edge扩展：一次输入，同时�
 - **OpenAI兼容API：** 直连本地模型服务（`Ollama`免配CORS开箱即连、`LM Studio`、`vLLM`）或云端接口（`OpenRouter`、`DeepSeek API`、硅基流动等），支持一键拉取模型列表、流式Markdown/代码渲染、图片附件与仅存本地的API Key。
 - 详细配置步骤请查看[自定义AI与API接入指南](https://panelize.dev/zh/guides/add-custom-ai-and-api/)。
 
+<p align="center">
+  <img src="assets/screenshots/custom-hybrid.png" alt="Panelize混合同屏对比：ChatGPT官方网页、Perplexity自定义网站与本地Ollama API并排显示" width="800">
+</p>
+
 ### 📸 分享对比图片
 
 支持将多模型并排回答一键导出为高清对比图（复制到剪贴板或下载PNG），可编辑顶部提问标题，并支持**当前视图**或自动拼接完整回答的**完整回答**模式。

@@ -73,6 +73,10 @@ Panelize は、1つのプロンプトを ChatGPT、Claude、Gemini、Grok、Deep
 - **OpenAI 互換 API：** ローカルサーバー（CORS 設定不要の `Ollama`、`LM Studio`、`vLLM`）やクラウド API（`OpenRouter`、`DeepSeek API`、`OpenAI`）に接続し、モデル一覧の取得、ストリーミング Markdown / コード表示、画像添付、ローカル専用の API キー保存に対応。
 - 詳しい手順は [カスタム AI & API セットアップガイド](https://panelize.dev/guides/add-custom-ai-and-api/) をご覧ください。
 
+<p align="center">
+  <img src="assets/screenshots/custom-hybrid.png" alt="Panelize ハイブリッド比較：ChatGPT Web、カスタム Perplexity サイト、ローカル Ollama API を並べて比較" width="800">
+</p>
+
 ### 📸 比較結果を画像として共有
 
 並べた比較結果を1枚の画像（クリップボードへコピー / PNG ダウンロード）として出力できます。プロンプト見出しの編集に対応し、**現在の表示**だけでなく最新プロンプト以降の回答をつなぎ合わせる**回答全体**モードも選べます。

@@ -73,6 +73,10 @@ Don't wait for a built-in update to try a new model or service:
 - **OpenAI-Compatible APIs:** Connect local servers (`Ollama` works out of the box with zero CORS setup, `LM Studio`, `vLLM`) or cloud endpoints (`OpenRouter`, `DeepSeek API`, `OpenAI`) with one-click model loading, streaming Markdown/code rendering, image attachments, and local-only API key storage.
 - Read the [Custom AI & API Setup Guide](https://panelize.dev/guides/add-custom-ai-and-api/) for step-by-step examples.
 
+<p align="center">
+  <img src="assets/screenshots/custom-hybrid.png" alt="Panelize hybrid comparison: ChatGPT web session, Perplexity custom website, and local Ollama API side by side" width="800">
+</p>
+
 ### 📸 Share Comparison as Image
 
 Turn any multi-model comparison into a clean, shareable image to copy to your clipboard or download as PNG, complete with an editable prompt header. Capture the **Current view** or stitch **Full answers** from your latest prompt down.
