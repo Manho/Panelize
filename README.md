@@ -30,7 +30,7 @@
 </p>
 
 <p align="center">
-  <sub>Free · No API keys · Works with your existing AI logins</sub><br>
+  <sub>Free · No API keys required · Works with your existing AI logins + custom AI sites &amp; APIs</sub><br>
   <sub>If Panelize saves you time, a ⭐ on GitHub helps other people find it.</sub>
 </p>
 
@@ -38,7 +38,9 @@
 
 ## Why Panelize?
 
-Panelize is a free, open-source Chrome and Edge extension that sends one prompt to ChatGPT, Claude, Gemini, Grok, DeepSeek and other AI chatbots at the same time and shows their answers side by side in one window. It loads each provider's real website with your existing login, so there are no API keys and no extra subscription.
+Panelize is a free, open-source Chrome and Edge extension that sends one prompt to ChatGPT, Claude, Gemini, Grok, DeepSeek and other AI chatbots at the same time and shows their answers side by side in one window. Out of the box, it loads each provider's real website with your existing login—no API keys and no extra subscription required.
+
+Want even more? You can also add almost any AI chat website (`Perplexity`, `Mistral Le Chat`, `Poe`, `HuggingChat`, `muse.ai`, `Open WebUI`) or connect local and cloud OpenAI-compatible APIs (`Ollama` with zero CORS setup, `LM Studio`, `vLLM`, `OpenRouter`, `DeepSeek API`) right alongside your built-in panels.
 
 Ever found yourself copying the same prompt across multiple AI tabs just to compare answers? Panelize eliminates that workflow entirely.
 
@@ -54,19 +56,30 @@ Ever found yourself copying the same prompt across multiple AI tabs just to comp
 
 ### 🎯 Ask Once, Compare All
 
-Type your question once and send it to ChatGPT, Claude, Gemini, Grok, Doubao, DeepSeek, Kimi, Qwen, Zhipu (China), Z.ai (Global), Yuanbao, Google AI Studio, and Google simultaneously. See which AI gives you the best answer—no tab switching required.
+Type your question once and send it to ChatGPT, Claude, Gemini, Grok, Doubao, DeepSeek, Kimi, Qwen, Zhipu (China), Z.ai (Global), Yuanbao, Google AI Studio, Google, and your own custom AI sites or APIs simultaneously. See which AI gives you the best answer—no tab switching required.
 
 ### 📐 Flexible Layouts
 
-Choose from 22 different layouts to fit your workflow. Need a quick 2-way comparison? Use 1×2. Deep research across 12 models? Try 1×12 or 2×6. The choice is yours.
+Choose from 22 different layouts (with draggable resizable columns) to fit your workflow. Need a quick 2-way comparison? Use 1×2. Deep research across 12 models? Try 1×12 or 2×6. The choice is yours.
 
 <p align="center">
   <img src="assets/screenshots/select-layout.png" alt="Layout Selection" width="600">
 </p>
 
-### ⚡ Zero Setup
+### 🧩 Custom AI Websites & OpenAI-Compatible APIs
 
-No API keys. Log into your AI accounts normally, and Panelize uses those sessions.
+Don't wait for a built-in update to try a new model or service:
+- **Any AI Website or Self-Hosted Web UI:** Paste URLs such as `Perplexity`, `Mistral Le Chat`, `Poe`, `HuggingChat`, `muse.ai`, `Open WebUI`, `LibreChat`, or `LobeChat` with scoped per-origin permissions and generic composer support.
+- **OpenAI-Compatible APIs:** Connect local servers (`Ollama` works out of the box with zero CORS setup, `LM Studio`, `vLLM`) or cloud endpoints (`OpenRouter`, `DeepSeek API`, `OpenAI`) with one-click model loading, streaming Markdown/code rendering, image attachments, and local-only API key storage.
+- Read the [Custom AI & API Setup Guide](https://panelize.dev/guides/add-custom-ai-and-api/) for step-by-step examples.
+
+### 📸 Share Comparison as Image
+
+Turn any multi-model comparison into a clean, shareable image to copy to your clipboard or download as PNG, complete with an editable prompt header. Capture the **Current view** or stitch **Full answers** from your latest prompt down.
+
+### ⚡ Zero Setup Out of the Box
+
+No API keys required to start. Log into your favorite AI websites normally and Panelize uses your existing browser sessions—then add custom AI sites or local/cloud APIs only if and when you want them.
 
 ### 📚 Prompt Library
 
@@ -75,13 +88,16 @@ Save your best prompts and reuse them across all providers. Supports variables l
 ### 🔒 Privacy First
 
 - One-click privacy mode across supported providers
-- All data stays in your browser—nothing leaves your machine
+- Scoped per-origin runtime permissions when adding custom AI websites or APIs
+- All data (including optional custom API keys) stays in local browser storage—nothing is sent to Panelize servers
 - No tracking, no analytics, no data collection
 - Open source—review the code yourself
 
 ---
 
 ## Supported AI Providers
+
+### Built-in Providers
 
 <table align="center">
   <tr>
@@ -109,6 +125,13 @@ Save your best prompts and reuse them across all providers. Supports variables l
     <td></td>
   </tr>
 </table>
+
+### + Custom AI Websites & OpenAI-Compatible APIs
+
+Add in **Settings → Add custom AI** (or click **Add custom AI / More providers…** inside any `+` or `⇄` panel menu):
+- **AI Websites:** `Perplexity`, `Mistral Le Chat`, `Poe`, `HuggingChat`, `muse.ai`, and other web chat apps
+- **Local / Self-hosted Web UIs:** `Open WebUI`, `LibreChat`, `LobeChat`, `Dify`, LAN/team chat portals
+- **OpenAI-Compatible APIs:** `Ollama` (zero CORS setup), `LM Studio`, `vLLM`, `OpenRouter`, `DeepSeek API`, `OpenAI`, and any `/v1/chat/completions` service — [Setup guide ↗](https://panelize.dev/guides/add-custom-ai-and-api/)
 
 <p align="center">
   <img src="assets/screenshots/settings.png" alt="Settings & Providers" width="700">
@@ -142,10 +165,10 @@ Save your best prompts and reuse them across all providers. Supports variables l
 
 1. **Log into your AI accounts** — Visit ChatGPT, Claude, etc. and log in as usual
 2. **Press `Cmd/Ctrl + Shift + E`** — Opens the Panelize window
-3. **Pick a layout** — Choose how many AI panels you want
+3. **Pick a layout (or add custom AIs)** — Choose your panels, or click `+` → **Add custom AI / More providers…** to add Perplexity, Ollama, OpenRouter, and more
 4. **Type and send** — Your prompt goes to all panels at once
 
-That's it. No accounts to create, no API keys to configure.
+That's it. No accounts to create, no API keys required to get started.
 
 ---
 
@@ -166,13 +189,16 @@ Customize shortcuts at `chrome://extensions/shortcuts`
 → Install Panelize, open it with `Cmd/Ctrl + Shift + E`, pick the providers and a layout, type your prompt and click **Send All**. Each answer appears in its own panel.
 
 **Is Panelize free? Do I need API keys?**
-→ Yes, it is free and MIT-licensed. No API keys are needed: each panel is the provider's own website, signed in with your normal account. Paid plans such as ChatGPT Plus or Claude Pro work as usual.
+→ Yes, Panelize is free and MIT-licensed. No API keys are needed for built-in AI chatbots or custom AI websites: each panel loads the provider's own website with your normal account (paid plans such as ChatGPT Plus or Claude Pro work as usual). API keys are only used if you optionally connect a cloud OpenAI-compatible API endpoint (such as OpenRouter or DeepSeek API), and local servers like Ollama need no key at all.
+
+**Can I add Perplexity, local Ollama, or other AI sites?**
+→ Yes! Open **Settings → Add custom AI** (or click **Add custom AI / More providers…** in the `+` or `⇄` panel menu) and choose **AI Website** (e.g. `Perplexity`, `Mistral Le Chat`, `Poe`, `HuggingChat`, `muse.ai`), **Local / Self-hosted Web** (`Open WebUI`, `LibreChat`, `LobeChat`), or **OpenAI-compatible API** (`Ollama` with zero CORS configuration, `LM Studio`, `vLLM`, `OpenRouter`, `DeepSeek API`). See the [Custom AI & API Setup Guide](https://panelize.dev/guides/add-custom-ai-and-api/).
 
 **How is Panelize different from ChatHub or ChatALL?**
-→ ChatHub and ChatALL put many models behind one chat interface. Panelize shows each provider's real website instead, so you keep your own plans, model pickers and chat history. See [Panelize vs ChatHub](https://panelize.dev/alternatives/chathub/).
+→ ChatHub and ChatALL put many models behind one chat interface. Panelize shows each provider's real website so you keep your own plans, model pickers and chat history—while also letting you mix in custom AI websites and OpenAI-compatible API panels side by side. See [Panelize vs ChatHub](https://panelize.dev/alternatives/chathub/).
 
 **Which AI chatbots are supported?**
-→ ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Qwen, Doubao, Zhipu, Z.ai, Yuanbao, Google AI Studio and Google AI Mode. See [Supported AI Providers](#supported-ai-providers).
+→ Built-in support includes ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Qwen, Doubao, Zhipu, Z.ai, Yuanbao, Google AI Studio and Google AI Mode, plus custom AI chat websites and OpenAI-compatible APIs. See [Supported AI Providers](#supported-ai-providers).
 
 ## Troubleshooting
 

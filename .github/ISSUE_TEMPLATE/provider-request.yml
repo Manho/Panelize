@@ -1,0 +1,71 @@
+name: AI Provider Compatibility / Request
+description: Report an AI website or API that fails to frame or work with Send All in Custom AI
+title: "[Provider]: "
+labels: ["enhancement", "provider"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 💡 Tip: You can already add almost any AI website or API right now!
+
+        Starting in **Panelize 2.2**, you do **not** need to wait for a built-in release to use most AI services. Open **Settings → Add custom AI** (or click **Add custom AI / More providers…** inside any `+` or `⇄` panel menu) to add:
+        - **AI Websites:** `Perplexity`, `Mistral Le Chat`, `Poe`, `HuggingChat`, `muse.ai`, and most web chat apps
+        - **Local / Self-hosted Web UIs:** `Open WebUI`, `LibreChat`, `LobeChat`, `Dify`
+        - **OpenAI-compatible APIs:** `Ollama` (works with zero CORS setup), `LM Studio`, `vLLM`, `OpenRouter`, `DeepSeek API`, `OpenAI`
+
+        📖 **Step-by-step instructions:** [Custom AI & API Setup Guide](https://panelize.dev/guides/add-custom-ai-and-api/)
+
+        ---
+        **Please submit this form only if** you tried adding the service via **Settings → Add custom AI** and:
+        1. The website refuses to load or stay signed in inside a panel, **or**
+        2. **Send All** / **New Chat** cannot find the site's prompt input or send button, **or**
+        3. It needs dedicated built-in integration (e.g. multi-origin OAuth login, image upload adapter, or temporary chat toggle).
+
+  - type: input
+    id: provider-name
+    attributes:
+      label: AI Service Name
+      description: Name of the AI chatbot or platform.
+      placeholder: e.g. Perplexity, Mistral Le Chat, Pi
+    validations:
+      required: true
+
+  - type: input
+    id: provider-url
+    attributes:
+      label: Chat Page or API Endpoint URL
+      description: Exact URL where the chat composer or API lives.
+      placeholder: https://...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: custom-ai-result
+    attributes:
+      label: What happened when you added it in Settings → Add custom AI?
+      options:
+        - Page loads, but Send All does not fill or submit the prompt
+        - Page refuses to load / shows a blank or blocked iframe
+        - Login / session does not persist inside the panel
+        - Image attachment or New Chat does not work
+        - OpenAI-compatible API endpoint / streaming issue
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details & Reproduction Notes
+      description: Share any error messages, login requirements (free vs paid account), or DOM details that can help us reproduce it.
+      placeholder: Describe what happens when opening the panel and clicking Send All...
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Panelize & Browser Version
+      placeholder: e.g. Panelize 2.2.0, Chrome 136 on macOS
+    validations:
+      required: false
