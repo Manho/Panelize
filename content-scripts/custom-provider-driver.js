@@ -200,8 +200,14 @@
               if (!Array.isArray(requests)) {
                 continue;
               }
+              const nonDocumentAssetRe =
+                /\.(?:js|mjs|cjs|css|map|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|ico|mp3|mp4|webm|ogg|wav|wasm)(?:$|[?#])/i;
               for (let j = 0; j < requests.length; j += 1) {
                 const req = requests[j];
+                const reqUrl = typeof req === 'string' ? req : (req && req.url) || '';
+                if (reqUrl && nonDocumentAssetRe.test(reqUrl)) {
+                  continue;
+                }
                 const res = await cache.match(req);
                 if (hasFramingRefusalHeaders(res) && typeof cache.delete === 'function') {
                   if (await cache.delete(req)) {
@@ -1397,6 +1403,9 @@
       setTimeout(() => {
         void sanitizeFramingServiceWorkerAndCaches();
       }, 800);
+      setTimeout(() => {
+        void sanitizeFramingServiceWorkerAndCaches();
+      }, 3500);
     };
     window.addEventListener('load', resanitize, { once: true });
     try {

@@ -32,16 +32,29 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+function isBypassedQueryRoute(url) {
+  return (
+    (url.pathname === '/' || url.pathname === '/sidecar' || url.pathname === '/inline-assistant') &&
+    url.searchParams.has('q')
+  );
+}
+
 function isHtmlNavigationRoute(request) {
   const url = new URL(request.url);
-  if (url.searchParams.has('q') || url.pathname === '/new-tab-page') {
-    return false;
-  }
-  if (/\\/[^/?]+\\.[a-z0-9]+$/i.test(url.pathname) && url.pathname !== '/spa/index.html') {
+  if (isBypassedQueryRoute(url) || url.pathname === '/new-tab-page') {
     return false;
   }
   const accept = request.headers.get('accept') || '';
   return request.destination === 'document' || accept.includes('text/html');
+}
+
+function resolveCacheKeyUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  url.search = '';
+  if (url.pathname === '/' || url.pathname === '/spa/index.html') {
+    url.pathname = '/spa/index.html';
+  }
+  return url.toString();
 }
 
 self.addEventListener('fetch', (event) => {
@@ -51,12 +64,13 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
-    const appShellRequest = new Request(new URL('/spa/index.html', self.location.origin).href);
-    const cached = await cache.match(appShellRequest);
-    const networkPromise = fetch(appShellRequest)
+    const cacheKey = resolveCacheKeyUrl(event.request.url);
+    const cached = await cache.match(cacheKey);
+    const fetchTarget = cacheKey.endsWith('/spa/index.html') ? cacheKey : event.request;
+    const networkPromise = fetch(fetchTarget)
       .then((response) => {
         if (response && response.ok && response.headers.get('x-ppl-sw') === '1') {
-          cache.put(appShellRequest, response.clone());
+          cache.put(cacheKey, response.clone());
         }
         return response;
       })

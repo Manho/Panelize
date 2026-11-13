@@ -155,14 +155,16 @@ describe('modules/custom-sw-recovery.js', () => {
       const probeUrl = new URL(probe.getAttribute('src'));
       expect(probeUrl.origin).toBe('https://www.perplexity.ai');
       expect(probeUrl.pathname).toBe('/robots.txt');
-      expect(probeUrl.searchParams.get('q')).toBe('1');
+      expect(probe.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts');
       const nonce = probeUrl.searchParams.get(CUSTOM_SW_RECOVERY_PARAM);
       expect(nonce).toBeTruthy();
 
-      // Verify scoped session DNR rule is active during probe
+      // Verify nonce-anchored session DNR rule is active across all resourceTypes (including SW internal fetch)
       expect(sessionRulesState).toHaveLength(1);
-      expect(sessionRulesState[0].condition.topDomains).toEqual(['ext123']);
-      expect(sessionRulesState[0].condition.resourceTypes).toEqual(['sub_frame']);
+      expect(sessionRulesState[0].condition.urlFilter).toBe(`|${probeUrl.href}`);
+      expect(sessionRulesState[0].condition.resourceTypes).toContain('sub_frame');
+      expect(sessionRulesState[0].condition.resourceTypes).toContain('other');
+      expect(sessionRulesState[0].condition.resourceTypes).toContain('xmlhttprequest');
 
       setTimeout(() => {
         win.dispatchEvent(

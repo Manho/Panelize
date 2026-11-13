@@ -1,16 +1,22 @@
 /**
  * Automatic recovery for custom web AI panels whose Service Worker serves
  * cached HTML responses with framing-refusal headers (X-Frame-Options /
- * CSP frame-ancestors) from CacheStorage, bypassing declarativeNetRequest
- * sub_frame response-header rules.
+ * CSP frame-ancestors) from CacheStorage, or intercepts subframe navigations
+ * via `event.respondWith(fetch(event.request))`, bypassing `sub_frame`
+ * declarativeNetRequest response-header rules.
  *
  * Security invariants:
- * 1. Temporary probe session rules are strictly scoped to `topDomains: [extensionId]`
- *    and `resourceTypes: ['sub_frame']` on the exact `/robots.txt` probe prefix,
- *    never exposing framing on third-party websites.
- * 2. Probe responses receive `Content-Security-Policy: default-src 'none'; script-src 'none'; object-src 'none'`
- *    so zero remote page scripts or subresources can run while our ISOLATED-world
- *    content script unregisters blocking Service Workers and purges poisoned CacheStorage entries.
+ * 1. Each recovery probe generates a fresh 128-bit CSPRNG nonce (`crypto.getRandomValues`)
+ *    and anchors the temporary session DNR rule strictly to the exact one-time probe URL
+ *    (`|${origin}/robots.txt?__panelize_sw_recover=${nonce}`), removing the rule immediately
+ *    in `finally`. No third-party origin can know or guess the in-flight nonce.
+ * 2. Across all DNR resourceTypes (covering both direct browser `sub_frame` loads and
+ *    Service-Worker-internal `other`/`xmlhttprequest` passthrough `fetch()` calls where
+ *    `tabId === -1`), the probe response receives
+ *    `Content-Security-Policy: default-src 'none'; script-src 'none'; object-src 'none'`
+ *    and runs inside `<iframe sandbox="allow-same-origin allow-scripts">`, so zero remote
+ *    page scripts or subresources can execute while our ISOLATED-world content script
+ *    unregisters blocking Service Workers and purges poisoned CacheStorage entries.
  * 3. Bounded to at most one recovery attempt per host-initiated panel navigation,
  *    so genuinely unreachable servers never loop.
  */
@@ -24,9 +30,26 @@ const MULTI_PANEL_CONTEXT = 'multi-panel';
 const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
 const RECOVERY_RULE_ID_BASE = 29900;
 const RECOVERY_RULE_POOL_SIZE = 40;
-const DEFAULT_PING_TIMEOUT_MS = 120;
-const DEFAULT_PROBE_TIMEOUT_MS = 3500;
-const PROBE_POST_LOAD_SETTLE_MS = 350;
+const DEFAULT_PING_TIMEOUT_MS = 250;
+const DEFAULT_PROBE_TIMEOUT_MS = 4000;
+const PROBE_POST_LOAD_SETTLE_MS = 1500;
+const FALLBACK_DNR_RESOURCE_TYPES = Object.freeze([
+  'main_frame',
+  'sub_frame',
+  'stylesheet',
+  'script',
+  'image',
+  'font',
+  'object',
+  'xmlhttprequest',
+  'ping',
+  'csp_report',
+  'media',
+  'websocket',
+  'webtransport',
+  'webbundle',
+  'other',
+]);
 
 let recoveryRuleCounter = 0;
 let recoveryPingCounter = 0;
@@ -45,7 +68,25 @@ function nextPingRequestId() {
 
 function nextRecoveryNonce() {
   recoveryNonceCounter += 1;
-  return `${Date.now()}-${recoveryNonceCounter}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      return `${hex}-${recoveryNonceCounter}`;
+    }
+  } catch {
+    // Fallback for test environments without Web Crypto.
+  }
+  return `${Date.now()}-${recoveryNonceCounter}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getAllDnrResourceTypes(dnr) {
+  const values =
+    dnr?.ResourceType && typeof dnr.ResourceType === 'object'
+      ? Object.values(dnr.ResourceType).filter((item) => typeof item === 'string' && item.length > 0)
+      : [];
+  return values.length > 0 ? values : [...FALLBACK_DNR_RESOURCE_TYPES];
 }
 
 export function createCustomSwRecoveryController({
@@ -145,8 +186,7 @@ export function createCustomSwRecoveryController({
     }
 
     const nonce = nextRecoveryNonce();
-    const probePrefix = `${origin}/robots.txt?q=1&${CUSTOM_SW_RECOVERY_PARAM}=`;
-    const probeUrl = `${probePrefix}${encodeURIComponent(nonce)}`;
+    const probeUrl = `${origin}/robots.txt?${CUSTOM_SW_RECOVERY_PARAM}=${encodeURIComponent(nonce)}`;
     const ruleId = allocateRecoverySessionRuleId();
     let ruleInstalled = false;
 
@@ -157,7 +197,7 @@ export function createCustomSwRecoveryController({
           addRules: [
             {
               id: ruleId,
-              priority: 10,
+              priority: 100,
               action: {
                 type: 'modifyHeaders',
                 responseHeaders: [
@@ -170,9 +210,8 @@ export function createCustomSwRecoveryController({
                 ],
               },
               condition: {
-                urlFilter: `|${probePrefix}`,
-                resourceTypes: ['sub_frame'],
-                topDomains: [extensionId],
+                urlFilter: `|${probeUrl}`,
+                resourceTypes: getAllDnrResourceTypes(dnr),
               },
             },
           ],
@@ -186,6 +225,7 @@ export function createCustomSwRecoveryController({
     const probeIframe = hostDocument.createElement('iframe');
     probeIframe.dataset.panelizeSwProbe = 'true';
     probeIframe.setAttribute('aria-hidden', 'true');
+    probeIframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
     probeIframe.tabIndex = -1;
     probeIframe.style.cssText =
       'width:0!important;height:0!important;border:0!important;position:fixed!important;left:-9999px!important;top:-9999px!important;visibility:hidden!important;pointer-events:none!important;';
