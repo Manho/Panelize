@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.2 - 2026-11-13
+- Added Temporary Chat toggling for Custom Web UI providers (such as Perplexity incognito mode and generic Temporary Chat switches), including clearing sticky cookie-persisted incognito states when disabled.
+- Added single and multi-image uploads and attachment clearing for Custom Web UI providers via file inputs and paste/drop fallbacks, with graceful text-only fallback when a site has no upload control.
+
 ## 2.2.1 - 2026-11-13
 - Added `+ Add custom AI / More providers…` action and empty-state guidance to Multi-Panel `+` and `⇄` dropdown menus, plus full keyboard navigation (`ArrowUp`/`ArrowDown`/`Home`/`End`/`Escape`).
 - Added guided 3-mode Custom AI setup (`AI Website`, `Local / Self-hosted Web`, `OpenAI-compatible API`) in Settings with quick-fill presets (including Magpie), localized Chinese presets, setup guide link, and repeatable `#custom-provider-card` deep-link focus/highlighting.
