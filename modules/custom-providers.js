@@ -22,6 +22,8 @@ export const MAX_CUSTOM_API_MODEL_LENGTH = 200;
 export const CUSTOM_PROVIDER_ICON = '/icons/providers/custom.svg';
 export const CUSTOM_PROVIDER_ICON_DARK = '/icons/providers/dark/custom.svg';
 export const CUSTOM_PROVIDER_DRIVER_SCRIPT = 'content-scripts/custom-provider-driver.js';
+export const CUSTOM_PROVIDER_COOKIE_CONSENT_SCRIPT =
+  'content-scripts/custom-provider-cookie-consent.js';
 export const CUSTOM_API_PANEL_PATH = 'api-panel/api-panel.html';
 
 const CUSTOM_CAPABILITIES = Object.freeze({

@@ -1,4 +1,8 @@
-import { isCustomProviderId, loadCustomProviders } from './custom-providers.js';
+import {
+  CUSTOM_PROVIDER_COOKIE_CONSENT_SCRIPT,
+  isCustomProviderId,
+  loadCustomProviders
+} from './custom-providers.js';
 import { supportsScopedFrameRules, syncFrameHeaderRulesWithStatus } from './frame-header-rules.js';
 import {
   BUILTIN_PROVIDER_DESCRIPTORS,
@@ -13,7 +17,7 @@ export { supportsScopedFrameRules } from './frame-header-rules.js';
 export const OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION = 'syncOptionalProviderAccess';
 
 const optionalConfigCache = new WeakMap();
-const CUSTOM_PROVIDER_SCRIPT_ID_PATTERN = /^custom-[0-9a-f]{10}-scripts$/;
+const CUSTOM_PROVIDER_SCRIPT_ID_PATTERN = /^custom-[0-9a-f]{10}-(?:cookie-)?scripts$/;
 
 function createContentScriptFromSpec(id, contentScriptSpec) {
   return {
@@ -189,6 +193,12 @@ function createCustomProviderConfig(descriptor) {
     };
   }
 
+  const isHttpsCustomOrigin =
+    Array.isArray(descriptor.contentScript?.matches) &&
+    descriptor.contentScript.matches.some(
+      (pattern) => typeof pattern === 'string' && pattern.startsWith('https://')
+    );
+
   return {
     origins: descriptor.permissionOrigins,
     contentScript: {
@@ -200,6 +210,17 @@ function createCustomProviderConfig(descriptor) {
       world: 'ISOLATED',
       runAt: 'document_start'
     },
+    cookieContentScript: isHttpsCustomOrigin
+      ? {
+          id: `${descriptor.id}-cookie-scripts`,
+          matches: [...descriptor.contentScript.matches],
+          js: [CUSTOM_PROVIDER_COOKIE_CONSENT_SCRIPT],
+          allFrames: true,
+          persistAcrossSessions: true,
+          world: 'MAIN',
+          runAt: 'document_start'
+        }
+      : null,
     frameRule: createFrameRule(descriptor.frameRule.id, descriptor.frameRule.urlFilter),
     apiOriginRule: null
   };
@@ -286,6 +307,12 @@ function matchesRegisteredCustomScript(registeredScript, desiredScript) {
     return false;
   }
   if (
+    typeof registeredScript.world === 'string' &&
+    registeredScript.world !== desiredScript.world
+  ) {
+    return false;
+  }
+  if (
     Array.isArray(registeredScript.matches) &&
     !isSameStringArray(registeredScript.matches, desiredScript.matches)
   ) {
@@ -317,7 +344,7 @@ async function syncContentScripts(
 
   const desiredOptionalScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
   const desiredCustomScripts = desiredCustomConfigs
-    .map(({ contentScript }) => contentScript)
+    .flatMap(({ contentScript, cookieContentScript }) => [contentScript, cookieContentScript])
     .filter(Boolean);
   const desiredCustomById = new Map(
     desiredCustomScripts.map((contentScript) => [contentScript.id, contentScript])

@@ -104,8 +104,28 @@ export function createCustomSwRecoveryController({
 } = {}) {
   const navStateByPanelId = new Map();
   const inFlightByOrigin = new Map();
+  const activeCleanups = new Set();
   let navSeqCounter = 0;
   let disposed = false;
+
+  function safeRemoveMessageListener(listener) {
+    try {
+      if (hostWindow && typeof hostWindow.removeEventListener === 'function') {
+        hostWindow.removeEventListener('message', listener);
+      }
+    } catch {
+      // Ignore torn-down window environments.
+    }
+  }
+
+  function isHostEnvironmentAlive() {
+    return (
+      !disposed &&
+      Boolean(hostWindow) &&
+      typeof hostWindow.addEventListener === 'function' &&
+      typeof hostWindow.removeEventListener === 'function'
+    );
+  }
 
   function isPanelStillOnSeq(panelId, expectedSeq) {
     if (disposed) {
@@ -121,7 +141,7 @@ export function createCustomSwRecoveryController({
 
   function pingPanelFrame(panel, origin) {
     const targetWindow = panel?.iframe?.contentWindow;
-    if (!hostWindow || !targetWindow || !origin) {
+    if (!isHostEnvironmentAlive() || !targetWindow || !origin) {
       return Promise.resolve(false);
     }
 
@@ -136,12 +156,16 @@ export function createCustomSwRecoveryController({
           return;
         }
         settled = true;
+        activeCleanups.delete(cancel);
         if (timerId !== null) {
           clearTimeout(timerId);
         }
-        hostWindow.removeEventListener('message', onMessage);
+        safeRemoveMessageListener(onMessage);
         resolve(alive);
       };
+
+      const cancel = () => finish(false);
+      activeCleanups.add(cancel);
 
       const onMessage = (event) => {
         if (!event || event.origin !== origin || event.source !== targetWindow) {
@@ -163,6 +187,7 @@ export function createCustomSwRecoveryController({
 
       hostWindow.addEventListener('message', onMessage);
       timerId = setTimeout(() => finish(false), pingTimeoutMs);
+      timerId?.unref?.();
 
       try {
         targetWindow.postMessage(
@@ -181,7 +206,12 @@ export function createCustomSwRecoveryController({
   }
 
   async function runOriginRecoveryProbeOnce(origin) {
-    if (!hostWindow || !hostDocument?.body || !origin || disposed) {
+    if (
+      !isHostEnvironmentAlive() ||
+      !hostDocument?.body ||
+      typeof hostDocument.createElement !== 'function' ||
+      !origin
+    ) {
       return false;
     }
 
@@ -241,15 +271,19 @@ export function createCustomSwRecoveryController({
             return;
           }
           settled = true;
+          activeCleanups.delete(cancel);
           if (hardTimerId !== null) {
             clearTimeout(hardTimerId);
           }
           if (postLoadTimerId !== null) {
             clearTimeout(postLoadTimerId);
           }
-          hostWindow.removeEventListener('message', onMessage);
+          safeRemoveMessageListener(onMessage);
           resolve(ok);
         };
+
+        const cancel = () => finish(false);
+        activeCleanups.add(cancel);
 
         const onMessage = (event) => {
           if (!event || event.origin !== origin || event.source !== probeIframe.contentWindow) {
@@ -273,6 +307,7 @@ export function createCustomSwRecoveryController({
           () => {
             if (!settled && postLoadTimerId === null) {
               postLoadTimerId = setTimeout(() => finish(false), PROBE_POST_LOAD_SETTLE_MS);
+              postLoadTimerId?.unref?.();
             }
           },
           { once: true }
@@ -280,13 +315,18 @@ export function createCustomSwRecoveryController({
 
         hostWindow.addEventListener('message', onMessage);
         hardTimerId = setTimeout(() => finish(false), probeTimeoutMs);
+        hardTimerId?.unref?.();
         probeIframe.setAttribute('src', probeUrl);
         hostDocument.body.appendChild(probeIframe);
       });
 
       return recovered;
     } finally {
-      probeIframe.remove();
+      try {
+        probeIframe.remove();
+      } catch {
+        // Ignore torn-down DOM environments.
+      }
       if (ruleInstalled && typeof dnr?.updateSessionRules === 'function') {
         await dnr.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
       }
@@ -387,6 +427,10 @@ export function createCustomSwRecoveryController({
 
   function dispose() {
     disposed = true;
+    for (const cancel of Array.from(activeCleanups)) {
+      cancel();
+    }
+    activeCleanups.clear();
     navStateByPanelId.clear();
     inFlightByOrigin.clear();
   }

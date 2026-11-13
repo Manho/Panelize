@@ -97,6 +97,10 @@ function renderProviderHtml() {
   </head>
   <body>
     <h1 id="fixture-ready">Perplexity SW Fixture Ready</h1>
+    <div id="cookie-banner">
+      <span>Cookie Policy</span>
+      <button id="cookie-allow-all" type="button">Allow all</button>
+    </div>
     <div id="messages"></div>
     <form id="chat-form" style="margin-top:24px;display:flex;gap:8px;align-items:center">
       <textarea
@@ -116,6 +120,16 @@ function renderProviderHtml() {
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/service-worker.js').catch(() => {});
       }
+      const cookieBanner = document.getElementById('cookie-banner');
+      const allowAllBtn = document.getElementById('cookie-allow-all');
+      if (document.cookie.includes('pplx.trackingAllowed=true')) {
+        cookieBanner.hidden = true;
+      }
+      allowAllBtn.addEventListener('click', () => {
+        // Mirrors Perplexity's real consent banner write (omits SameSite=None):
+        document.cookie = 'pplx.trackingAllowed=true; path=/; expires=Sat, 13 Nov 2027 09:03:01 GMT';
+        cookieBanner.hidden = true;
+      });
       const form = document.getElementById('chat-form');
       const composer = document.getElementById('composer');
       const messages = document.getElementById('messages');
@@ -366,29 +380,39 @@ test.describe('Custom web AI Service Worker poisoned CacheStorage framing recove
         cookie: 'pplx_auth=keep-cookie',
       });
 
-      // 5. Broadcast Fill & Send works end-to-end inside the recovered panel
+      // 5. Clicking "Allow all" on the cookie consent banner persists across Panel Refresh & Multi-Panel reload
+      await expect(customPanel.frameLocator('iframe').locator('#cookie-banner')).toBeVisible();
+      await customPanel.frameLocator('iframe').locator('#cookie-allow-all').click();
+      await expect(customPanel.frameLocator('iframe').locator('#cookie-banner')).toBeHidden();
+
+      // 6. Broadcast Fill & Send works end-to-end inside the recovered panel
       await mpPage.locator('#unified-input').fill('Why did Service Worker cache block framing?');
       await mpPage.locator('#send-all-btn').click();
       await expect(customPanel.frameLocator('iframe').locator('.assistant-reply')).toHaveText(
         'SW Reply: Why did Service Worker cache block framing?'
       );
 
-      // 6. Visit 2 & Visit 3: clicking Refresh on the panel AND reloading Multi-Panel
-      //    both keep working cleanly even while topTab remains open!
+      // 7. Visit 2 & Visit 3: clicking Refresh on the panel AND reloading Multi-Panel
+      //    both keep working cleanly AND keep the cookie banner dismissed, while topTab cookie jar stays isolated!
       await customPanel.locator('.refresh-panel-btn').click();
       await expect
         .poll(() => readRenderedFrameText(iframeHandle, '#fixture-ready'), { timeout: 15_000 })
         .toBe('Perplexity SW Fixture Ready');
+      await expect(customPanel.frameLocator('iframe').locator('#cookie-banner')).toBeHidden();
 
       await mpPage.reload({ waitUntil: 'domcontentloaded' });
-      const reloadedIframeHandle = await mpPage
-        .locator('#panel-grid .panel-item[data-custom-provider="true"] iframe')
-        .elementHandle();
+      const reloadedCustomPanel = mpPage.locator('#panel-grid .panel-item[data-custom-provider="true"]');
+      const reloadedIframeHandle = await reloadedCustomPanel.locator('iframe').elementHandle();
       await expect
         .poll(() => readRenderedFrameText(reloadedIframeHandle, '#fixture-ready'), {
           timeout: 15_000,
         })
         .toBe('Perplexity SW Fixture Ready');
+      await expect(reloadedCustomPanel.frameLocator('iframe').locator('#cookie-banner')).toBeHidden();
+      // Partitioned CHIPS cookie does NOT leak into top-level unpartitioned document.cookie
+      expect(await topTab.evaluate(() => document.cookie.includes('pplx.trackingAllowed='))).toBe(
+        false
+      );
 
       // 7. Security invariant: a third-party website still CANNOT frame either '/' or '/robots.txt'
       const thirdPartyPage = await extension.context.newPage();
