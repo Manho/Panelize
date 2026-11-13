@@ -147,7 +147,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
       'hideCursor'
     ],
     senderFiles: ['modules/snapshot-capture.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'PANELIZE_SNAPSHOT_SCROLL',
@@ -155,7 +158,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
     direction: 'host-to-frame',
     payloadFields: ['type', 'context', 'requestId', 'sessionId', 'scrollTop'],
     senderFiles: ['modules/snapshot-capture.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'PANELIZE_SNAPSHOT_RESTORE',
@@ -163,7 +169,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
     direction: 'host-to-frame',
     payloadFields: ['type', 'context', 'requestId', 'sessionId'],
     senderFiles: ['modules/snapshot-capture.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   })
 ]);
 
@@ -273,7 +282,10 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
       'error',
       'restored'
     ],
-    senderFiles: ['content-scripts/text-injection-all-providers.js'],
+    senderFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ],
     receiverFiles: ['modules/snapshot-capture.js']
   })
 ]);

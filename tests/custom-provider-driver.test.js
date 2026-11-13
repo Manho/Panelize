@@ -1480,4 +1480,333 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('rejects PANELIZE_SNAPSHOT_PREPARE, SCROLL, and RESTORE from untrusted origins, sources, or contexts', async () => {
+    const env = createDriverEnvironment({
+      url: 'https://www.perplexity.ai/search/test',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      env.document.body.innerHTML = `
+        <div id="thread" style="overflow-y:auto">
+          <div class="group/user-bubble">Prompt</div>
+          <textarea id="ask-input"></textarea>
+        </div>
+      `;
+      const thread = env.document.getElementById('thread');
+      Object.defineProperties(thread, {
+        scrollHeight: { configurable: true, get: () => 2000 },
+        clientHeight: { configurable: true, get: () => 700 },
+        scrollTop: { configurable: true, value: 900, writable: true },
+      });
+      setLayoutRect(thread, { left: 0, top: 56, width: 1024, height: 700 });
+      setLayoutRect(env.document.getElementById('ask-input'), {
+        left: 40,
+        top: 660,
+        width: 900,
+        height: 56,
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      for (const messageType of [
+        'PANELIZE_SNAPSHOT_PREPARE',
+        'PANELIZE_SNAPSHOT_SCROLL',
+        'PANELIZE_SNAPSHOT_RESTORE',
+      ]) {
+        env.postFromHost(
+          {
+            type: messageType,
+            context: 'multi-panel',
+            providerId: CUSTOM_PROVIDER_ID,
+            requestId: `evil-origin-${messageType}`,
+            sessionId: 'sess-evil',
+            scrollTop: 0,
+            stitch: true,
+          },
+          { origin: 'https://www.perplexity.ai' }
+        );
+        env.postFromHost(
+          {
+            type: messageType,
+            context: 'multi-panel',
+            providerId: CUSTOM_PROVIDER_ID,
+            requestId: `evil-source-${messageType}`,
+            sessionId: 'sess-evil',
+            scrollTop: 0,
+            stitch: true,
+          },
+          { source: env.win }
+        );
+        env.postFromHost({
+          type: messageType,
+          context: 'wrong-context',
+          providerId: CUSTOM_PROVIDER_ID,
+          requestId: `wrong-ctx-${messageType}`,
+          sessionId: 'sess-evil',
+          scrollTop: 0,
+          stitch: true,
+        });
+      }
+
+      await wait(120);
+      expect(thread.scrollTop).toBe(900);
+      expect(env.parent.postMessage).not.toHaveBeenCalled();
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('prepares, scrolls, quiets Perplexity display:contents composer halo + h-0 scroll-to-end button, un-sticks answer headers, and restores cleanly', async () => {
+    const env = createDriverEnvironment({
+      url: 'https://www.perplexity.ai/search/deepseek-vs-chatgpt',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      env.document.body.innerHTML = `
+        <header id="top-bar" style="position:fixed;top:0;left:0;right:0;height:56px">Header</header>
+        <div id="sources-rail" style="position:absolute;top:56px;right:0;width:336px;height:572px">
+          <button type="button">Sources 13</button>
+        </div>
+        <div id="thread" class="@container/thread" style="overflow-y:auto">
+          <div id="earlier-turn" style="height:500px">Earlier answer</div>
+          <div id="user-bubble" class="group/user-bubble">DeepSeek 和 ChatGPT，选哪个好</div>
+          <div id="answer-body">
+            <h2 id="mid-sticky-heading" style="position:sticky;top:0;box-shadow:0 8px 12px rgba(0,0,0,0.25)">按用途怎么选</h2>
+            <table>
+              <thead>
+                <tr><th id="sticky-th" style="position:sticky;top:0">你的主要需求</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>日常办公</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="contents" style="display:contents">
+            <div id="composer-dock" style="position:sticky;bottom:0">
+              <div id="scroll-end-holder" class="pointer-events-none" style="height:0">
+                <div id="scroll-end-shift">
+                  <button id="scroll-end-btn" type="button" aria-label="Scroll to end">↓</button>
+                </div>
+              </div>
+              <div id="incognito-bar">You're incognito. Exit Incognito</div>
+              <div id="composer-halo" style="position:static;box-shadow:0 36px 24px 64px rgb(255, 255, 255)">
+                <div id="ask-input" contenteditable="true" role="textbox" aria-label="Ask a follow-up"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const topBar = env.document.getElementById('top-bar');
+      const sourcesRail = env.document.getElementById('sources-rail');
+      const thread = env.document.getElementById('thread');
+      const userBubble = env.document.getElementById('user-bubble');
+      const midHeading = env.document.getElementById('mid-sticky-heading');
+      const stickyTh = env.document.getElementById('sticky-th');
+      const contentsWrap = env.document.querySelector('.contents');
+      const composerDock = env.document.getElementById('composer-dock');
+      const scrollEndHolder = env.document.getElementById('scroll-end-holder');
+      const scrollEndBtn = env.document.getElementById('scroll-end-btn');
+      const incognitoBar = env.document.getElementById('incognito-bar');
+      const composerHalo = env.document.getElementById('composer-halo');
+      const askInput = env.document.getElementById('ask-input');
+
+      let currentScrollTop = 1688;
+      const scrollHeight = 2400;
+      const clientHeight = 712; // 768 - 56
+
+      Object.defineProperties(thread, {
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        clientHeight: { configurable: true, get: () => clientHeight },
+        offsetWidth: { configurable: true, get: () => 1024 },
+        clientWidth: { configurable: true, get: () => 1024 },
+        scrollTop: {
+          configurable: true,
+          get: () => currentScrollTop,
+          set: (val) => {
+            currentScrollTop = Math.max(0, Math.min(scrollHeight - clientHeight, Number(val) || 0));
+          },
+        },
+      });
+      thread.scrollTo = ({ top }) => {
+        thread.scrollTop = top;
+      };
+
+      const makeScrolledRect = (docTop, height, left = 24, width = 960) => () => {
+        const top = 56 + docTop - currentScrollTop;
+        return {
+          x: left,
+          y: top,
+          left,
+          top,
+          width,
+          height,
+          right: left + width,
+          bottom: top + height,
+          toJSON() {
+            return this;
+          },
+        };
+      };
+
+      setLayoutRect(topBar, { left: 0, top: 0, width: 1024, height: 56 });
+      setLayoutRect(sourcesRail, { left: 688, top: 56, width: 336, height: 572 });
+      setLayoutRect(thread, { left: 0, top: 56, width: 1024, height: 712 });
+      userBubble.getBoundingClientRect = makeScrolledRect(540, 44, 520, 420);
+      midHeading.getBoundingClientRect = makeScrolledRect(680, 36);
+      stickyTh.getBoundingClientRect = makeScrolledRect(760, 32);
+
+      // `display: contents` returns 0x0 in real Chromium!
+      setLayoutRect(contentsWrap, { left: 0, top: 0, width: 0, height: 0 });
+      setLayoutRect(composerDock, { left: 24, top: 628, width: 976, height: 140 });
+      // `h-0` wrapper has height 0 at top of composerDock, while inner button is `-translate-y-full` inside clip!
+      setLayoutRect(scrollEndHolder, { left: 24, top: 628, width: 976, height: 0 });
+      setLayoutRect(scrollEndBtn, { left: 496, top: 584, width: 32, height: 32 });
+      setLayoutRect(incognitoBar, { left: 24, top: 628, width: 976, height: 32 });
+      setLayoutRect(composerHalo, { left: 24, top: 660, width: 976, height: 108 });
+      setLayoutRect(askInput, { left: 40, top: 672, width: 900, height: 56 });
+
+      env.win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      // 1. PREPARE (stitch: true, align: true)
+      env.postFromHost({
+        type: 'PANELIZE_SNAPSHOT_PREPARE',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'snap-prep-1',
+        sessionId: 'sess-pplx-1',
+        align: true,
+        prompt: 'DeepSeek 和 ChatGPT，选哪个好',
+        stitch: true,
+        hideFloating: true,
+        hideCursor: true,
+      });
+
+      await wait(280);
+
+      const prepCall = env.parent.postMessage.mock.calls.find(
+        ([msg]) => msg.type === 'PANELIZE_SNAPSHOT_STATE' && msg.requestId === 'snap-prep-1'
+      );
+      expect(prepCall).toBeTruthy();
+      expect(prepCall[1]).toBe(EXTENSION_ORIGIN);
+      expect(prepCall[0]).toMatchObject({
+        type: 'PANELIZE_SNAPSHOT_STATE',
+        context: 'multi-panel-snapshot',
+        requestId: 'snap-prep-1',
+        sessionId: 'sess-pplx-1',
+        provider: CUSTOM_PROVIDER_ID,
+        matched: true,
+        alignedBy: 'prompt',
+        scrollTop: 524, // 540 - SNAPSHOT_ALIGN_MARGIN_PX (16)
+        maxScrollTop: 1688,
+        originalScrollTop: 1688,
+        clip: {
+          left: 0,
+          top: 56,
+          right: 1024,
+          bottom: 628,
+        },
+      });
+
+      // Verify Perplexity DOM quirks were handled during snapshot:
+      expect(scrollEndHolder.style.getPropertyValue('visibility')).toBe('hidden');
+      // Full-height narrow right-hand Sources rail stays visible on Screen 0 (PREPARE)
+      expect(sourcesRail.style.getPropertyValue('visibility')).toBe('');
+      expect(composerHalo.style.getPropertyValue('box-shadow')).toBe('none');
+      expect(midHeading.style.getPropertyValue('position')).toBe('relative');
+      expect(midHeading.style.getPropertyValue('box-shadow')).toBe('none');
+      expect(stickyTh.style.getPropertyValue('position')).toBe('relative');
+      expect(composerDock.style.getPropertyValue('position')).toBe('sticky');
+      expect(env.document.documentElement.hasAttribute('data-panelize-snapshot-cursor')).toBe(
+        true
+      );
+
+      // 2. SCROLL step to next screen and then clamp to maxScrollTop
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'PANELIZE_SNAPSHOT_SCROLL',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'snap-scroll-1',
+        sessionId: 'sess-pplx-1',
+        scrollTop: 1060,
+      });
+      await wait(280);
+
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_SNAPSHOT_STATE',
+          requestId: 'snap-scroll-1',
+          sessionId: 'sess-pplx-1',
+          scrollTop: 1060,
+          maxScrollTop: 1688,
+        }),
+        EXTENSION_ORIGIN
+      );
+      // On scrolled frames (Screen 1..N), the pinned right-hand Sources rail is hidden so it never repeats!
+      expect(sourcesRail.style.getPropertyValue('visibility')).toBe('hidden');
+
+      // Mismatched sessionId returns error: 'no-session' without scrolling
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'PANELIZE_SNAPSHOT_SCROLL',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'snap-scroll-bad-session',
+        sessionId: 'wrong-session',
+        scrollTop: 0,
+      });
+      await wait(40);
+      expect(currentScrollTop).toBe(1060);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_SNAPSHOT_STATE',
+          requestId: 'snap-scroll-bad-session',
+          error: 'no-session',
+        }),
+        EXTENSION_ORIGIN
+      );
+
+      // 3. RESTORE puts back original scrollTop (at end -> 1688) and all styles
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'PANELIZE_SNAPSHOT_RESTORE',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'snap-restore-1',
+        sessionId: 'sess-pplx-1',
+      });
+      await wait(180);
+
+      expect(currentScrollTop).toBe(1688);
+      expect(scrollEndHolder.style.getPropertyValue('visibility')).toBe('');
+      expect(sourcesRail.style.getPropertyValue('visibility')).toBe('');
+      expect(composerHalo.style.getPropertyValue('box-shadow')).toBe(
+        '0 36px 24px 64px rgb(255, 255, 255)'
+      );
+      expect(midHeading.style.getPropertyValue('position')).toBe('sticky');
+      expect(stickyTh.style.getPropertyValue('position')).toBe('sticky');
+      expect(env.document.documentElement.hasAttribute('data-panelize-snapshot-cursor')).toBe(
+        false
+      );
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_SNAPSHOT_STATE',
+          requestId: 'snap-restore-1',
+          sessionId: 'sess-pplx-1',
+          provider: CUSTOM_PROVIDER_ID,
+          restored: true,
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });

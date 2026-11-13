@@ -183,7 +183,7 @@ describe('custom providers: registry, id rules, URL validation, and storage hydr
         capabilities: {
           imageUpload: true,
           inPageNewChat: false,
-          snapshotStitch: false,
+          snapshotStitch: true,
         },
       });
       expect(Object.isFrozen(descriptor)).toBe(true);

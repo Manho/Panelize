@@ -29,7 +29,7 @@ export const CUSTOM_API_PANEL_PATH = 'api-panel/api-panel.html';
 const CUSTOM_CAPABILITIES = Object.freeze({
   imageUpload: true,
   inPageNewChat: false,
-  snapshotStitch: false
+  snapshotStitch: true
 });
 
 const CUSTOM_API_CAPABILITIES = Object.freeze({
