@@ -21,7 +21,7 @@ const DEFAULT_BUILTIN_CAPABILITIES = Object.freeze({
 const DEFAULT_CUSTOM_CAPABILITIES = Object.freeze({
   imageUpload: true,
   inPageNewChat: false,
-  snapshotStitch: false
+  snapshotStitch: true
 });
 
 const frozenDescriptors = new WeakSet();

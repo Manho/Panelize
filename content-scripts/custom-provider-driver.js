@@ -14,6 +14,7 @@
   const MULTI_PANEL_CONTEXT = 'multi-panel';
   const MULTI_PANEL_ACTION_RESULT_CONTEXT = 'multi-panel-action-result';
   const MULTI_PANEL_PROVIDER_STATUS_CONTEXT = 'multi-panel-provider-status';
+  const MULTI_PANEL_SNAPSHOT_CONTEXT = 'multi-panel-snapshot';
 
   const HOST_TO_FRAME = {
     INJECT_TEXT: 'INJECT_TEXT',
@@ -24,6 +25,9 @@
     CLEAR_INPUT: 'CLEAR_INPUT',
     PANELIZE_RESTORE_USER_FOCUS: 'PANELIZE_RESTORE_USER_FOCUS',
     PANELIZE_CUSTOM_FRAME_PING: 'PANELIZE_CUSTOM_FRAME_PING',
+    PANELIZE_SNAPSHOT_PREPARE: 'PANELIZE_SNAPSHOT_PREPARE',
+    PANELIZE_SNAPSHOT_SCROLL: 'PANELIZE_SNAPSHOT_SCROLL',
+    PANELIZE_SNAPSHOT_RESTORE: 'PANELIZE_SNAPSHOT_RESTORE',
   };
 
   const FRAME_TO_HOST = {
@@ -34,6 +38,7 @@
     PANELIZE_TEMP_CHAT_DISABLED: 'PANELIZE_TEMP_CHAT_DISABLED',
     PANELIZE_CUSTOM_FRAME_PONG: 'PANELIZE_CUSTOM_FRAME_PONG',
     PANELIZE_CUSTOM_SW_RECOVERED: 'PANELIZE_CUSTOM_SW_RECOVERED',
+    PANELIZE_SNAPSHOT_STATE: 'PANELIZE_SNAPSHOT_STATE',
   };
 
   const SW_RECOVERY_QUERY_PARAM = '__panelize_sw_recover';
@@ -2004,6 +2009,1177 @@
     }
   }
 
+  // ===== Share Snapshot: Align, Scroll, Stitch & Restore =====
+
+  const SNAPSHOT_MATCH_KEY_LENGTH = 40;
+  const SNAPSHOT_MIN_MATCH_KEY_LENGTH = 2;
+  const SNAPSHOT_MAX_MATCH_CANDIDATES = 50;
+  const SNAPSHOT_ALIGN_MARGIN_PX = 16;
+  const SNAPSHOT_PAINT_SETTLE_MS = 100;
+  const SNAPSHOT_PAINT_TIMEOUT_MS = 400;
+  const SNAPSHOT_MIN_CONTAINER_HEIGHT_RATIO = 0.3;
+  const SNAPSHOT_MAX_EDGE_RATIO = 0.4;
+  const SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO = 0.5;
+  const SNAPSHOT_EDGE_TOLERANCE_PX = 24;
+  const SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO = 0.5;
+  const SNAPSHOT_MAX_SIDE_RAIL_WIDTH_RATIO = 0.45;
+  const SNAPSHOT_HIDDEN_MASK_PROPERTIES = ['mask-image', '-webkit-mask-image'];
+  const SNAPSHOT_CLIPPING_OVERFLOW = /^(hidden|clip|auto|scroll|overlay)$/;
+  const SNAPSHOT_SKIPPED_TEXT_PARENTS = [
+    'script',
+    'style',
+    'noscript',
+    'template',
+    'textarea',
+    'input',
+    'select',
+    '[contenteditable=""]',
+    '[contenteditable="true"]',
+    '[aria-hidden="true"]',
+  ].join(', ');
+  const SNAPSHOT_NAVIGATION_PARENTS =
+    'nav, aside, [role="navigation"], [role="complementary"], a[href]';
+  const SNAPSHOT_USER_TURN_SELECTORS = [
+    '[data-message-author-role="user"]',
+    '[data-testid="user-message"]',
+    '[data-testid*="user-message" i]',
+    '[data-role="user"]',
+    '[data-author="user"]',
+    '[data-message-role="user"]',
+    '[data-sender="user"]',
+    '[data-content="user-message"]',
+    '[class*="user-bubble"]',
+    '[class*="user-message"]',
+    '[class*="items-end"] .message-bubble',
+    '.chat-content-item-user',
+    '.chat-user-message',
+  ].join(', ');
+  const SNAPSHOT_ALIGN_TOLERANCE_PX = 2;
+  const SNAPSHOT_RESTORE_ATTEMPTS = 10;
+  const SNAPSHOT_UNSTICK_PROPERTIES = ['position', 'top', 'right', 'bottom', 'left'];
+  const SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE = 'data-panelize-snapshot-hide';
+  const SNAPSHOT_HIDE_CURSOR_ATTRIBUTE = 'data-panelize-snapshot-cursor';
+  const SNAPSHOT_STYLE_RULES = `
+    [${SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE}~="before"]::before,
+    [${SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE}~="after"]::after { visibility: hidden !important; }
+    [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}], [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}] *,
+    [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}] *::before, [${SNAPSHOT_HIDE_CURSOR_ATTRIBUTE}] *::after { cursor: none !important; }
+  `;
+  const SNAPSHOT_STYLE_ELEMENT_ID = 'panelize-snapshot-style';
+
+  let snapshotSession = null;
+  let snapshotStyleSheet = null;
+
+  function getParentOrShadowHost(node) {
+    if (!node) {
+      return null;
+    }
+    if (node.parentElement) {
+      return node.parentElement;
+    }
+    const root = typeof node.getRootNode === 'function' ? node.getRootNode() : null;
+    return root && root.host ? root.host : null;
+  }
+
+  function normalizeSnapshotMatchText(text) {
+    return String(text || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[\s\u200b-\u200d\u2060\ufeff*_`]+/g, '');
+  }
+
+  function getSnapshotMatchKey(prompt) {
+    return Array.from(normalizeSnapshotMatchText(prompt))
+      .slice(0, SNAPSHOT_MATCH_KEY_LENGTH)
+      .join('');
+  }
+
+  function getSnapshotViewport() {
+    return {
+      width: window.innerWidth || document.documentElement?.clientWidth || 0,
+      height: window.innerHeight || document.documentElement?.clientHeight || 0,
+    };
+  }
+
+  function isSnapshotDocumentScroller(element) {
+    return (
+      !element ||
+      element === document.scrollingElement ||
+      element === document.documentElement ||
+      element === document.body
+    );
+  }
+
+  function isSnapshotScrollable(element) {
+    if (isSnapshotDocumentScroller(element)) {
+      const scroller = document.scrollingElement || document.documentElement;
+      return Boolean(scroller) && scroller.scrollHeight > scroller.clientHeight + 1;
+    }
+    const overflowY = window.getComputedStyle(element).overflowY;
+    return /(auto|scroll|overlay)/.test(overflowY) && element.scrollHeight > element.clientHeight + 1;
+  }
+
+  function isSnapshotElementRendered(element) {
+    if (typeof element.checkVisibility === 'function') {
+      return element.checkVisibility();
+    }
+    return true;
+  }
+
+  function getSnapshotContainerRect(container) {
+    const viewport = getSnapshotViewport();
+    if (isSnapshotDocumentScroller(container)) {
+      return { left: 0, top: 0, right: viewport.width, bottom: viewport.height };
+    }
+    const rect = container.getBoundingClientRect();
+    const left = rect.left + container.clientLeft;
+    const top = rect.top + container.clientTop;
+    const box = {
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      right: Math.min(viewport.width, left + container.clientWidth),
+      bottom: Math.min(viewport.height, top + container.clientHeight),
+    };
+    for (
+      let node = getParentOrShadowHost(container);
+      node && !isSnapshotDocumentScroller(node);
+      node = getParentOrShadowHost(node)
+    ) {
+      const style = window.getComputedStyle(node);
+      if (
+        !SNAPSHOT_CLIPPING_OVERFLOW.test(style.overflowX) &&
+        !SNAPSHOT_CLIPPING_OVERFLOW.test(style.overflowY)
+      ) {
+        continue;
+      }
+      const nodeRect = node.getBoundingClientRect();
+      const nodeLeft = nodeRect.left + node.clientLeft;
+      const nodeTop = nodeRect.top + node.clientTop;
+      box.left = Math.max(box.left, nodeLeft);
+      box.top = Math.max(box.top, nodeTop);
+      box.right = Math.min(box.right, nodeLeft + node.clientWidth);
+      box.bottom = Math.min(box.bottom, nodeTop + node.clientHeight);
+    }
+    return box;
+  }
+
+  function isLargeSnapshotContainer(element) {
+    const viewport = getSnapshotViewport();
+    if (isSnapshotDocumentScroller(element)) {
+      return true;
+    }
+    const rect = getSnapshotContainerRect(element);
+    return rect.bottom - rect.top >= viewport.height * SNAPSHOT_MIN_CONTAINER_HEIGHT_RATIO;
+  }
+
+  function getSnapshotScrollTop(container) {
+    return isSnapshotDocumentScroller(container) ? window.scrollY : container.scrollTop;
+  }
+
+  function getSnapshotMaxScrollTop(container) {
+    const scroller = isSnapshotDocumentScroller(container)
+      ? document.scrollingElement || document.documentElement
+      : container;
+    return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  }
+
+  function clampSnapshotScrollTop(container, top) {
+    return Math.max(0, Math.min(getSnapshotMaxScrollTop(container), Math.round(top)));
+  }
+
+  function scrollSnapshotContainer(container, top) {
+    const target = clampSnapshotScrollTop(container, top);
+    if (isSnapshotDocumentScroller(container)) {
+      window.scrollTo({ top: target, behavior: 'instant' });
+    } else if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: target, behavior: 'instant' });
+    } else {
+      container.scrollTop = target;
+    }
+  }
+
+  function findSnapshotScrollContainer(element, main) {
+    const ancestors = [];
+    for (
+      let node = element;
+      node && !isSnapshotDocumentScroller(node);
+      node = getParentOrShadowHost(node)
+    ) {
+      if (isSnapshotScrollable(node) && isLargeSnapshotContainer(node)) {
+        ancestors.push(node);
+      }
+    }
+    if (isSnapshotScrollable(null)) {
+      ancestors.push(document.scrollingElement || document.documentElement);
+    }
+    if (ancestors.includes(main)) {
+      return main;
+    }
+    return ancestors.reduce(
+      (best, node) =>
+        !best || getSnapshotMaxScrollTop(node) > getSnapshotMaxScrollTop(best) ? node : best,
+      null
+    );
+  }
+
+  function findMainSnapshotScrollContainer() {
+    let best = null;
+    let bestArea = 0;
+    const candidates = document.body ? querySelectorAllDeep('*', document.body) : [];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const element = candidates[i];
+      if (!isSnapshotScrollable(element) || !isLargeSnapshotContainer(element)) {
+        continue;
+      }
+      const rect = getSnapshotContainerRect(element);
+      const area = Math.max(0, rect.right - rect.left) * Math.max(0, rect.bottom - rect.top);
+      if (area > bestArea) {
+        best = element;
+        bestArea = area;
+      }
+    }
+    return best || document.scrollingElement || document.documentElement;
+  }
+
+  function isSnapshotConversationElement(element) {
+    if (
+      !isSnapshotElementRendered(element) ||
+      (typeof element.closest === 'function' && element.closest(SNAPSHOT_NAVIGATION_PARENTS))
+    ) {
+      return false;
+    }
+    for (let node = element; node && node !== document.body; node = getParentOrShadowHost(node)) {
+      if (window.getComputedStyle(node).position === 'fixed') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function collectSnapshotTextIndex() {
+    const segments = [];
+    let text = '';
+    if (!document.body) {
+      return { segments, text };
+    }
+    const visitedRoots = new Set();
+    const walkRoot = (root) => {
+      if (!root || visitedRoots.has(root)) {
+        return;
+      }
+      visitedRoots.add(root);
+      const walker = document.createTreeWalker(
+        root,
+        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        {
+          acceptNode(node) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              if (
+                typeof node.matches === 'function' &&
+                node.matches(SNAPSHOT_SKIPPED_TEXT_PARENTS)
+              ) {
+                return NodeFilter.FILTER_REJECT;
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            }
+            const parent = node.parentElement || getParentOrShadowHost(node);
+            if (
+              !parent ||
+              (typeof parent.closest === 'function' && parent.closest(SNAPSHOT_SKIPPED_TEXT_PARENTS))
+            ) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          },
+        }
+      );
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.shadowRoot) {
+            walkRoot(node.shadowRoot);
+          }
+          continue;
+        }
+        const normalized = normalizeSnapshotMatchText(node.nodeValue);
+        if (normalized) {
+          segments.push({ node, start: text.length });
+          text += normalized;
+        }
+      }
+    };
+    walkRoot(document.body);
+    return { segments, text };
+  }
+
+  function findSnapshotSegment(segments, offset) {
+    let low = 0;
+    let high = segments.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (segments[middle].start <= offset) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return segments[low];
+  }
+
+  function findSnapshotPromptMatches(prompt, main) {
+    const key = getSnapshotMatchKey(prompt);
+    if (Array.from(key).length < SNAPSHOT_MIN_MATCH_KEY_LENGTH) {
+      return [];
+    }
+    const { segments, text } = collectSnapshotTextIndex();
+    if (segments.length === 0) {
+      return [];
+    }
+    const candidates = [];
+    let offset = text.lastIndexOf(key);
+    for (
+      let checked = 0;
+      offset !== -1 && checked < SNAPSHOT_MAX_MATCH_CANDIDATES;
+      checked += 1
+    ) {
+      const segment = findSnapshotSegment(segments, offset);
+      const element = segment.node.parentElement || getParentOrShadowHost(segment.node);
+      if (element && isSnapshotConversationElement(element)) {
+        const container = findSnapshotScrollContainer(element, main);
+        if (container) {
+          const isUserTurn =
+            typeof element.closest === 'function' &&
+            Boolean(element.closest(SNAPSHOT_USER_TURN_SELECTORS));
+          const rank =
+            (isUserTurn ? 0 : 4) +
+            (segment.start === offset ? 0 : 2) +
+            (container === main ? 0 : 1);
+          candidates.push({ element, container, rank });
+        }
+      }
+      offset = offset > 0 ? text.lastIndexOf(key, offset - 1) : -1;
+    }
+    return candidates.sort((a, b) => a.rank - b.rank);
+  }
+
+  function findSnapshotUserTurn(main) {
+    const elements = document.body
+      ? querySelectorAllDeep(SNAPSHOT_USER_TURN_SELECTORS, document.body)
+      : [];
+    for (let index = elements.length - 1; index >= 0; index -= 1) {
+      const element = elements[index];
+      if (!isSnapshotConversationElement(element)) {
+        continue;
+      }
+      const container = findSnapshotScrollContainer(element, main);
+      if (container) {
+        return { element, container };
+      }
+    }
+    return null;
+  }
+
+  function deepContains(ancestor, target) {
+    if (!ancestor || !target) {
+      return false;
+    }
+    for (let node = target; node; node = getParentOrShadowHost(node)) {
+      if (node === ancestor) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isSnapshotScrolledContent(element, container) {
+    const containingBlock = element.offsetParent;
+    if (!containingBlock) {
+      return false;
+    }
+    if (isSnapshotDocumentScroller(container)) {
+      return true;
+    }
+    return containingBlock === container || deepContains(container, containingBlock);
+  }
+
+  function getSnapshotClip(container) {
+    const rect = getSnapshotContainerRect(container);
+    const clip = { ...rect };
+    const height = rect.bottom - rect.top;
+    const width = rect.right - rect.left;
+    if (height <= 0 || width <= 0) {
+      return clip;
+    }
+    const maxEdge = height * SNAPSHOT_MAX_EDGE_RATIO;
+    const scope = isSnapshotDocumentScroller(container) ? document.body : container;
+    const candidates = scope ? querySelectorAllDeep('*', scope) : [];
+    if (!isSnapshotDocumentScroller(container) && document.body) {
+      const bodyNodes = querySelectorAllDeep('*', document.body);
+      for (let i = 0; i < bodyNodes.length; i += 1) {
+        const element = bodyNodes[i];
+        if (!deepContains(container, element) && !deepContains(element, container)) {
+          candidates.push(element);
+        }
+      }
+    }
+
+    const pinBar = (barRect) => {
+      if (barRect.width < width * SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO || barRect.height <= 0) {
+        return;
+      }
+      if (
+        barRect.bottom <= rect.top ||
+        barRect.top >= rect.bottom ||
+        barRect.right <= rect.left ||
+        barRect.left >= rect.right
+      ) {
+        return;
+      }
+      if (
+        barRect.top <= rect.top + SNAPSHOT_EDGE_TOLERANCE_PX &&
+        barRect.bottom - rect.top <= maxEdge
+      ) {
+        clip.top = Math.max(clip.top, barRect.bottom);
+      } else if (
+        barRect.bottom >= rect.bottom - SNAPSHOT_EDGE_TOLERANCE_PX &&
+        rect.bottom - barRect.top <= maxEdge
+      ) {
+        clip.bottom = Math.min(clip.bottom, barRect.top);
+      }
+    };
+
+    const overlayingBars = new Set();
+    const isInOverlayingBar = (element) => {
+      for (let node = getParentOrShadowHost(element); node; node = getParentOrShadowHost(node)) {
+        if (overlayingBars.has(node)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const element = candidates[i];
+      const style = window.getComputedStyle(element);
+      const position = style.position;
+      if (position !== 'sticky' && position !== 'fixed' && position !== 'absolute') {
+        continue;
+      }
+      if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
+        continue;
+      }
+      if (
+        position === 'absolute' &&
+        deepContains(container, element) &&
+        isSnapshotScrolledContent(element, container)
+      ) {
+        continue;
+      }
+      if (position === 'absolute' && !deepContains(container, element)) {
+        const elemRect = element.getBoundingClientRect();
+        const sample = document.elementFromPoint?.(
+          Math.round((rect.left + rect.right) / 2),
+          Math.round(elemRect.top + 1)
+        );
+        if (sample && deepContains(element, sample)) {
+          overlayingBars.add(element);
+        } else if (!isInOverlayingBar(element)) {
+          continue;
+        }
+      }
+      pinBar(element.getBoundingClientRect());
+    }
+
+    // Exclude the bottom composer dock (skipping `display: contents` wrappers whose rect is 0x0).
+    const input = findComposerElement();
+    if (input) {
+      let box = null;
+      for (
+        let node = input;
+        node && node !== container && !deepContains(node, container);
+        node = getParentOrShadowHost(node)
+      ) {
+        if (window.getComputedStyle(node).display === 'contents') {
+          continue;
+        }
+        const nodeRect = node.getBoundingClientRect();
+        if (nodeRect.width <= 0 || nodeRect.height <= 0) {
+          continue;
+        }
+        if (nodeRect.height > maxEdge || nodeRect.width > width + 2) {
+          break;
+        }
+        box = nodeRect;
+      }
+      if (
+        box &&
+        box.top < clip.bottom &&
+        box.bottom > rect.top + height - maxEdge &&
+        box.right > rect.left &&
+        box.left < rect.right
+      ) {
+        clip.bottom = Math.min(clip.bottom, box.top);
+      }
+    }
+
+    if (clip.bottom - clip.top < height * (1 - SNAPSHOT_MAX_EDGE_RATIO * 2)) {
+      return { ...rect };
+    }
+    return {
+      left: Math.round(clip.left),
+      top: Math.round(clip.top),
+      right: Math.round(clip.right),
+      bottom: Math.round(clip.bottom),
+    };
+  }
+
+  function getSnapshotPinningNode(element, container) {
+    const outside = !isSnapshotDocumentScroller(container) && !deepContains(container, element);
+    const containerRect = getSnapshotContainerRect(container);
+    let pinning = null;
+    for (
+      let node = element;
+      node && node !== container && node !== document.body && !deepContains(node, container);
+      node = getParentOrShadowHost(node)
+    ) {
+      if (outside) {
+        pinning = node;
+        continue;
+      }
+      const position = window.getComputedStyle(node).position;
+      if (position === 'fixed') {
+        pinning = node;
+      } else if (position === 'sticky') {
+        const rect = node.getBoundingClientRect();
+        if (
+          Math.abs(rect.top - containerRect.top) <= SNAPSHOT_EDGE_TOLERANCE_PX ||
+          Math.abs(rect.bottom - containerRect.bottom) <= SNAPSHOT_EDGE_TOLERANCE_PX
+        ) {
+          pinning = node;
+        }
+      } else if (
+        position === 'absolute' &&
+        !isSnapshotDocumentScroller(container) &&
+        !isSnapshotScrolledContent(node, container)
+      ) {
+        pinning = node;
+      }
+    }
+    return pinning;
+  }
+
+  function isSnapshotPinned(element, container) {
+    return Boolean(getSnapshotPinningNode(element, container));
+  }
+
+  function overlapsSnapshotClip(rect, clip) {
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.bottom > clip.top &&
+      rect.top < clip.bottom &&
+      rect.right > clip.left &&
+      rect.left < clip.right
+    );
+  }
+
+  function hasSnapshotReadableText(element) {
+    return /[\p{L}\p{N}]/u.test(element.textContent || '');
+  }
+
+  function saveSnapshotInlineStyle(element, property) {
+    return {
+      element,
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property),
+    };
+  }
+
+  function restoreSnapshotInlineStyles(savedStyles) {
+    for (const { element, property, value, priority } of [...savedStyles].reverse()) {
+      if (value) {
+        element.style.setProperty(property, value, priority);
+      } else {
+        element.style.removeProperty(property);
+      }
+    }
+  }
+
+  function installSnapshotStyles() {
+    try {
+      if (typeof CSSStyleSheet === 'function' && Array.isArray(document.adoptedStyleSheets)) {
+        if (!snapshotStyleSheet) {
+          snapshotStyleSheet = new CSSStyleSheet();
+          snapshotStyleSheet.replaceSync(SNAPSHOT_STYLE_RULES);
+        }
+        if (!document.adoptedStyleSheets.includes(snapshotStyleSheet)) {
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, snapshotStyleSheet];
+        }
+        return;
+      }
+    } catch {
+      // Fallback to <style> element below.
+    }
+    if (!document.getElementById(SNAPSHOT_STYLE_ELEMENT_ID)) {
+      const style = document.createElement('style');
+      style.id = SNAPSHOT_STYLE_ELEMENT_ID;
+      style.textContent = SNAPSHOT_STYLE_RULES;
+      (document.head || document.documentElement).appendChild(style);
+    }
+  }
+
+  function removeSnapshotStyles() {
+    if (snapshotStyleSheet && Array.isArray(document.adoptedStyleSheets)) {
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+        (sheet) => sheet !== snapshotStyleSheet
+      );
+    }
+    document.getElementById(SNAPSHOT_STYLE_ELEMENT_ID)?.remove();
+  }
+
+  function isSnapshotFadePseudo(element, pseudo) {
+    const style = window.getComputedStyle(element, `::${pseudo}`);
+    if (
+      !style?.content ||
+      style.content === 'none' ||
+      style.content === 'normal' ||
+      style.display === 'none'
+    ) {
+      return false;
+    }
+    if (!/^(absolute|fixed|sticky)$/.test(style.position)) {
+      return false;
+    }
+    return (
+      (style.backgroundImage || '').includes('gradient') ||
+      (Boolean(style.boxShadow) && style.boxShadow !== 'none')
+    );
+  }
+
+  function hideSnapshotFadePseudos(session, element) {
+    const marked = (element.getAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE) || '')
+      .split(/\s+/)
+      .filter(Boolean);
+    const missing = ['before', 'after'].filter(
+      (pseudo) => !marked.includes(pseudo) && isSnapshotFadePseudo(element, pseudo)
+    );
+    if (missing.length === 0) {
+      return false;
+    }
+    if (!session.hiddenPseudos.has(element)) {
+      session.hiddenPseudos.set(element, element.getAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE));
+    }
+    installSnapshotStyles();
+    element.setAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE, [...marked, ...missing].join(' '));
+    return true;
+  }
+
+  function unstickSnapshotContent(session) {
+    const { container } = session;
+    const isDocument = isSnapshotDocumentScroller(container);
+    const scope = isDocument ? document.body : container;
+    const scroller = isDocument ? document.scrollingElement || document.documentElement : container;
+    const containerRect = getSnapshotContainerRect(container);
+    const containerWidth = Math.max(0, containerRect.right - containerRect.left);
+    const contentTop = containerRect.top - getSnapshotScrollTop(container);
+    const input = findComposerElement();
+    let changed = false;
+    const elements = scope ? querySelectorAllDeep('*', scope) : [];
+    for (let i = 0; i < elements.length; i += 1) {
+      const element = elements[i];
+      if (
+        session.unstuckElements.has(element) ||
+        session.keptStickyElements.has(element) ||
+        !element.style
+      ) {
+        continue;
+      }
+      const style = window.getComputedStyle(element);
+      if (style.position !== 'sticky') {
+        continue;
+      }
+      if (input && deepContains(element, input)) {
+        session.keptStickyElements.add(element);
+        continue;
+      }
+      const saved = SNAPSHOT_UNSTICK_PROPERTIES.map((property) =>
+        saveSnapshotInlineStyle(element, property)
+      );
+      element.style.setProperty('position', 'relative', 'important');
+      SNAPSHOT_UNSTICK_PROPERTIES.slice(1).forEach((property) =>
+        element.style.setProperty(property, 'auto', 'important')
+      );
+      const rect = element.getBoundingClientRect();
+      const top = rect.top - contentTop;
+      const isEdgeBarWidth = rect.width >= containerWidth * SNAPSHOT_OVERLAY_MIN_WIDTH_RATIO;
+      if (
+        isEdgeBarWidth &&
+        (top <= SNAPSHOT_EDGE_TOLERANCE_PX ||
+          top + rect.height >= scroller.scrollHeight - SNAPSHOT_EDGE_TOLERANCE_PX)
+      ) {
+        restoreSnapshotInlineStyles(saved);
+        session.keptStickyElements.add(element);
+        continue;
+      }
+      session.savedStyles.push(...saved);
+      session.unstuckElements.add(element);
+      if (style.boxShadow && style.boxShadow !== 'none') {
+        session.savedStyles.push(saveSnapshotInlineStyle(element, 'box-shadow'));
+        element.style.setProperty('box-shadow', 'none', 'important');
+      }
+      hideSnapshotFadePseudos(session, element);
+      changed = true;
+    }
+    return changed;
+  }
+
+  function subtreeOverlapsSnapshotClip(element, clip) {
+    const rect = element.getBoundingClientRect();
+    if (overlapsSnapshotClip(rect, clip)) {
+      return true;
+    }
+    const descendants = querySelectorAllDeep('*', element);
+    for (let i = 0; i < descendants.length; i += 1) {
+      const child = descendants[i];
+      const st = window.getComputedStyle(child);
+      if (st.display === 'none' || st.visibility === 'hidden') {
+        continue;
+      }
+      if (overlapsSnapshotClip(child.getBoundingClientRect(), clip)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hideSnapshotFloatingElements(session) {
+    const { container, clip } = session;
+    const clipHeight = clip.bottom - clip.top;
+    const clipWidth = clip.right - clip.left;
+    if (!container || clipHeight <= 0 || clipWidth <= 0) {
+      return false;
+    }
+    const hidden = session.hiddenElements;
+    let changed = false;
+    const hide = (element) => {
+      hidden.add(element);
+      session.savedStyles.push(saveSnapshotInlineStyle(element, 'visibility'));
+      element.style.setProperty('visibility', 'hidden', 'important');
+      changed = true;
+    };
+
+    const scroller = isSnapshotDocumentScroller(container)
+      ? document.scrollingElement || document.documentElement
+      : container;
+    if (!session.hidesScrollbar) {
+      const style = window.getComputedStyle(scroller);
+      const borders =
+        (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+      if (scroller.offsetWidth > 0 && scroller.offsetWidth - scroller.clientWidth <= borders) {
+        session.hidesScrollbar = true;
+        session.savedStyles.push(saveSnapshotInlineStyle(scroller, 'scrollbar-width'));
+        scroller.style.setProperty('scrollbar-width', 'none', 'important');
+        changed = true;
+      }
+    }
+
+    const input = findComposerElement();
+    const fadeHosts = new Set(session.unstuckElements);
+    for (let node = container; node && node.style; node = getParentOrShadowHost(node)) {
+      fadeHosts.add(node);
+      if (session.unmaskedElements.has(node)) {
+        continue;
+      }
+      const style = window.getComputedStyle(node);
+      const masked = SNAPSHOT_HIDDEN_MASK_PROPERTIES.some((property) => {
+        const value = style.getPropertyValue(property);
+        return value && value !== 'none';
+      });
+      if (masked) {
+        session.unmaskedElements.add(node);
+        SNAPSHOT_HIDDEN_MASK_PROPERTIES.forEach((property) => {
+          session.savedStyles.push(saveSnapshotInlineStyle(node, property));
+          node.style.setProperty(property, 'none', 'important');
+        });
+        changed = true;
+      }
+    }
+    for (
+      let node = getParentOrShadowHost(input);
+      node && node !== document.body;
+      node = getParentOrShadowHost(node)
+    ) {
+      fadeHosts.add(node);
+    }
+
+    const containerRect = getSnapshotContainerRect(container);
+    const nearClip = {
+      left: containerRect.left,
+      right: containerRect.right,
+      top: clip.top - SNAPSHOT_EDGE_TOLERANCE_PX,
+      bottom: clip.bottom + SNAPSHOT_EDGE_TOLERANCE_PX,
+    };
+    const allElements = document.body ? querySelectorAllDeep('*', document.body) : [];
+    for (let i = 0; i < allElements.length; i += 1) {
+      const element = allElements[i];
+      if (
+        hidden.has(element) ||
+        element === container ||
+        deepContains(element, container) ||
+        (session.matchElement && deepContains(element, session.matchElement))
+      ) {
+        continue;
+      }
+      const style = window.getComputedStyle(element);
+      const position = style.position;
+      if (position !== 'sticky' && position !== 'fixed' && position !== 'absolute') {
+        continue;
+      }
+      if (style.display === 'none' || !isSnapshotPinned(element, container)) {
+        continue;
+      }
+      fadeHosts.add(element);
+      const rect = element.getBoundingClientRect();
+      if (
+        style.boxShadow &&
+        style.boxShadow !== 'none' &&
+        !session.quietedElements.has(element) &&
+        overlapsSnapshotClip(rect, nearClip)
+      ) {
+        session.quietedElements.add(element);
+        session.savedStyles.push(saveSnapshotInlineStyle(element, 'box-shadow'));
+        element.style.setProperty('box-shadow', 'none', 'important');
+        changed = true;
+      }
+      const isScrolledSideRail =
+        session.stitch &&
+        session.scrolledFrame &&
+        rect.width <= clipWidth * SNAPSHOT_MAX_SIDE_RAIL_WIDTH_RATIO;
+      if (
+        (!isScrolledSideRail && rect.height > clipHeight * SNAPSHOT_MAX_FLOATING_HEIGHT_RATIO) ||
+        !overlapsSnapshotClip(rect, clip)
+      ) {
+        continue;
+      }
+      if (input && deepContains(element, input)) {
+        continue;
+      }
+      const isButton =
+        typeof element.matches === 'function' && element.matches('button, [role="button"]');
+      if (!session.stitch && !isButton && hasSnapshotReadableText(element)) {
+        continue;
+      }
+      hide(element);
+    }
+
+    for (const element of fadeHosts) {
+      if (element.style && hideSnapshotFadePseudos(session, element)) {
+        changed = true;
+      }
+    }
+
+    // Quiet huge spread box-shadows on static/relative wrappers inside a pinned
+    // composer dock (e.g. Perplexity's `shadow-[0_36px_24px_64px_var(--bg-base)]`)
+    // and hide dock siblings (including `h-0` wrappers holding `-translate-y-full`
+    // "Scroll to end" buttons) that overlap the conversation clip.
+    const dock = input && getSnapshotPinningNode(input, container);
+    if (dock) {
+      for (let node = input; node; node = getParentOrShadowHost(node)) {
+        if (node !== input && node.style && !session.quietedElements.has(node)) {
+          const nodeStyle = window.getComputedStyle(node);
+          if (nodeStyle.boxShadow && nodeStyle.boxShadow !== 'none') {
+            session.quietedElements.add(node);
+            session.savedStyles.push(saveSnapshotInlineStyle(node, 'box-shadow'));
+            node.style.setProperty('box-shadow', 'none', 'important');
+            changed = true;
+          }
+        }
+        if (node === dock) {
+          break;
+        }
+        const parent = node.parentElement;
+        if (!parent) {
+          continue;
+        }
+        for (const sibling of parent.children) {
+          if (
+            sibling !== node &&
+            !hidden.has(sibling) &&
+            sibling.style &&
+            !(session.matchElement && deepContains(sibling, session.matchElement)) &&
+            window.getComputedStyle(sibling).display !== 'none' &&
+            subtreeOverlapsSnapshotClip(sibling, clip)
+          ) {
+            hide(sibling);
+          }
+        }
+      }
+    }
+    return changed;
+  }
+
+  function restoreSnapshotPage(session) {
+    if (!session) {
+      return;
+    }
+    restoreSnapshotInlineStyles(session.savedStyles);
+    session.savedStyles = [];
+    session.hiddenPseudos.forEach((value, element) => {
+      if (value === null) {
+        element.removeAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE);
+      } else {
+        element.setAttribute(SNAPSHOT_HIDE_PSEUDO_ATTRIBUTE, value);
+      }
+    });
+    session.hiddenPseudos.clear();
+    session.hidesScrollbar = false;
+    session.hiddenElements.clear();
+    session.unmaskedElements.clear();
+    session.unstuckElements.clear();
+    session.keptStickyElements.clear();
+    session.quietedElements.clear();
+    document.documentElement.removeAttribute(SNAPSHOT_HIDE_CURSOR_ATTRIBUTE);
+    removeSnapshotStyles();
+  }
+
+  function waitForSnapshotPaint() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+      setTimeout(finish, SNAPSHOT_PAINT_TIMEOUT_MS);
+      if (typeof window.requestAnimationFrame !== 'function') {
+        setTimeout(finish, SNAPSHOT_PAINT_SETTLE_MS);
+        return;
+      }
+      window.requestAnimationFrame(() =>
+        window.requestAnimationFrame(() => setTimeout(finish, SNAPSHOT_PAINT_SETTLE_MS))
+      );
+    });
+  }
+
+  async function settleSnapshotScreen(session) {
+    await waitForSnapshotPaint();
+    if (!session.hideFloating) {
+      return;
+    }
+    for (let pass = 0; pass < 2; pass += 1) {
+      const unstuck = session.stitch && unstickSnapshotContent(session);
+      const hidden = hideSnapshotFloatingElements(session);
+      if (!unstuck && !hidden) {
+        break;
+      }
+      await waitForSnapshotPaint();
+    }
+  }
+
+  function postSnapshotState(requestId, session, providerId, extra = {}) {
+    const container = session?.container || null;
+    postToMultiPanelHost({
+      type: FRAME_TO_HOST.PANELIZE_SNAPSHOT_STATE,
+      context: MULTI_PANEL_SNAPSHOT_CONTEXT,
+      requestId,
+      sessionId: session?.id || null,
+      provider: providerId || session?.provider || knownProviderId || null,
+      matched: Boolean(session?.matched),
+      alignedBy: session?.alignedBy || null,
+      scrollTop: container ? getSnapshotScrollTop(container) : 0,
+      maxScrollTop: container ? getSnapshotMaxScrollTop(container) : 0,
+      originalScrollTop: container ? (session.scrolled.get(container)?.top ?? null) : null,
+      clip: session?.clip || null,
+      viewport: getSnapshotViewport(),
+      ...extra,
+    });
+  }
+
+  function useSnapshotContainer(session, container) {
+    if (session.container === container) {
+      return;
+    }
+    session.container = container;
+    if (!session.scrolled.has(container)) {
+      const top = getSnapshotScrollTop(container);
+      const maxScrollTop = getSnapshotMaxScrollTop(container);
+      session.scrolled.set(container, {
+        top,
+        maxScrollTop,
+        atEnd: top >= maxScrollTop - SNAPSHOT_ALIGN_TOLERANCE_PX,
+      });
+    }
+    session.keptStickyElements.clear();
+    if (session.stitch) {
+      unstickSnapshotContent(session);
+    }
+    session.clip = getSnapshotClip(container);
+  }
+
+  function alignSnapshotElement(session, { element, container }, alignedBy) {
+    useSnapshotContainer(session, container);
+    const before = getSnapshotScrollTop(container);
+    const elementTop = element.getBoundingClientRect().top;
+    const target = clampSnapshotScrollTop(
+      container,
+      before + elementTop - session.clip.top - SNAPSHOT_ALIGN_MARGIN_PX
+    );
+    scrollSnapshotContainer(container, target);
+    const after = getSnapshotScrollTop(container);
+    const moved = elementTop - element.getBoundingClientRect().top;
+    if (
+      Math.abs(after - target) > SNAPSHOT_ALIGN_TOLERANCE_PX ||
+      Math.abs(moved - (after - before)) > SNAPSHOT_ALIGN_TOLERANCE_PX
+    ) {
+      scrollSnapshotContainer(container, before);
+      return false;
+    }
+    session.alignedBy = alignedBy;
+    session.alignTarget = target;
+    session.matched = alignedBy === 'prompt';
+    session.matchElement = element;
+    return true;
+  }
+
+  async function handleSnapshotPrepare(data, providerId) {
+    restoreSnapshotPage(snapshotSession);
+    snapshotSession = null;
+    const stitch = Boolean(data.stitch);
+    const session = {
+      id: data.sessionId,
+      provider: providerId || knownProviderId || null,
+      stitch,
+      scrolledFrame: false,
+      hideFloating: stitch || Boolean(data.hideFloating),
+      container: null,
+      clip: null,
+      matched: false,
+      alignedBy: null,
+      alignTarget: null,
+      matchElement: null,
+      scrolled: new Map(),
+      hiddenElements: new Set(),
+      unmaskedElements: new Set(),
+      unstuckElements: new Set(),
+      keptStickyElements: new Set(),
+      quietedElements: new Set(),
+      hiddenPseudos: new Map(),
+      hidesScrollbar: false,
+      savedStyles: [],
+    };
+    snapshotSession = session;
+    if (data.hideCursor) {
+      installSnapshotStyles();
+      document.documentElement.setAttribute(SNAPSHOT_HIDE_CURSOR_ATTRIBUTE, '');
+    }
+
+    const main = findMainSnapshotScrollContainer();
+    useSnapshotContainer(session, main);
+    if (data.align && typeof data.prompt === 'string') {
+      const matches = findSnapshotPromptMatches(data.prompt, main);
+      for (let i = 0; i < matches.length; i += 1) {
+        if (alignSnapshotElement(session, matches[i], 'prompt')) {
+          break;
+        }
+      }
+    }
+    if (!session.alignedBy && stitch) {
+      const turn = findSnapshotUserTurn(main);
+      if (turn) {
+        alignSnapshotElement(session, turn, 'user-turn');
+      }
+    }
+    if (!session.alignedBy && stitch) {
+      useSnapshotContainer(session, main);
+      scrollSnapshotContainer(main, 0);
+      session.alignedBy = 'top';
+      session.alignTarget = 0;
+    }
+
+    if (session.alignedBy || session.hideFloating) {
+      await settleSnapshotScreen(session);
+    }
+    const isOffTarget = () =>
+      session.alignTarget !== null &&
+      Math.abs(getSnapshotScrollTop(session.container) - session.alignTarget) >
+        SNAPSHOT_ALIGN_TOLERANCE_PX;
+    if (isOffTarget()) {
+      scrollSnapshotContainer(session.container, session.alignTarget);
+      await settleSnapshotScreen(session);
+    }
+    if (isOffTarget()) {
+      session.alignedBy = null;
+      session.alignTarget = null;
+      session.matched = false;
+      postSnapshotState(data.requestId, session, providerId, stitch ? { error: 'unaligned' } : {});
+      return;
+    }
+    postSnapshotState(data.requestId, session, providerId);
+  }
+
+  async function handleSnapshotScroll(data, providerId) {
+    const session = snapshotSession;
+    if (!session || session.id !== data.sessionId || typeof data.scrollTop !== 'number') {
+      postSnapshotState(data.requestId, null, providerId, { error: 'no-session' });
+      return;
+    }
+    session.scrolledFrame = true;
+    scrollSnapshotContainer(session.container, data.scrollTop);
+    await settleSnapshotScreen(session);
+    postSnapshotState(data.requestId, session, providerId);
+  }
+
+  function restoreSnapshotScrollPositions(positions, onlyHeldBack) {
+    let scrolled = false;
+    let heldBack = false;
+    for (const [container, position] of positions) {
+      const current = getSnapshotScrollTop(container);
+      if (
+        onlyHeldBack &&
+        (position.heldAt === undefined || Math.abs(current - position.heldAt) > 1)
+      ) {
+        continue;
+      }
+      const max = getSnapshotMaxScrollTop(container);
+      const target = position.atEnd ? max : position.top;
+      if (Math.abs(current - target) > 1) {
+        scrollSnapshotContainer(container, target);
+        scrolled = true;
+      }
+      const needed = position.atEnd ? position.maxScrollTop : position.top;
+      const reached = getSnapshotMaxScrollTop(container);
+      position.heldAt = reached < needed - 1 ? getSnapshotScrollTop(container) : undefined;
+      heldBack = heldBack || position.heldAt !== undefined;
+    }
+    return { scrolled, heldBack };
+  }
+
+  async function handleSnapshotRestore(data, providerId) {
+    const session = snapshotSession;
+    if (!session || session.id !== data.sessionId) {
+      postSnapshotState(data.requestId, null, providerId, { error: 'no-session' });
+      return;
+    }
+    snapshotSession = null;
+    restoreSnapshotPage(session);
+    const positions = Array.from(session.scrolled).reverse();
+    let { scrolled, heldBack } = restoreSnapshotScrollPositions(positions, false);
+    for (
+      let attempt = 0;
+      heldBack && !snapshotSession && attempt < SNAPSHOT_RESTORE_ATTEMPTS;
+      attempt += 1
+    ) {
+      await waitForSnapshotPaint();
+      scrolled = false;
+      ({ heldBack } = restoreSnapshotScrollPositions(positions, true));
+    }
+    if (scrolled) {
+      await waitForSnapshotPaint();
+    }
+    postSnapshotState(data.requestId, session, providerId, { restored: true });
+  }
+
   function handleHostMessage(event) {
     if (!event || !event.data || typeof event.data !== 'object') {
       return;
@@ -2013,13 +3189,34 @@
       return;
     }
 
+    const { type, context } = event.data;
+    if (context !== MULTI_PANEL_CONTEXT && type !== HOST_TO_FRAME.INJECT_TEXT) {
+      return;
+    }
+
     const hadProviderId = Boolean(knownProviderId);
     const providerId = resolveProviderId(event.data);
     if (!hadProviderId && knownProviderId) {
       reportLocationIfChanged(true);
     }
 
-    const { type, context } = event.data;
+    if (
+      (type === HOST_TO_FRAME.PANELIZE_SNAPSHOT_PREPARE ||
+        type === HOST_TO_FRAME.PANELIZE_SNAPSHOT_SCROLL ||
+        type === HOST_TO_FRAME.PANELIZE_SNAPSHOT_RESTORE) &&
+      context === MULTI_PANEL_CONTEXT
+    ) {
+      const handler =
+        type === HOST_TO_FRAME.PANELIZE_SNAPSHOT_PREPARE
+          ? handleSnapshotPrepare
+          : type === HOST_TO_FRAME.PANELIZE_SNAPSHOT_SCROLL
+            ? handleSnapshotScroll
+            : handleSnapshotRestore;
+      handler(event.data, providerId).catch(() => {
+        postSnapshotState(event.data.requestId, null, providerId, { error: 'failed' });
+      });
+      return;
+    }
 
     if (type === HOST_TO_FRAME.PANELIZE_CUSTOM_FRAME_PING && context === MULTI_PANEL_CONTEXT) {
       if (providerId && typeof event.data.requestId === 'string' && event.data.requestId.length > 0) {
