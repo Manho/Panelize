@@ -1,3 +1,6 @@
+import { preserveForeignCustomIds } from './provider-order.js';
+import { hasProviderDescriptor } from './provider-registry.js';
+
 export const LEGACY_DEFAULT_PROVIDER_IDS = [
   'chatgpt',
   'claude',
@@ -30,10 +33,15 @@ export function migrateEnabledProvidersOnUpdate(enabledProviders, providerOrder)
   }
 
   const migratedProviderIds = buildMigratedProviderOrder(nextProviderOrder || nextEnabledProviders);
+  const preservedProviderOrder = preserveForeignCustomIds(
+    migratedProviderIds,
+    nextProviderOrder,
+    hasProviderDescriptor
+  );
 
   return {
     enabledProviders: migratedProviderIds,
-    providerOrder: migratedProviderIds,
+    providerOrder: preservedProviderOrder,
   };
 }
 

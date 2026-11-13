@@ -1,11 +1,17 @@
-import { syncFrameHeaderRules } from './frame-header-rules.js';
+import { isCustomProviderId, loadCustomProviders } from './custom-providers.js';
+import { supportsScopedFrameRules, syncFrameHeaderRulesWithStatus } from './frame-header-rules.js';
 import {
   BUILTIN_PROVIDER_DESCRIPTORS,
+  CUSTOM_FRAME_RULE_ID_MAX,
+  CUSTOM_FRAME_RULE_ID_MIN,
   getProviderDescriptor,
   listProviderDescriptors
 } from './provider-registry.js';
 
+export { supportsScopedFrameRules } from './frame-header-rules.js';
+
 const optionalConfigCache = new WeakMap();
+const CUSTOM_PROVIDER_SCRIPT_ID_PATTERN = /^custom-[0-9a-f]{10}-scripts$/;
 
 function createContentScriptFromSpec(id, contentScriptSpec) {
   return {
@@ -79,6 +85,19 @@ export function getOptionalProviderConfig(providerId) {
 }
 
 export async function hasOptionalProviderPermission(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access === 'custom') {
+    if (!chrome.permissions?.contains) {
+      return false;
+    }
+    return Boolean(
+      await chrome.permissions.contains({ origins: [...descriptor.permissionOrigins] })
+    );
+  }
+  if (isCustomProviderId(providerId)) {
+    return false;
+  }
+
   const config = getOptionalProviderConfig(providerId);
   if (!config) {
     return true;
@@ -88,6 +107,17 @@ export async function hasOptionalProviderPermission(providerId) {
 }
 
 export function requestOptionalProviderPermission(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access === 'custom') {
+    if (!chrome.permissions?.request) {
+      return Promise.resolve(false);
+    }
+    return chrome.permissions.request({ origins: [...descriptor.permissionOrigins] });
+  }
+  if (isCustomProviderId(providerId)) {
+    return Promise.resolve(false);
+  }
+
   const config = getOptionalProviderConfig(providerId);
   if (!config) {
     return Promise.resolve(true);
@@ -111,9 +141,41 @@ export async function filterProvidersWithGrantedAccess(providerIds) {
     .map(({ providerId }) => providerId);
 }
 
-export async function syncOptionalProviderAccess(enabledProviderIds) {
+function isManagedCustomRuleId(id) {
+  return (
+    Number.isInteger(id) &&
+    id >= CUSTOM_FRAME_RULE_ID_MIN &&
+    id <= CUSTOM_FRAME_RULE_ID_MAX
+  );
+}
+
+function isManagedCustomScriptId(id) {
+  return typeof id === 'string' && CUSTOM_PROVIDER_SCRIPT_ID_PATTERN.test(id);
+}
+
+function createCustomProviderConfig(descriptor) {
+  return {
+    origins: descriptor.permissionOrigins,
+    contentScript: {
+      id: `${descriptor.id}-scripts`,
+      matches: [...descriptor.contentScript.matches],
+      js: [...descriptor.contentScript.js],
+      allFrames: true,
+      persistAcrossSessions: true,
+      world: 'ISOLATED',
+      runAt: 'document_start'
+    },
+    frameRule: createFrameRule(descriptor.frameRule.id, descriptor.frameRule.urlFilter)
+  };
+}
+
+export async function syncOptionalProviderAccess(
+  enabledProviderIds,
+  { reconcileCustom = true } = {}
+) {
   const enabledIds = new Set(Array.isArray(enabledProviderIds) ? enabledProviderIds : []);
-  const configs = listProviderDescriptors()
+  const allDescriptors = listProviderDescriptors();
+  const configs = allDescriptors
     .filter((descriptor) => descriptor.access === 'optional')
     .map((descriptor) => [descriptor.id, toOptionalProviderConfig(descriptor)]);
   const desiredConfigs = [];
@@ -124,8 +186,36 @@ export async function syncOptionalProviderAccess(enabledProviderIds) {
     }
   }
 
-  await syncContentScripts(configs.map(([, config]) => config), desiredConfigs);
-  await syncFrameRules(configs.map(([, config]) => config), desiredConfigs);
+  const candidateCustomConfigs = [];
+  if (reconcileCustom && supportsScopedFrameRules()) {
+    const customDescriptors = allDescriptors.filter(
+      (descriptor) => descriptor.access === 'custom'
+    );
+    for (const descriptor of customDescriptors) {
+      if (enabledIds.has(descriptor.id) && await hasOptionalProviderPermission(descriptor.id)) {
+        candidateCustomConfigs.push(createCustomProviderConfig(descriptor));
+      }
+    }
+  }
+
+  const { scopedInstalled } = await syncFrameRules(
+    configs.map(([, config]) => config),
+    desiredConfigs,
+    {
+      customConfigs: candidateCustomConfigs,
+      reconcileCustom
+    }
+  );
+  const activeCustomConfigs = reconcileCustom && scopedInstalled ? candidateCustomConfigs : [];
+
+  await syncContentScripts(
+    configs.map(([, config]) => config),
+    desiredConfigs,
+    {
+      desiredCustomConfigs: activeCustomConfigs,
+      reconcileCustom
+    }
+  );
 }
 
 /**
@@ -134,47 +224,108 @@ export async function syncOptionalProviderAccess(enabledProviderIds) {
  */
 export async function reconcileOptionalProviderAccess() {
   try {
+    const hydration = await loadCustomProviders();
     const settings = await chrome.storage.sync.get({ enabledProviders: [] });
     const enabledProviderIds = Array.isArray(settings.enabledProviders)
       ? settings.enabledProviders
       : [];
 
-    await syncOptionalProviderAccess(enabledProviderIds);
+    await syncOptionalProviderAccess(enabledProviderIds, {
+      reconcileCustom: hydration.ok
+    });
   } catch (error) {
     console.error('[Background] Failed to synchronize optional provider access:', error);
   }
 }
 
-async function syncContentScripts(allConfigs, desiredConfigs) {
+function isSameStringArray(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
+}
+
+function matchesRegisteredCustomScript(registeredScript, desiredScript) {
+  if (!registeredScript || registeredScript.id !== desiredScript.id) {
+    return false;
+  }
+  if (
+    Array.isArray(registeredScript.matches) &&
+    !isSameStringArray(registeredScript.matches, desiredScript.matches)
+  ) {
+    return false;
+  }
+  if (
+    Array.isArray(registeredScript.js) &&
+    !isSameStringArray(registeredScript.js, desiredScript.js)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function syncContentScripts(
+  allConfigs,
+  desiredConfigs,
+  { desiredCustomConfigs = [], reconcileCustom = true } = {}
+) {
   if (!chrome.scripting?.getRegisteredContentScripts) {
     return;
   }
 
-  const managedScriptIds = new Set(allConfigs.map(({ contentScript }) => contentScript.id));
-  const desiredScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
+  const managedOptionalScriptIds = new Set(allConfigs.map(({ contentScript }) => contentScript.id));
+  const isManagedScriptId = (id) => (
+    managedOptionalScriptIds.has(id) ||
+    (reconcileCustom && isManagedCustomScriptId(id))
+  );
+
+  const desiredOptionalScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
+  const desiredCustomById = new Map(
+    desiredCustomConfigs.map(({ contentScript }) => [contentScript.id, contentScript])
+  );
+
   const registeredScripts = await chrome.scripting.getRegisteredContentScripts();
-  const registeredManagedIds = registeredScripts
+  const registeredManagedScripts = registeredScripts.filter(({ id }) => isManagedScriptId(id));
+
+  const unchangedIds = new Set();
+  for (const script of registeredManagedScripts) {
+    if (desiredOptionalScriptIds.has(script.id)) {
+      unchangedIds.add(script.id);
+      continue;
+    }
+    const desiredCustom = desiredCustomById.get(script.id);
+    if (desiredCustom && matchesRegisteredCustomScript(script, desiredCustom)) {
+      unchangedIds.add(script.id);
+    }
+  }
+
+  const scriptIdsToRemove = registeredManagedScripts
     .map(({ id }) => id)
-    .filter((id) => managedScriptIds.has(id));
-  const scriptIdsToRemove = registeredManagedIds.filter((id) => !desiredScriptIds.has(id));
+    .filter((id) => !unchangedIds.has(id));
 
   if (scriptIdsToRemove.length > 0) {
     await chrome.scripting.unregisterContentScripts({ ids: scriptIdsToRemove });
   }
 
-  const registeredIdSet = new Set(registeredManagedIds);
-  const scriptsToRegister = desiredConfigs
-    .map(({ contentScript }) => contentScript)
-    .filter(({ id }) => !registeredIdSet.has(id));
+  const scriptsToRegister = [
+    ...desiredConfigs.map(({ contentScript }) => contentScript),
+    ...desiredCustomConfigs.map(({ contentScript }) => contentScript)
+  ].filter(({ id }) => !unchangedIds.has(id));
 
   if (scriptsToRegister.length > 0) {
     await chrome.scripting.registerContentScripts(scriptsToRegister);
   }
 }
 
-async function syncFrameRules(allConfigs, desiredConfigs) {
-  await syncFrameHeaderRules({
+async function syncFrameRules(
+  allConfigs,
+  desiredConfigs,
+  { customConfigs = [], reconcileCustom = true } = {}
+) {
+  return syncFrameHeaderRulesWithStatus({
     optionalRules: desiredConfigs.map(({ frameRule }) => frameRule).filter(Boolean),
-    optionalRuleIds: allConfigs.map(({ frameRule }) => frameRule?.id).filter(Number.isInteger)
+    optionalRuleIds: allConfigs.map(({ frameRule }) => frameRule?.id).filter(Number.isInteger),
+    customRules: customConfigs.map(({ frameRule }) => frameRule).filter(Boolean),
+    isManagedCustomRuleId: reconcileCustom ? isManagedCustomRuleId : () => false
   });
 }

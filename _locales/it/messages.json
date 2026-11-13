@@ -959,5 +959,80 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Filigrana sulle immagini condivise disattivata"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Le immagini non sono state inviate a: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "Aggiungi IA personalizzata"
+  },
+  "labelCustomProviderName": {
+    "message": "Nome (max 40 caratteri)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "Il mio assistente IA"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com o http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "Aggiungi"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize chiederà l’accesso a $1"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "Per aggiungere o attivare siti di IA personalizzati è richiesto Chrome 145 o successivo."
+  },
+  "errCustomNameRequired": {
+    "message": "Inserisci un nome per questa IA personalizzata."
+  },
+  "errCustomNameTooLong": {
+    "message": "Il nome non può superare i 40 caratteri."
+  },
+  "errCustomUrlInvalid": {
+    "message": "Inserisci un URL valido (ad esempio, https://chat.example.com o http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "Sono supportati solo URL https:// e http:// locali."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "L’URL deve includere un nome host."
+  },
+  "errCustomUrlCredentials": {
+    "message": "Rimuovi nome utente e password dall’URL."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "http:// in chiaro è consentito solo per localhost e IP di rete privata. Usa https://."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "Questo sito è già disponibile come provider integrato."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "È già stata aggiunta un’IA personalizzata per questa origine."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "L’accesso al sito $1 non è stato concesso."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "Impossibile salvare l’IA personalizzata. Riprova."
+  },
+  "msgCustomProviderAdded": {
+    "message": "IA personalizzata aggiunta: $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "IA personalizzata rimossa: $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "Rimuovere?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "Conferma"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "Elimina $1"
   }
 }

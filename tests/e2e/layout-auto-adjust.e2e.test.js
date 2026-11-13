@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { createPatchedExtensionCopy, launchExtension, openMultiPanel } from './extension-harness.js';
+import {
+  createPatchedExtensionCopy,
+  filterNonWildcardHostPermissions,
+  launchExtension,
+  openMultiPanel,
+} from './extension-harness.js';
 import { PROVIDERS } from '../../modules/providers.js';
 
 // Every provider, so the add panel menu can fill all MAX_PANELS (12) slots.
@@ -19,7 +24,7 @@ test.describe('Layout auto-adjust E2E', () => {
     // Optional providers only appear once their host permission is granted,
     // which needs a user gesture; grant them up front in a patched copy.
     extensionCopy = await createPatchedExtensionCopy((manifest) => {
-      manifest.host_permissions.push(...manifest.optional_host_permissions);
+      manifest.host_permissions.push(...filterNonWildcardHostPermissions(manifest.optional_host_permissions));
     });
     extension = await launchExtension({
       extensionPath: extensionCopy.extensionPath,

@@ -959,5 +959,80 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Wasserzeichen auf geteilten Bildern deaktiviert"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Bilder wurden nicht gesendet an: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "Eigene KI hinzufügen"
+  },
+  "labelCustomProviderName": {
+    "message": "Name (max. 40 Zeichen)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "Mein KI-Assistent"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com oder http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "Hinzufügen"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize fragt nach Zugriff auf $1"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "Zum Hinzufügen oder Aktivieren eigener KI-Seiten ist Chrome 145 oder neuer erforderlich."
+  },
+  "errCustomNameRequired": {
+    "message": "Bitte gib einen Namen für diese eigene KI ein."
+  },
+  "errCustomNameTooLong": {
+    "message": "Der Name darf höchstens 40 Zeichen lang sein."
+  },
+  "errCustomUrlInvalid": {
+    "message": "Bitte gib eine gültige URL ein (z. B. https://chat.example.com oder http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "Nur https://- und lokale http://-URLs werden unterstützt."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "Die URL muss einen Hostnamen enthalten."
+  },
+  "errCustomUrlCredentials": {
+    "message": "Entferne Benutzername und Passwort aus der URL."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "Unverschlüsseltes http:// ist nur für localhost und private Netzwerk-IPs erlaubt. Verwende stattdessen https://."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "Diese Website ist bereits als integrierter Anbieter verfügbar."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "Eine eigene KI für diesen Ursprung wurde bereits hinzugefügt."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "Der Website-Zugriff auf $1 wurde nicht gewährt."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "Eigene KI konnte nicht gespeichert werden. Bitte versuche es erneut."
+  },
+  "msgCustomProviderAdded": {
+    "message": "Eigene KI hinzugefügt: $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "Eigene KI entfernt: $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "Entfernen?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "Bestätigen"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "$1 löschen"
   }
 }

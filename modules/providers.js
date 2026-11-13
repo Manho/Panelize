@@ -47,6 +47,10 @@ function toProviderObject(descriptor) {
 
 export const PROVIDERS = BUILTIN_PROVIDER_DESCRIPTORS.map(toProviderObject);
 
+export function listProviders() {
+  return listProviderDescriptors().map(toProviderObject);
+}
+
 export function getProviderIcon(provider, theme = null) {
   if (!provider) return '';
 

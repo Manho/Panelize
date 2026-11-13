@@ -959,5 +959,80 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Водяной знак на изображениях выключен"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Изображения не были отправлены в: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "Добавить свой ИИ"
+  },
+  "labelCustomProviderName": {
+    "message": "Название (до 40 символов)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "Мой ИИ-ассистент"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com или http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "Добавить"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize запросит доступ к $1"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "Для добавления или включения пользовательских сайтов ИИ требуется Chrome 145 или новее."
+  },
+  "errCustomNameRequired": {
+    "message": "Введите название для этого пользовательского ИИ."
+  },
+  "errCustomNameTooLong": {
+    "message": "Название не должно превышать 40 символов."
+  },
+  "errCustomUrlInvalid": {
+    "message": "Введите корректный URL (например, https://chat.example.com или http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "Поддерживаются только https:// и локальные http:// URL."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "URL должен содержать имя хоста."
+  },
+  "errCustomUrlCredentials": {
+    "message": "Удалите имя пользователя и пароль из URL."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "Открытый http:// разрешён только для localhost и частных IP-адресов. Используйте https://."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "Этот сайт уже доступен как встроенный провайдер."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "Пользовательский ИИ для этого источника уже добавлен."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "Доступ к сайту $1 не был предоставлен."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "Не удалось сохранить пользовательский ИИ. Попробуйте снова."
+  },
+  "msgCustomProviderAdded": {
+    "message": "Добавлен пользовательский ИИ: $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "Удалён пользовательский ИИ: $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "Удалить?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "Подтвердить"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "Удалить $1"
   }
 }

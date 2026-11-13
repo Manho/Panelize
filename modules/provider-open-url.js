@@ -17,6 +17,29 @@ function parseHttpUrl(url) {
   }
 }
 
+function parseCustomHttpOrHttpsUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return null;
+    }
+    if (parsed.username || parsed.password) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function hasExactCustomProviderOrigin(descriptor, url) {
+  return Boolean(descriptor && url && descriptor.frameOrigins.includes(url.origin));
+}
+
 function hasAllowedProviderHost(providerId, url) {
   const descriptor = getProviderDescriptor(providerId);
   return Boolean(descriptor && descriptor.allowedHosts.includes(url.hostname));
@@ -64,6 +87,12 @@ export function findMessageSourcePanel(panels, event) {
 }
 
 export function isProviderAllowedUrl(providerId, rawUrl) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access === 'custom') {
+    const url = parseCustomHttpOrHttpsUrl(rawUrl);
+    return hasExactCustomProviderOrigin(descriptor, url);
+  }
+
   const url = parseHttpUrl(rawUrl);
   return Boolean(url && hasAllowedProviderHost(providerId, url));
 }
@@ -81,10 +110,27 @@ export function getProviderFallbackUrl(provider, providerMode = null) {
     return getGoogleProviderUrl(normalizeGoogleProviderMode(providerMode));
   }
 
+  const descriptor = getProviderDescriptor(provider.id);
+  if (descriptor?.access === 'custom') {
+    const candidate =
+      provider.topLevelUrl || provider.url || descriptor.topLevelUrl || descriptor.url || '';
+    const parsed = parseCustomHttpOrHttpsUrl(candidate);
+    if (hasExactCustomProviderOrigin(descriptor, parsed)) {
+      return parsed.toString();
+    }
+    return descriptor.topLevelUrl || descriptor.url || '';
+  }
+
   return provider.topLevelUrl || provider.url || '';
 }
 
 export function isProviderCurrentUrl(providerId, rawUrl) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access === 'custom') {
+    const url = parseCustomHttpOrHttpsUrl(rawUrl);
+    return hasExactCustomProviderOrigin(descriptor, url);
+  }
+
   const url = parseHttpUrl(rawUrl);
   if (!url || !hasAllowedProviderHost(providerId, url)) {
     return false;

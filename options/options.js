@@ -1,10 +1,30 @@
 // T050-T064: Settings Page Implementation
-import { PROVIDERS, getProviderIcon } from '../modules/providers.js';
+import { listProviders, getProviderIcon } from '../modules/providers.js';
+import {
+  getProviderDescriptor,
+  hasProviderDescriptor,
+  listProviderDescriptors
+} from '../modules/provider-registry.js';
+import {
+  addCustomProvider,
+  allocateCustomFrameRuleId,
+  generateCustomProviderId,
+  loadCustomProviders,
+  MAX_CUSTOM_PROVIDER_NAME_LENGTH,
+  removeCustomProvider,
+  subscribeCustomProvidersChanged,
+  validateCustomProviderUrl
+} from '../modules/custom-providers.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
-import { appendProviderToOrder, normalizeProviderOrder } from '../modules/provider-order.js';
+import {
+  appendProviderToOrder,
+  normalizeProviderOrder,
+  preserveForeignCustomIds
+} from '../modules/provider-order.js';
 import {
   hasOptionalProviderPermission,
-  requestOptionalProviderPermission
+  requestOptionalProviderPermission,
+  supportsScopedFrameRules
 } from '../modules/optional-provider-access.js';
 import { getSettings, getSetting, saveSettings, saveSetting, resetSettings, exportSettings, importSettings } from '../modules/settings.js';
 import {
@@ -27,6 +47,356 @@ import {
 } from '../modules/version-checker.js';
 import { t, translatePage, getCurrentLanguage, initializeLanguage } from '../modules/i18n.js';
 const DEFAULT_ENABLED_PROVIDERS = DEFAULT_PROVIDER_IDS;
+
+export const CUSTOM_URL_REASON_MESSAGE_KEYS = Object.freeze({
+  invalid_url: 'errCustomUrlInvalid',
+  unsupported_scheme: 'errCustomUrlUnsupportedScheme',
+  empty_host: 'errCustomUrlEmptyHost',
+  credentials_not_allowed: 'errCustomUrlCredentials',
+  insecure_http: 'errCustomUrlInsecureHttp',
+  builtin_origin: 'errCustomUrlBuiltinOrigin',
+  duplicate_custom_origin: 'errCustomUrlDuplicateOrigin'
+});
+
+let isSubmittingCustomProvider = false;
+
+export function getCustomProviderUrlErrorMessage(reason) {
+  const key = CUSTOM_URL_REASON_MESSAGE_KEYS[reason] || 'errCustomUrlInvalid';
+  return t(key);
+}
+
+export function isOriginUsedByAnyProvider(origin, { excludeProviderId = null } = {}) {
+  if (typeof origin !== 'string' || origin.length === 0) {
+    return false;
+  }
+  const matchPattern = `${origin}/*`;
+  return listProviderDescriptors().some((descriptor) => {
+    if (excludeProviderId && descriptor.id === excludeProviderId) {
+      return false;
+    }
+    if (descriptor.frameOrigins?.includes(origin)) {
+      return true;
+    }
+    if (descriptor.permissionOrigins?.includes(matchPattern)) {
+      return true;
+    }
+    return false;
+  });
+}
+
+function getCustomProviderFormElements() {
+  return {
+    form: document.getElementById('custom-provider-form'),
+    nameInput: document.getElementById('custom-provider-name'),
+    urlInput: document.getElementById('custom-provider-url'),
+    addButton: document.getElementById('custom-provider-add-btn'),
+    originPreview: document.getElementById('custom-provider-origin-preview'),
+    errorMessage: document.getElementById('custom-provider-error'),
+    unsupportedNote: document.getElementById('custom-provider-unsupported')
+  };
+}
+
+export function syncCustomProviderFormAvailability() {
+  const { nameInput, urlInput, addButton, unsupportedNote } = getCustomProviderFormElements();
+  const supported = supportsScopedFrameRules();
+  const disabled = !supported || isSubmittingCustomProvider;
+
+  if (unsupportedNote) {
+    unsupportedNote.textContent = t('msgCustomProviderUnsupportedChrome');
+    unsupportedNote.hidden = supported;
+  }
+  if (nameInput) {
+    nameInput.disabled = disabled;
+  }
+  if (urlInput) {
+    urlInput.disabled = disabled;
+  }
+  if (addButton) {
+    addButton.disabled = disabled;
+  }
+}
+
+function clearCustomProviderFormError() {
+  const { nameInput, urlInput, errorMessage } = getCustomProviderFormElements();
+  nameInput?.removeAttribute('aria-invalid');
+  urlInput?.removeAttribute('aria-invalid');
+  if (errorMessage) {
+    errorMessage.textContent = '';
+    errorMessage.hidden = true;
+  }
+}
+
+function setCustomProviderFormError(message, invalidField = null) {
+  const { nameInput, urlInput, errorMessage } = getCustomProviderFormElements();
+  nameInput?.removeAttribute('aria-invalid');
+  urlInput?.removeAttribute('aria-invalid');
+  if (invalidField) {
+    invalidField.setAttribute('aria-invalid', 'true');
+  }
+  if (errorMessage) {
+    errorMessage.textContent = message;
+    errorMessage.hidden = false;
+  }
+}
+
+export function updateCustomProviderOriginPreview() {
+  const { urlInput, originPreview } = getCustomProviderFormElements();
+  if (!originPreview || !urlInput) {
+    return;
+  }
+  const raw = urlInput.value;
+  if (!raw || raw.trim().length === 0) {
+    originPreview.textContent = '';
+    originPreview.hidden = true;
+    return;
+  }
+
+  const check = validateCustomProviderUrl(raw);
+  if (check.ok && check.origin) {
+    originPreview.textContent = t('msgCustomProviderOriginPreview', check.origin);
+    originPreview.hidden = false;
+    return;
+  }
+
+  originPreview.textContent = '';
+  originPreview.hidden = true;
+}
+
+export async function handleCustomProviderFormSubmit(event) {
+  event?.preventDefault?.();
+
+  if (isSubmittingCustomProvider) {
+    return;
+  }
+
+  const { nameInput, urlInput } = getCustomProviderFormElements();
+  if (!supportsScopedFrameRules()) {
+    const message = t('msgCustomProviderUnsupportedChrome');
+    setCustomProviderFormError(message);
+    showStatus('error', message);
+    return;
+  }
+
+  const rawName = typeof nameInput?.value === 'string' ? nameInput.value : '';
+  const trimmedName = rawName.trim();
+  if (trimmedName.length === 0) {
+    setCustomProviderFormError(t('errCustomNameRequired'), nameInput);
+    nameInput?.focus?.();
+    return;
+  }
+  if (trimmedName.length > MAX_CUSTOM_PROVIDER_NAME_LENGTH) {
+    setCustomProviderFormError(t('errCustomNameTooLong'), nameInput);
+    nameInput?.focus?.();
+    return;
+  }
+
+  const rawUrl = typeof urlInput?.value === 'string' ? urlInput.value : '';
+  const urlCheck = validateCustomProviderUrl(rawUrl);
+  if (!urlCheck.ok) {
+    const message = getCustomProviderUrlErrorMessage(urlCheck.reason);
+    setCustomProviderFormError(message, urlInput);
+    urlInput?.focus?.();
+    return;
+  }
+
+  let id;
+  let frameRuleId;
+  try {
+    id = generateCustomProviderId();
+    frameRuleId = allocateCustomFrameRuleId();
+  } catch (allocationError) {
+    const message = t('errCustomProviderSaveFailed');
+    setCustomProviderFormError(message);
+    showStatus('error', message);
+    return;
+  }
+
+  const createdAt = Date.now();
+  const permissionOrigin = `${urlCheck.origin}/*`;
+
+  clearCustomProviderFormError();
+  isSubmittingCustomProvider = true;
+  syncCustomProviderFormAvailability();
+
+  // Synchronously invoke chrome.permissions.request before any await so Chrome
+  // preserves the transient user activation from clicking Add / pressing Enter.
+  let permissionPromise;
+  try {
+    permissionPromise = chrome?.permissions?.request
+      ? chrome.permissions.request({ origins: [permissionOrigin] })
+      : Promise.resolve(false);
+  } catch (requestSyncError) {
+    isSubmittingCustomProvider = false;
+    syncCustomProviderFormAvailability();
+    const message = t('msgProviderPermissionRequestFailed', trimmedName);
+    setCustomProviderFormError(message);
+    showStatus('error', message);
+    return;
+  }
+
+  try {
+    let granted = false;
+    try {
+      granted = Boolean(await permissionPromise);
+    } catch (requestError) {
+      const message = t('msgProviderPermissionRequestFailed', trimmedName);
+      setCustomProviderFormError(message);
+      showStatus('error', message);
+      return;
+    }
+
+    if (!granted) {
+      const message = t('msgCustomProviderPermissionDenied', urlCheck.origin);
+      setCustomProviderFormError(message);
+      showStatus('error', message);
+      return;
+    }
+
+    let addedToLocal = false;
+    try {
+      const savedRecord = await addCustomProvider({
+        id,
+        name: trimmedName,
+        url: urlCheck.url,
+        frameRuleId,
+        createdAt
+      });
+      addedToLocal = true;
+
+      const settings = await getSettings();
+      const previousEnabledProviders = getEnabledProvidersOrDefault(settings);
+      const nextEnabledRaw = previousEnabledProviders.includes(savedRecord.id)
+        ? [...previousEnabledProviders]
+        : [...previousEnabledProviders, savedRecord.id];
+      const enabledProviders = preserveForeignCustomIds(
+        nextEnabledRaw,
+        previousEnabledProviders,
+        hasProviderDescriptor
+      );
+
+      const previousOrder = Array.isArray(settings.providerOrder)
+        ? settings.providerOrder
+        : previousEnabledProviders;
+      const providerOrder = preserveForeignCustomIds(
+        appendProviderToOrder(
+          settings.providerOrder,
+          previousEnabledProviders,
+          savedRecord.id,
+          listProviders().map(({ id: providerId }) => providerId)
+        ),
+        previousOrder,
+        hasProviderDescriptor
+      );
+
+      await chrome.storage.sync.set({ enabledProviders, providerOrder });
+
+      if (nameInput) nameInput.value = '';
+      if (urlInput) urlInput.value = '';
+      updateCustomProviderOriginPreview();
+      clearCustomProviderFormError();
+      await renderProviderList();
+      showStatus('success', t('msgCustomProviderAdded', savedRecord.name));
+    } catch (persistError) {
+      if (addedToLocal) {
+        await removeCustomProvider(id).catch(() => {});
+      }
+      await loadCustomProviders().catch(() => {});
+      if (
+        !isOriginUsedByAnyProvider(urlCheck.origin, { excludeProviderId: id }) &&
+        chrome?.permissions?.remove
+      ) {
+        await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+      }
+      const message = persistError?.reason && CUSTOM_URL_REASON_MESSAGE_KEYS[persistError.reason]
+        ? getCustomProviderUrlErrorMessage(persistError.reason)
+        : t('errCustomProviderSaveFailed');
+      setCustomProviderFormError(message);
+      showStatus('error', message);
+    }
+  } finally {
+    isSubmittingCustomProvider = false;
+    syncCustomProviderFormAvailability();
+  }
+}
+
+export async function deleteCustomProviderEntry(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (!descriptor || descriptor.access !== 'custom') {
+    return false;
+  }
+
+  const origin = descriptor.frameOrigins[0] || null;
+  const providerName = descriptor.name;
+
+  await removeCustomProvider(providerId);
+
+  const syncState = await chrome.storage.sync.get({
+    enabledProviders: DEFAULT_ENABLED_PROVIDERS,
+    providerOrder: null,
+    multiPanelProviders: null
+  });
+  const currentEnabled = Array.isArray(syncState?.enabledProviders)
+    ? syncState.enabledProviders
+    : DEFAULT_ENABLED_PROVIDERS;
+  const syncUpdates = {
+    enabledProviders: currentEnabled.filter((id) => id !== providerId)
+  };
+  if (Array.isArray(syncState?.providerOrder)) {
+    syncUpdates.providerOrder = syncState.providerOrder.filter((id) => id !== providerId);
+  }
+  if (Array.isArray(syncState?.multiPanelProviders)) {
+    syncUpdates.multiPanelProviders = syncState.multiPanelProviders.filter((id) => id !== providerId);
+  }
+  await chrome.storage.sync.set(syncUpdates);
+
+  if (origin && !isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
+    await chrome.permissions.remove({ origins: [`${origin}/*`] }).catch((error) => {
+      console.warn(`Failed to revoke permission for ${origin}:`, error);
+    });
+  }
+
+  await renderProviderList();
+  showStatus('success', t('msgCustomProviderDeleted', providerName));
+  return true;
+}
+
+function setupCustomProviderForm() {
+  const { form, nameInput, urlInput } = getCustomProviderFormElements();
+  syncCustomProviderFormAvailability();
+  updateCustomProviderOriginPreview();
+
+  if (!form || form.dataset.customFormBound === 'true') {
+    return;
+  }
+  form.dataset.customFormBound = 'true';
+
+  nameInput?.addEventListener('input', () => {
+    clearCustomProviderFormError();
+  });
+
+  urlInput?.addEventListener('input', () => {
+    clearCustomProviderFormError();
+    updateCustomProviderOriginPreview();
+  });
+
+  urlInput?.addEventListener('blur', () => {
+    if (!supportsScopedFrameRules()) {
+      return;
+    }
+    const raw = urlInput.value;
+    if (!raw || raw.trim().length === 0) {
+      return;
+    }
+    const check = validateCustomProviderUrl(raw);
+    if (!check.ok) {
+      setCustomProviderFormError(getCustomProviderUrlErrorMessage(check.reason), urlInput);
+    }
+  });
+
+  form.addEventListener('submit', (event) => {
+    handleCustomProviderFormSubmit(event);
+  });
+}
 
 function fitSelectWidth(select) {
   if (!(select instanceof HTMLSelectElement)) {
@@ -87,19 +457,31 @@ function getGoogleProviderModeOrDefault(settings) {
   return normalizeGoogleProviderMode(settings.googleProviderMode || DEFAULT_GOOGLE_PROVIDER_MODE);
 }
 
-function renderGoogleModeSelectMarkup(currentMode, isEnabled) {
+function createGoogleModeSelectElement(currentMode, isEnabled) {
   const normalizedMode = normalizeGoogleProviderMode(currentMode);
-  return `
-    <select
-      class="google-mode-select"
-      data-google-mode-select="true"
-      ${isEnabled ? '' : 'disabled'}
-      title="Google provider mode"
-    >
-      <option value="${GOOGLE_PROVIDER_MODE_AI}" ${normalizedMode === GOOGLE_PROVIDER_MODE_AI ? 'selected' : ''}>AI Mode</option>
-      <option value="${GOOGLE_PROVIDER_MODE_SEARCH}" ${normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH ? 'selected' : ''}>Search</option>
-    </select>
-  `;
+  const select = document.createElement('select');
+  select.className = 'google-mode-select';
+  select.dataset.googleModeSelect = 'true';
+  select.disabled = !isEnabled;
+  select.title = 'Google provider mode';
+
+  const aiOption = document.createElement('option');
+  aiOption.value = GOOGLE_PROVIDER_MODE_AI;
+  aiOption.textContent = 'AI Mode';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_AI) {
+    aiOption.selected = true;
+  }
+
+  const searchOption = document.createElement('option');
+  searchOption.value = GOOGLE_PROVIDER_MODE_SEARCH;
+  searchOption.textContent = 'Search';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH) {
+    searchOption.selected = true;
+  }
+
+  select.append(aiOption, searchOption);
+  select.value = normalizedMode;
+  return select;
 }
 
 // Helper function to get browser's current language in our supported format
@@ -123,7 +505,7 @@ function getEnabledProvidersOrDefault(settings) {
 }
 
 function getProviderDisplayOrder(settings) {
-  const allIds = PROVIDERS.map(provider => provider.id);
+  const allIds = listProviders().map(provider => provider.id);
   return normalizeProviderOrder(settings.providerOrder, allIds);
 }
 
@@ -242,9 +624,11 @@ function updateShortcutHelperVisibility(isEnabled) {
 
 // T050: Initialize settings page
 async function init() {
+  await loadCustomProviders();
   await applyTheme();  // Apply theme first
   await initializeLanguage();  // Initialize language from user settings
   translatePage();  // Translate all static text
+  setupCustomProviderForm();
   await loadSettings();
   await loadDataStats();
   await loadLibraryCount();  // Load default library count
@@ -330,54 +714,187 @@ function hideIconOnLoadError(image) {
   image.addEventListener('error', () => { image.style.display = 'none'; }, { once: true });
 }
 
-async function renderProviderList() {
+function createCustomProviderDeleteControlElement(provider) {
+  const group = document.createElement('div');
+  group.className = 'custom-provider-delete-group';
+  group.addEventListener('mousedown', (event) => {
+    event.stopPropagation();
+  });
+
+  const deleteButton = document.createElement('button');
+  deleteButton.type = 'button';
+  deleteButton.className = 'btn-provider-delete';
+  deleteButton.dataset.action = 'delete-custom-provider';
+  deleteButton.dataset.providerId = provider.id;
+  deleteButton.textContent = t('btnDelete');
+  deleteButton.setAttribute('aria-label', t('ariaDeleteCustomProvider', provider.name));
+
+  const confirmBox = document.createElement('div');
+  confirmBox.className = 'custom-provider-delete-confirm';
+  confirmBox.hidden = true;
+
+  const promptSpan = document.createElement('span');
+  promptSpan.className = 'custom-provider-delete-prompt';
+  promptSpan.textContent = t('msgConfirmDeleteCustomInline');
+
+  const confirmButton = document.createElement('button');
+  confirmButton.type = 'button';
+  confirmButton.className = 'btn-provider-delete-confirm';
+  confirmButton.dataset.action = 'confirm-delete-custom-provider';
+  confirmButton.dataset.providerId = provider.id;
+  confirmButton.textContent = t('btnConfirmDeleteCustom');
+
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'btn-provider-delete-cancel';
+  cancelButton.dataset.action = 'cancel-delete-custom-provider';
+  cancelButton.dataset.providerId = provider.id;
+  cancelButton.textContent = t('btnCancel');
+
+  deleteButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteButton.hidden = true;
+    confirmBox.hidden = false;
+    confirmButton.focus?.();
+  });
+
+  cancelButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    confirmBox.hidden = true;
+    deleteButton.hidden = false;
+    deleteButton.focus?.();
+  });
+
+  confirmButton.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    confirmButton.disabled = true;
+    cancelButton.disabled = true;
+    try {
+      await deleteCustomProviderEntry(provider.id);
+    } catch (error) {
+      confirmButton.disabled = false;
+      cancelButton.disabled = false;
+      console.error(`Failed to delete custom provider ${provider.id}:`, error);
+    }
+  });
+
+  confirmBox.append(promptSpan, confirmButton, cancelButton);
+  group.append(deleteButton, confirmBox);
+  return group;
+}
+
+function createProviderListItemElement(
+  provider,
+  { isEnabledPreference, hasAccess, googleProviderMode, descriptor }
+) {
+  const isCustom = descriptor?.access === 'custom';
+  const isEnabled = isEnabledPreference && hasAccess;
+
+  const item = document.createElement('div');
+  item.className = isEnabled ? 'provider-item draggable' : 'provider-item';
+  item.dataset.providerId = provider.id;
+  item.dataset.enabledPreference = String(isEnabledPreference);
+  item.dataset.hasAccess = String(hasAccess);
+  if (isCustom) {
+    item.dataset.customProvider = 'true';
+  }
+  item.setAttribute('draggable', String(isEnabled));
+
+  const info = document.createElement('div');
+  info.className = 'provider-info';
+
+  if (isEnabled) {
+    const dragHandleTemplate = document.createElement('template');
+    dragHandleTemplate.innerHTML = '<span class="drag-handle material-symbols-outlined">drag_indicator</span>';
+    info.appendChild(dragHandleTemplate.content.firstElementChild);
+  }
+
+  const iconWrapper = document.createElement('div');
+  iconWrapper.className = 'provider-icon';
+  const iconImg = document.createElement('img');
+  // Inline onerror handlers are blocked by the extension CSP.
+  hideIconOnLoadError(iconImg);
+  iconImg.setAttribute('src', getProviderIcon(provider));
+  iconImg.setAttribute('alt', provider.name);
+  iconImg.setAttribute('width', '24');
+  iconImg.setAttribute('height', '24');
+  iconWrapper.appendChild(iconImg);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'provider-name';
+  nameSpan.textContent = provider.name;
+
+  info.append(iconWrapper, nameSpan);
+
+  if (isCustom && descriptor.frameOrigins?.[0]) {
+    const origin = descriptor.frameOrigins[0];
+    const originBadge = document.createElement('span');
+    originBadge.className = 'provider-origin-badge';
+    const shadow = originBadge.attachShadow({ mode: 'open' });
+    const bdiEl = document.createElement('bdi');
+    bdiEl.dir = 'ltr';
+    bdiEl.style.direction = 'ltr';
+    bdiEl.style.unicodeBidi = 'isolate';
+    bdiEl.appendChild(document.createElement('slot'));
+    shadow.appendChild(bdiEl);
+    originBadge.textContent = origin;
+    originBadge.title = origin;
+    info.appendChild(originBadge);
+  }
+
+  const controls = document.createElement('div');
+  controls.className = 'provider-controls';
+  if (provider.id === 'google') {
+    controls.appendChild(createGoogleModeSelectElement(googleProviderMode, isEnabled));
+  }
+  if (isCustom) {
+    controls.appendChild(createCustomProviderDeleteControlElement(provider));
+  }
+
+  const toggle = document.createElement('div');
+  toggle.className = isEnabled ? 'toggle-switch active' : 'toggle-switch';
+  toggle.dataset.providerId = provider.id;
+  controls.appendChild(toggle);
+
+  item.append(info, controls);
+  return item;
+}
+
+export async function renderProviderList() {
+  syncCustomProviderFormAvailability();
   const settings = await getSettings();
   const enabledProviders = getEnabledProvidersOrDefault(settings);
   const googleProviderMode = getGoogleProviderModeOrDefault(settings);
   const displayOrder = getProviderDisplayOrder(settings);
   const listContainer = document.getElementById('provider-list');
-  const providerAccessEntries = await Promise.all(PROVIDERS.map(async (provider) => [
+  const providers = listProviders();
+  const scopedRulesSupported = supportsScopedFrameRules();
+  const providerAccessEntries = await Promise.all(providers.map(async (provider) => [
     provider.id,
     await hasOptionalProviderPermission(provider.id)
   ]));
   const providerAccess = new Map(providerAccessEntries);
 
   const orderIndex = new Map(displayOrder.map((id, index) => [id, index]));
-  const sortedProviders = [...PROVIDERS].sort((a, b) => {
+  const sortedProviders = [...providers].sort((a, b) => {
     return (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0);
   });
 
-  listContainer.innerHTML = sortedProviders.map(provider => {
-    const isEnabledPreference = enabledProviders.includes(provider.id);
-    const hasAccess = providerAccess.get(provider.id) !== false;
-    const isEnabled = isEnabledPreference && hasAccess;
-    const googleModeControl = provider.id === 'google'
-      ? renderGoogleModeSelectMarkup(googleProviderMode, isEnabled)
-      : '';
-
-    return `
-      <div class="provider-item ${isEnabled ? 'draggable' : ''}"
-           data-provider-id="${provider.id}"
-           data-enabled-preference="${isEnabledPreference}"
-           data-has-access="${hasAccess}"
-           draggable="${isEnabled}">
-        <div class="provider-info">
-          ${isEnabled ? '<span class="drag-handle material-symbols-outlined">drag_indicator</span>' : ''}
-          <div class="provider-icon">
-            <img src="${getProviderIcon(provider)}" alt="${provider.name}" width="24" height="24" />
-          </div>
-          <span class="provider-name">${provider.name}</span>
-        </div>
-        <div class="provider-controls">
-          ${googleModeControl}
-          <div class="toggle-switch ${isEnabled ? 'active' : ''}" data-provider-id="${provider.id}"></div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Inline onerror handlers are blocked by the extension CSP.
-  listContainer.querySelectorAll('.provider-icon img').forEach(hideIconOnLoadError);
+  const providerItems = sortedProviders.map((provider) => {
+    const descriptor = getProviderDescriptor(provider.id);
+    const isCustom = descriptor?.access === 'custom';
+    const rawAccess = providerAccess.get(provider.id) !== false;
+    return createProviderListItemElement(provider, {
+      isEnabledPreference: enabledProviders.includes(provider.id),
+      hasAccess: isCustom ? (scopedRulesSupported && rawAccess) : rawAccess,
+      googleProviderMode,
+      descriptor
+    });
+  });
+  listContainer.replaceChildren(...providerItems);
 
   // Add click listeners to toggles
   listContainer.querySelectorAll('.toggle-switch').forEach(toggle => {
@@ -389,11 +906,18 @@ async function renderProviderList() {
       const providerId = providerItem?.dataset.providerId || toggle.dataset.providerId;
       if (!providerId) return;
 
-      const provider = PROVIDERS.find(({ id }) => id === providerId);
+      const provider = listProviders().find(({ id }) => id === providerId);
+      const descriptor = getProviderDescriptor(providerId);
+      const isCustom = descriptor?.access === 'custom';
       const hasAccess = providerItem?.dataset.hasAccess !== 'false';
       const isEnabledPreference = providerItem?.dataset.enabledPreference === 'true';
 
-      if (!hasAccess && provider?.optionalOrigins) {
+      if (isCustom && !supportsScopedFrameRules() && (!isEnabledPreference || !hasAccess)) {
+        showStatus('error', t('msgCustomProviderUnsupportedChrome'));
+        return;
+      }
+
+      if (!hasAccess && (provider?.optionalOrigins || isCustom)) {
         try {
           const permissionGranted = await requestOptionalProviderPermission(providerId);
           if (!permissionGranted) {
@@ -444,6 +968,13 @@ function setupStorageChangeListener() {
   if (!chrome?.storage?.onChanged?.addListener) {
     return;
   }
+
+  subscribeCustomProvidersChanged(() => {
+    updateCustomProviderOriginPreview();
+    renderProviderList().catch((error) => {
+      console.error('Error syncing custom providers:', error);
+    });
+  });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'sync' && areaName !== 'local') {
@@ -504,12 +1035,24 @@ function setupProviderDragAndDrop(container) {
 }
 
 // Save the new provider order
-async function saveProviderOrder(container) {
+export async function saveProviderOrder(container) {
   const settings = await getSettings();
   const enabledProviders = getEnabledProvidersOrDefault(settings);
   const items = container.querySelectorAll('.provider-item');
-  const newOrder = Array.from(items).map(item => item.dataset.providerId);
-  const newEnabledOrder = newOrder.filter(id => enabledProviders.includes(id));
+  const domOrder = Array.from(items).map(item => item.dataset.providerId);
+  const previousOrder = Array.isArray(settings.providerOrder)
+    ? settings.providerOrder
+    : enabledProviders;
+  const newOrder = preserveForeignCustomIds(
+    domOrder,
+    previousOrder,
+    hasProviderDescriptor
+  );
+  const newEnabledOrder = preserveForeignCustomIds(
+    domOrder.filter(id => enabledProviders.includes(id)),
+    enabledProviders,
+    hasProviderDescriptor
+  );
 
   await saveSetting('providerOrder', newOrder);
   // Also update enabledProviders to match the new order among enabled items
@@ -517,18 +1060,21 @@ async function saveProviderOrder(container) {
   showStatus('success', t('msgProviderSettingsUpdated'));
 }
 
-async function toggleProvider(providerId) {
+export async function toggleProvider(providerId) {
   const settings = await getSettings();
-  let enabledProviders = getEnabledProvidersOrDefault(settings);
-  const provider = PROVIDERS.find(({ id }) => id === providerId);
+  const previousEnabledProviders = getEnabledProvidersOrDefault(settings);
+  let enabledProviders = [...previousEnabledProviders];
+  const providers = listProviders();
+  const provider = providers.find(({ id }) => id === providerId);
 
   if (!provider) {
     return;
   }
 
   if (enabledProviders.includes(providerId)) {
-    // Disable - but ensure at least one provider remains enabled
-    if (enabledProviders.length === 1) {
+    // Disable - but ensure at least one locally known provider remains enabled
+    const localEnabledCount = enabledProviders.filter(id => hasProviderDescriptor(id)).length;
+    if (localEnabledCount <= 1) {
       showStatus('error', t('msgOneProviderRequired'));
       return;
     }
@@ -539,11 +1085,24 @@ async function toggleProvider(providerId) {
     enabledProviders.push(providerId);
   }
 
-  const providerOrder = appendProviderToOrder(
-    settings.providerOrder,
-    getEnabledProvidersOrDefault(settings),
-    providerId,
-    PROVIDERS.map(({ id }) => id)
+  enabledProviders = preserveForeignCustomIds(
+    enabledProviders,
+    previousEnabledProviders,
+    hasProviderDescriptor
+  );
+
+  const previousOrder = Array.isArray(settings.providerOrder)
+    ? settings.providerOrder
+    : previousEnabledProviders;
+  const providerOrder = preserveForeignCustomIds(
+    appendProviderToOrder(
+      settings.providerOrder,
+      previousEnabledProviders,
+      providerId,
+      providers.map(({ id }) => id)
+    ),
+    previousOrder,
+    hasProviderDescriptor
   );
 
   await saveSettings({ enabledProviders, providerOrder });
@@ -642,6 +1201,9 @@ function setupEventListeners() {
 
     // Re-translate the entire page
     translatePage();
+    syncCustomProviderFormAvailability();
+    updateCustomProviderOriginPreview();
+    await renderProviderList();
 
     // Show success message (now in the new language)
     showStatus('success', t('msgLanguageUpdated'));
@@ -867,6 +1429,7 @@ async function importData(file) {
     }
 
     await loadSettings();
+    await renderProviderList();
     await loadDataStats();
 
     // Show success toast
@@ -925,7 +1488,7 @@ function showStatus(type, message) {
 }
 
 // Toast notification helper - lightweight, non-intrusive notifications
-function showToast(type, messageKey, params = []) {
+export function showToast(type, messageKey, params = []) {
   const container = document.getElementById('toast-container');
   if (!container) return;
 
@@ -943,10 +1506,15 @@ function showToast(type, messageKey, params = []) {
     info: 'ℹ'
   };
 
-  toast.innerHTML = `
-    <span class="toast-icon">${icons[type] || '•'}</span>
-    <span class="toast-message">${message}</span>
-  `;
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'toast-icon';
+  iconSpan.textContent = icons[type] || '•';
+
+  const messageSpan = document.createElement('span');
+  messageSpan.className = 'toast-message';
+  messageSpan.textContent = message;
+
+  toast.append(iconSpan, messageSpan);
 
   container.appendChild(toast);
 

@@ -145,6 +145,53 @@
         <div class="provider-list" id="provider-list">
           <!-- Provider items will be dynamically generated -->
         </div>
+
+        <div class="custom-provider-card" id="custom-provider-card">
+          <h3 class="custom-provider-title" id="custom-provider-form-title" data-i18n="headingAddCustomProvider">Add custom AI</h3>
+          <p class="custom-provider-unsupported" id="custom-provider-unsupported" hidden data-i18n="msgCustomProviderUnsupportedChrome">
+            Adding or activating custom AI sites requires Chrome 145 or newer.
+          </p>
+          <form id="custom-provider-form" class="custom-provider-form" aria-labelledby="custom-provider-form-title" novalidate>
+            <div class="custom-provider-fields">
+              <div class="custom-provider-field custom-provider-field-name">
+                <label for="custom-provider-name" data-i18n="labelCustomProviderName">Name (max 40 chars)</label>
+                <input
+                  type="text"
+                  id="custom-provider-name"
+                  name="customProviderName"
+                  maxlength="40"
+                  required
+                  autocomplete="off"
+                  data-i18n-placeholder="placeholderCustomProviderName"
+                  placeholder="My AI Assistant"
+                  aria-describedby="custom-provider-error"
+                />
+              </div>
+              <div class="custom-provider-field custom-provider-field-url">
+                <label for="custom-provider-url" data-i18n="labelCustomProviderUrl">URL</label>
+                <input
+                  type="text"
+                  inputmode="url"
+                  id="custom-provider-url"
+                  name="customProviderUrl"
+                  required
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  data-i18n-placeholder="placeholderCustomProviderUrl"
+                  placeholder="https://chat.example.com or http://localhost:3000"
+                  aria-describedby="custom-provider-origin-preview custom-provider-error"
+                />
+              </div>
+              <div class="custom-provider-submit">
+                <button type="submit" class="btn btn-primary" id="custom-provider-add-btn" data-i18n="btnAddCustomProvider">Add</button>
+              </div>
+            </div>
+            <p class="custom-provider-origin-preview" id="custom-provider-origin-preview" hidden></p>
+            <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
+          </form>
+        </div>
       </section>
 
       <!-- Keyboard Settings -->

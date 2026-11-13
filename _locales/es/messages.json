@@ -959,5 +959,80 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "Marca de agua en imágenes compartidas desactivada"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "Las imágenes no se enviaron a: $1"
+  },
+  "headingAddCustomProvider": {
+    "message": "Añadir IA personalizada"
+  },
+  "labelCustomProviderName": {
+    "message": "Nombre (máx. 40 caracteres)"
+  },
+  "placeholderCustomProviderName": {
+    "message": "Mi asistente de IA"
+  },
+  "labelCustomProviderUrl": {
+    "message": "URL"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com o http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "Añadir"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize solicitará acceso a $1"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "Para añadir o activar sitios de IA personalizados se requiere Chrome 145 o superior."
+  },
+  "errCustomNameRequired": {
+    "message": "Introduce un nombre para esta IA personalizada."
+  },
+  "errCustomNameTooLong": {
+    "message": "El nombre debe tener 40 caracteres o menos."
+  },
+  "errCustomUrlInvalid": {
+    "message": "Introduce una URL válida (por ejemplo, https://chat.example.com o http://localhost:3000)."
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "Solo se admiten URL https:// y http:// locales."
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "La URL debe incluir un nombre de host."
+  },
+  "errCustomUrlCredentials": {
+    "message": "Elimina el usuario y la contraseña de la URL."
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "http:// sin cifrar solo se permite en localhost e IP de red privada. Usa https:// en su lugar."
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "Este sitio ya está disponible como proveedor integrado."
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "Ya se ha añadido una IA personalizada para este origen."
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "No se concedió acceso al sitio $1."
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "No se pudo guardar la IA personalizada. Inténtalo de nuevo."
+  },
+  "msgCustomProviderAdded": {
+    "message": "IA personalizada añadida: $1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "IA personalizada eliminada: $1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "¿Eliminar?"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "Confirmar"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "Eliminar $1"
   }
 }

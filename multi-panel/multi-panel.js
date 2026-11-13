@@ -6,7 +6,6 @@
  */
 
 import {
-  PROVIDERS,
   getProviderById,
   getEnabledProviders,
   getProviderIcon,
@@ -16,6 +15,16 @@ import {
   isUrlDrivenTemporaryChatProvider,
   requiresTemporaryChatActivationRetry
 } from '../modules/providers.js';
+import {
+  getProviderDescriptor,
+  hasProviderDescriptor
+} from '../modules/provider-registry.js';
+import {
+  isCustomProviderId,
+  loadCustomProviders,
+  subscribeCustomProvidersChanged
+} from '../modules/custom-providers.js';
+import { preserveForeignCustomIds } from '../modules/provider-order.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
 import {
@@ -232,6 +241,7 @@ function normalizeLayout(layout) {
 // ===== Initialization =====
 async function init() {
   document.addEventListener('panelize:themechange', refreshThemeAwareProviderIcons);
+  await loadCustomProviders();
   await applyTheme();
   await initializeLanguage();
   translatePage();
@@ -357,13 +367,33 @@ function postToPanelFrame(panel, message) {
   if (!target) {
     return;
   }
+  const payload = getProviderDescriptor(panel.providerId)?.access === 'custom'
+    ? { ...message, providerId: panel.providerId }
+    : message;
   getProviderFrameOrigins(panel.providerId).forEach((origin) => {
-    target.postMessage(message, origin);
+    target.postMessage(payload, origin);
   });
 }
 
-function postNewChatToPanel(panel) {
-  if (!panel || !panel.iframe || !panel.iframe.contentWindow) {
+function supportsInPageNewChat(providerId) {
+  return getProviderDescriptor(providerId)?.capabilities?.inPageNewChat !== false;
+}
+
+function supportsImageUpload(providerId) {
+  return getProviderDescriptor(providerId)?.capabilities?.imageUpload !== false;
+}
+
+function postNewChatToPanel(panel, { reloadUrl = null } = {}) {
+  if (!panel) {
+    return;
+  }
+
+  if (!supportsInPageNewChat(panel.providerId)) {
+    reloadPanelIframe(panel, reloadUrl || getProviderFrameUrl(panel.providerId));
+    return;
+  }
+
+  if (!panel.iframe || !panel.iframe.contentWindow) {
     return;
   }
 
@@ -389,14 +419,48 @@ function getProviderFrameUrl(providerId) {
     : provider.url;
 }
 
-function getGoogleModeSelectHtml(mode = currentGoogleProviderMode) {
+function createProviderIconImage(provider, className = '') {
+  const img = document.createElement('img');
+  img.setAttribute('src', getThemeAwareProviderIcon(provider));
+  img.setAttribute('alt', provider.name);
+  if (className) {
+    img.className = className;
+  }
+  img.dataset.providerId = provider.id;
+  return img;
+}
+
+function createIconButtonWithMarkup(className, title, staticIconMarkup) {
+  const button = document.createElement('button');
+  button.className = className;
+  button.title = title;
+  button.innerHTML = staticIconMarkup;
+  return button;
+}
+
+function createGoogleModeSelectElement(mode = currentGoogleProviderMode) {
   const normalizedMode = normalizeGoogleProviderMode(mode);
-  return `
-    <select class="panel-google-mode-select" title="Google mode">
-      <option value="${GOOGLE_PROVIDER_MODE_AI}" ${normalizedMode === GOOGLE_PROVIDER_MODE_AI ? 'selected' : ''}>AI Mode</option>
-      <option value="${GOOGLE_PROVIDER_MODE_SEARCH}" ${normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH ? 'selected' : ''}>Search</option>
-    </select>
-  `;
+  const select = document.createElement('select');
+  select.className = 'panel-google-mode-select';
+  select.title = 'Google mode';
+
+  const aiOption = document.createElement('option');
+  aiOption.value = GOOGLE_PROVIDER_MODE_AI;
+  aiOption.textContent = 'AI Mode';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_AI) {
+    aiOption.selected = true;
+  }
+
+  const searchOption = document.createElement('option');
+  searchOption.value = GOOGLE_PROVIDER_MODE_SEARCH;
+  searchOption.textContent = 'Search';
+  if (normalizedMode === GOOGLE_PROVIDER_MODE_SEARCH) {
+    searchOption.selected = true;
+  }
+
+  select.append(aiOption, searchOption);
+  select.value = normalizedMode;
+  return select;
 }
 
 function fitPanelSelectWidth(select) {
@@ -434,25 +498,29 @@ function fitPanelSelectWidth(select) {
   )}px`;
 }
 
-function getPanelHeaderRightHtml(providerId) {
-  const googleModeSelect = isGoogleProvider(providerId)
-    ? getGoogleModeSelectHtml()
-    : '';
-
-  const openTopLevelBtn = `<button class="open-provider-top-level-btn" title="${getLocalizedText('openProviderTopLevelTitle', 'Open in new tab')}">
-      <span class="material-symbols-outlined">open_in_new</span>
-    </button>`;
-
-  return `
-    ${googleModeSelect}
-    ${openTopLevelBtn}
-    <button class="refresh-panel-btn" title="Refresh">
-      <span class="material-symbols-outlined">refresh</span>
-    </button>
-    <button class="switch-provider-btn" title="Switch Provider">
-      <span class="material-symbols-outlined">swap_horiz</span>
-    </button>
-  `;
+function populatePanelHeaderRight(headerRightEl, providerId) {
+  const children = [];
+  if (isGoogleProvider(providerId)) {
+    children.push(createGoogleModeSelectElement());
+  }
+  children.push(
+    createIconButtonWithMarkup(
+      'open-provider-top-level-btn',
+      getLocalizedText('openProviderTopLevelTitle', 'Open in new tab'),
+      '<span class="material-symbols-outlined">open_in_new</span>'
+    ),
+    createIconButtonWithMarkup(
+      'refresh-panel-btn',
+      'Refresh',
+      '<span class="material-symbols-outlined">refresh</span>'
+    ),
+    createIconButtonWithMarkup(
+      'switch-provider-btn',
+      'Switch Provider',
+      '<span class="material-symbols-outlined">swap_horiz</span>'
+    )
+  );
+  headerRightEl.replaceChildren(...children);
 }
 
 function syncGoogleModeControls() {
@@ -464,6 +532,14 @@ function syncGoogleModeControls() {
   });
 }
 
+function renderPanelLoadingContent(loadingEl, provider, messageText) {
+  const icon = createProviderIconImage(provider, 'loading-icon');
+  const textSpan = document.createElement('span');
+  textSpan.className = 'loading-text';
+  textSpan.textContent = messageText;
+  loadingEl.replaceChildren(icon, textSpan);
+}
+
 function showPanelLoadingState(panelEl, provider) {
   const loadingEl = panelEl.querySelector('.panel-loading');
   if (!loadingEl || !provider) {
@@ -471,7 +547,7 @@ function showPanelLoadingState(panelEl, provider) {
   }
 
   loadingEl.classList.remove('hidden');
-  loadingEl.innerHTML = `<img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}"><span class="loading-text">Loading ${provider.name}...</span>`;
+  renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
 }
 
 function reloadPanelIframe(panel, overrideUrl = null) {
@@ -578,6 +654,32 @@ function registerStorageChangeListener() {
   if (!chrome?.storage?.onChanged?.addListener) {
     return;
   }
+
+  subscribeCustomProvidersChanged((result) => {
+    if (!result?.ok) {
+      return;
+    }
+
+    const staleCustomPanelIds = panels
+      .filter((panel) => isCustomProviderId(panel.providerId) && !hasProviderDescriptor(panel.providerId))
+      .map((panel) => panel.id);
+    for (const stalePanelId of staleCustomPanelIds) {
+      removePanel(stalePanelId, { saveConfig: false });
+    }
+
+    updatePanelSelectors();
+    refreshThemeAwareProviderIcons();
+
+    if (document.querySelector('.add-panel-menu')) {
+      document.querySelectorAll('.add-panel-menu').forEach((menu) => menu.remove());
+      showAddPanelMenu().catch((error) => {
+        console.error('Error refreshing add-panel menu:', error);
+      });
+    }
+    if (document.querySelector('.provider-switcher-menu')) {
+      document.querySelectorAll('.provider-switcher-menu').forEach((menu) => menu.remove());
+    }
+  });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'sync' && areaName !== 'local') {
@@ -702,6 +804,11 @@ function startFreshChatForPanel(panel, options = {}) {
   const preferInPageNewChat = options.preferInPageNewChat === true;
 
   if (!panel) {
+    return;
+  }
+
+  if (!supportsInPageNewChat(panel.providerId)) {
+    reloadPanelIframe(panel, getProviderFrameUrl(panel.providerId));
     return;
   }
 
@@ -1202,7 +1309,13 @@ async function restoreStateIfNeeded() {
       // 恢复面板配置（保存到 multiPanelProviders）
       if (state.panels && state.panels.length > 0) {
         const providerIds = state.panels.map(p => p.providerId);
-        await chrome.storage.sync.set({ multiPanelProviders: providerIds });
+        const existing = await chrome.storage.sync.get({ multiPanelProviders: null });
+        const nextMultiPanelProviders = preserveForeignCustomIds(
+          providerIds,
+          existing?.multiPanelProviders,
+          hasProviderDescriptor
+        );
+        await chrome.storage.sync.set({ multiPanelProviders: nextMultiPanelProviders });
       }
 
       if (state.googleProviderMode) {
@@ -1248,7 +1361,11 @@ async function initializePanels() {
 
     // Create all panels and load in parallel for fastest total time
     for (let i = 0; i < count; i++) {
-      await addPanel(providerIds[i]);
+      await addPanel(providerIds[i], { saveConfig: false });
+    }
+
+    if (count > 0) {
+      await saveProviderConfiguration();
     }
 
     // Update panel selectors in toolbar
@@ -1260,7 +1377,65 @@ async function initializePanels() {
 
 // ===== Panel Management =====
 
-async function addPanel(providerId) {
+function getCustomProviderOrigin(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (descriptor?.access !== 'custom') {
+    return null;
+  }
+  return descriptor.frameOrigins[0] || null;
+}
+
+function setOriginBadgeText(badgeEl, origin) {
+  if (!badgeEl.shadowRoot) {
+    const shadow = badgeEl.attachShadow({ mode: 'open' });
+    const bdiEl = document.createElement('bdi');
+    bdiEl.dir = 'ltr';
+    bdiEl.style.direction = 'ltr';
+    bdiEl.style.unicodeBidi = 'isolate';
+    bdiEl.appendChild(document.createElement('slot'));
+    shadow.appendChild(bdiEl);
+  }
+  badgeEl.textContent = origin;
+  badgeEl.title = origin;
+}
+
+function syncPanelCustomOriginBadge(panelEl, headerLeftEl, headerNameEl, providerId) {
+  const customOrigin = getCustomProviderOrigin(providerId);
+  const existingBadge = headerLeftEl.querySelector('.panel-origin-badge');
+
+  if (!customOrigin) {
+    delete panelEl.dataset.customProvider;
+    headerNameEl.removeAttribute('class');
+    existingBadge?.remove();
+    return;
+  }
+
+  panelEl.dataset.customProvider = 'true';
+  headerNameEl.className = 'panel-provider-name';
+
+  const badgeEl = existingBadge || document.createElement('span');
+  badgeEl.className = 'panel-origin-badge';
+  setOriginBadgeText(badgeEl, customOrigin);
+  if (!existingBadge) {
+    headerLeftEl.appendChild(badgeEl);
+  }
+}
+
+function appendMenuOriginBadgeIfCustom(itemEl, nameSpan, providerId) {
+  const customOrigin = getCustomProviderOrigin(providerId);
+  if (!customOrigin) {
+    return;
+  }
+
+  itemEl.dataset.customProvider = 'true';
+  nameSpan.className = 'menu-provider-name';
+  const originBadgeEl = document.createElement('span');
+  originBadgeEl.className = 'menu-origin-badge';
+  setOriginBadgeText(originBadgeEl, customOrigin);
+  itemEl.appendChild(originBadgeEl);
+}
+
+async function addPanel(providerId, { saveConfig = true } = {}) {
   // Sync before the capacity check so no await separates the check from the
   // panel being added.
   if (providerId === 'grok') {
@@ -1305,32 +1480,43 @@ async function addPanel(providerId) {
   const panelEl = document.createElement('div');
   panelEl.className = 'panel-item';
   panelEl.id = panelId;
-  panelEl.innerHTML = `
-    <div class="panel-header">
-      <div class="panel-header-left">
-        <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="provider-icon" data-provider-id="${provider.id}">
-        <span>${provider.name}</span>
-      </div>
-      <div class="panel-header-right">${getPanelHeaderRightHtml(providerId)}</div>
-    </div>
-    <div class="panel-iframe-container">
-      <div class="panel-loading">
-        <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}">
-        <span class="loading-text">Loading ${provider.name}...</span>
-      </div>
-      <iframe
-        src="${getProviderFrameUrl(providerId)}"
-        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-        allow="clipboard-read; clipboard-write"
-      ></iframe>
-    </div>
-  `;
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'panel-header';
+
+  const headerLeftEl = document.createElement('div');
+  headerLeftEl.className = 'panel-header-left';
+  const headerIconEl = createProviderIconImage(provider, 'provider-icon');
+  const headerNameEl = document.createElement('span');
+  headerNameEl.textContent = provider.name;
+  headerLeftEl.append(headerIconEl, headerNameEl);
+  syncPanelCustomOriginBadge(panelEl, headerLeftEl, headerNameEl, providerId);
+
+  const headerRightEl = document.createElement('div');
+  headerRightEl.className = 'panel-header-right';
+  populatePanelHeaderRight(headerRightEl, providerId);
+
+  headerEl.append(headerLeftEl, headerRightEl);
+
+  const iframeContainerEl = document.createElement('div');
+  iframeContainerEl.className = 'panel-iframe-container';
+
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'panel-loading';
+  renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('src', getProviderFrameUrl(providerId));
+  iframe.setAttribute(
+    'sandbox',
+    'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
+  );
+  iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+
+  iframeContainerEl.append(loadingEl, iframe);
+  panelEl.append(headerEl, iframeContainerEl);
 
   panelGrid.appendChild(panelEl);
-
-  // Get iframe reference
-  const iframe = panelEl.querySelector('iframe');
-  const loadingEl = panelEl.querySelector('.panel-loading');
 
   // Handle iframe load
   // Grace period after load to catch AI pages that auto-focus after JS init
@@ -1348,7 +1534,9 @@ async function addPanel(providerId) {
   });
 
   iframe.addEventListener('error', () => {
-    loadingEl.innerHTML = `<img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="loading-icon" data-provider-id="${provider.id}"><span class="loading-text">Failed to load ${provider.name}</span>`;
+    const currentPanel = panels.find(p => p.id === panelId);
+    const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
+    renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
     loadingPanelIds.delete(panelId);
   });
 
@@ -1369,15 +1557,19 @@ async function addPanel(providerId) {
   bindPanelHeaderActions(panelId);
 
   // Save provider configuration
-  await saveProviderConfiguration();
+  if (saveConfig) {
+    await saveProviderConfiguration();
+  }
 
   // Update panel selectors to show logo and name
   updatePanelSelectors();
 }
 
-function removePanel(panelId) {
+function removePanel(panelId, { saveConfig = true } = {}) {
   const panelIndex = panels.findIndex(p => p.id === panelId);
   if (panelIndex === -1) return;
+
+  clearTemporaryChatRetriesForPanel(panelId);
 
   const fitContainer = panels[panelIndex].iframe?.parentElement;
   if (fitContainer) {
@@ -1408,14 +1600,18 @@ function removePanel(panelId) {
     });
 
     // Save configuration with the new layout
-    saveProviderConfiguration();
+    if (saveConfig) {
+      saveProviderConfiguration();
+    }
   }
 
   // Update selectors
   updatePanelSelectors();
 
   // Save configuration
-  saveProviderConfiguration();
+  if (saveConfig) {
+    saveProviderConfiguration();
+  }
 }
 
 async function switchPanelProvider(panelId, newProviderId) {
@@ -1439,14 +1635,16 @@ async function switchPanelProvider(panelId, newProviderId) {
   }
 
   // Update panel header
-  const headerIcon = panelEl.querySelector('.panel-header-left img');
-  const headerName = panelEl.querySelector('.panel-header-left span');
+  const headerLeft = panelEl.querySelector('.panel-header-left');
+  const headerIcon = headerLeft.querySelector('img');
+  const headerName = headerLeft.querySelector('span:not(.panel-origin-badge)');
   const headerRight = panelEl.querySelector('.panel-header-right');
-  headerIcon.src = getThemeAwareProviderIcon(provider);
+  headerIcon.setAttribute('src', getThemeAwareProviderIcon(provider));
   headerIcon.dataset.providerId = provider.id;
-  headerIcon.alt = provider.name;
+  headerIcon.setAttribute('alt', provider.name);
   headerName.textContent = provider.name;
-  headerRight.innerHTML = getPanelHeaderRightHtml(newProviderId);
+  syncPanelCustomOriginBadge(panelEl, headerLeft, headerName, newProviderId);
+  populatePanelHeaderRight(headerRight, newProviderId);
 
   // Update iframe
   const iframe = panelEl.querySelector('iframe');
@@ -1467,7 +1665,7 @@ async function switchPanelProvider(panelId, newProviderId) {
 
 function updatePanelSelectors() {
   const selectorsContainer = document.getElementById('panel-selectors');
-  selectorsContainer.innerHTML = '';
+  selectorsContainer.replaceChildren();
 
   panels.forEach(panel => {
     const provider = getProviderById(panel.providerId);
@@ -1476,16 +1674,19 @@ function updatePanelSelectors() {
     const selector = document.createElement('div');
     selector.className = 'panel-selector';
     selector.dataset.panelId = panel.id;
-    selector.innerHTML = `
-      <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" class="provider-icon" data-provider-id="${provider.id}">
-      <span>${provider.name}</span>
-      <button class="remove-panel" title="Remove panel">
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    `;
+
+    const icon = createProviderIconImage(provider, 'provider-icon');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = provider.name;
+    const removeBtn = createIconButtonWithMarkup(
+      'remove-panel',
+      'Remove panel',
+      '<span class="material-symbols-outlined">close</span>'
+    );
+
+    selector.append(icon, nameSpan, removeBtn);
 
     // Remove button handler
-    const removeBtn = selector.querySelector('.remove-panel');
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (panels.length > 1) {
@@ -1502,8 +1703,14 @@ function updatePanelSelectors() {
 async function saveProviderConfiguration() {
   const providerIds = panels.map(p => p.providerId);
   try {
+    const existing = await chrome.storage.sync.get({ multiPanelProviders: null });
+    const nextMultiPanelProviders = preserveForeignCustomIds(
+      providerIds,
+      existing?.multiPanelProviders,
+      hasProviderDescriptor
+    );
     await chrome.storage.sync.set({
-      multiPanelProviders: providerIds,
+      multiPanelProviders: nextMultiPanelProviders,
       multiPanelLayout: currentLayout
     });
   } catch (error) {
@@ -1612,6 +1819,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
     const targetPanels = hasImages
       ? getFillTargetPanels(panels, failedFillPanelIds)
       : panels;
+    const imageSkippedPanels = hasImages
+      ? targetPanels.filter(panel => !supportsImageUpload(panel.providerId))
+      : [];
     const previousFailedPanelIds = new Set(failedFillPanelIds);
     const attemptedImagesByPanel = new Map();
     if (waitForActionResult) {
@@ -1622,8 +1832,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
     const panelResults = await Promise.allSettled(
       targetPanels.map(panel => {
         const isPanelRetry = previousFailedPanelIds.has(panel.id);
+        const panelSupportsImages = supportsImageUpload(panel.providerId);
         let panelImages = [];
-        if (hasImages) {
+        if (hasImages && panelSupportsImages) {
           if (isPanelRetry && pendingFillImageIdsByPanel.has(panel.id)) {
             const pendingIds = new Set(pendingFillImageIdsByPanel.get(panel.id));
             panelImages = uploadedImages.filter(img => pendingIds.has(img.id));
@@ -1632,6 +1843,23 @@ export async function broadcastMessage(text, autoSubmit = true) {
           }
         }
         attemptedImagesByPanel.set(panel.id, panelImages);
+
+        const releaseFocusTracking = () => {
+          // Uploads can outlast the restore timers; hold focus until each
+          // panel has finished filling.
+          if (activeSendFocusRequestId === requestId && sendFocusFillingPanelIds.delete(panel.id)) {
+            maybeStopSendFocusRestore();
+          }
+        };
+
+        if (hasImages && !panelSupportsImages && !text.trim()) {
+          return Promise.resolve({
+            ok: true,
+            panelId: panel.id,
+            provider: panel.providerId,
+            succeededImageIds: []
+          }).finally(releaseFocusTracking);
+        }
 
         const imageCount = panelImages.length;
         const panelTimeoutMs = isFillAction
@@ -1650,13 +1878,7 @@ export async function broadcastMessage(text, autoSubmit = true) {
             isFillAction,
             waitForActionResult
           }
-        ).finally(() => {
-          // Uploads can outlast the restore timers; hold focus until each
-          // panel has finished filling.
-          if (activeSendFocusRequestId === requestId && sendFocusFillingPanelIds.delete(panel.id)) {
-            maybeStopSendFocusRestore();
-          }
-        });
+        ).finally(releaseFocusTracking);
       })
     );
     const normalizedResults = normalizePanelResults(panelResults, targetPanels);
@@ -1670,6 +1892,19 @@ export async function broadcastMessage(text, autoSubmit = true) {
           statusEl.className = 'send-status';
         }, 3000);
         return;
+      }
+
+      if (imageSkippedPanels.length > 0) {
+        const skippedNames = imageSkippedPanels.map(
+          panel => getProviderById(panel.providerId)?.name || panel.providerId
+        );
+        showToast(
+          getLocalizedText(
+            'msgImagesSkippedForPanels',
+            'Images were not sent to: $1',
+            [formatProviderList(skippedNames, getSnapshotLocale())]
+          )
+        );
       }
 
       normalizedResults.forEach(result => {
@@ -2133,7 +2368,8 @@ function getSnapshotPanels() {
     name: getProviderById(panel.providerId)?.name || panel.providerId,
     iframe: panel.iframe,
     targetOrigins: getProviderFrameOrigins(panel.providerId),
-    element: document.getElementById(panel.id)
+    element: document.getElementById(panel.id),
+    snapshotStitch: getProviderDescriptor(panel.providerId)?.capabilities?.snapshotStitch !== false
   })).filter(panel => panel.element && panel.iframe);
 }
 
@@ -2768,7 +3004,7 @@ async function temporaryChatAllProviders() {
         return;
       }
 
-      postNewChatToPanel(panel);
+      postNewChatToPanel(panel, { reloadUrl: getTemporaryChatNormalUrl(panel.providerId) });
     });
 
     restoreUnifiedInputFocusAfterNewChat();
@@ -3417,21 +3653,31 @@ async function showProviderSwitcher(panelId) {
     padding: 8px 0;
   `;
 
-  menu.innerHTML = enabledProviders.map(provider => `
-    <div class="provider-switcher-item" data-provider-id="${provider.id}" style="
+  enabledProviders.forEach(provider => {
+    const isSelected = provider.id === panel.providerId;
+    const item = document.createElement('div');
+    item.className = 'provider-switcher-item';
+    item.dataset.providerId = provider.id;
+    item.style.cssText = `
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
       cursor: pointer;
       font-size: 14px;
-      color: ${provider.id === panel.providerId ? palette.selectedText : palette.menuText};
-      ${provider.id === panel.providerId ? `background: ${palette.selectedBackground};` : ''}
-    ">
-      <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" style="width: 20px; height: 20px;" data-provider-id="${provider.id}">
-      <span>${provider.name}</span>
-    </div>
-  `).join('');
+      color: ${isSelected ? palette.selectedText : palette.menuText};
+      ${isSelected ? `background: ${palette.selectedBackground};` : ''}
+    `;
+
+    const icon = createProviderIconImage(provider);
+    icon.style.cssText = 'width: 20px; height: 20px;';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = provider.name;
+
+    item.append(icon, nameSpan);
+    appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
+    menu.appendChild(item);
+  });
 
   // Position menu near the panel
   const panelEl = document.getElementById(panelId);
@@ -3513,8 +3759,11 @@ async function showAddPanelMenu() {
     padding: 8px 0;
   `;
 
-  menu.innerHTML = availableProviders.map(provider => `
-    <div class="add-panel-item" data-provider-id="${provider.id}" style="
+  availableProviders.forEach(provider => {
+    const item = document.createElement('div');
+    item.className = 'add-panel-item';
+    item.dataset.providerId = provider.id;
+    item.style.cssText = `
       display: flex;
       align-items: center;
       gap: 8px;
@@ -3522,11 +3771,17 @@ async function showAddPanelMenu() {
       cursor: pointer;
       font-size: 14px;
       color: ${palette.menuText};
-    ">
-      <img src="${getThemeAwareProviderIcon(provider)}" alt="${provider.name}" style="width: 20px; height: 20px;" data-provider-id="${provider.id}">
-      <span>${provider.name}</span>
-    </div>
-  `).join('');
+    `;
+
+    const icon = createProviderIconImage(provider);
+    icon.style.cssText = 'width: 20px; height: 20px;';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = provider.name;
+
+    item.append(icon, nameSpan);
+    appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
+    menu.appendChild(item);
+  });
 
   document.body.appendChild(menu);
 

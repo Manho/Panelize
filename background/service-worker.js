@@ -1,5 +1,9 @@
 import { notifyMessage } from '../modules/messaging.js';
 import { t, initializeLanguage } from '../modules/i18n.js';
+import {
+  CUSTOM_PROVIDERS_STORAGE_KEY,
+  loadCustomProviders
+} from '../modules/custom-providers.js';
 import { migrateEnabledProvidersOnUpdate } from '../modules/provider-defaults.js';
 import { SHARE_SNAPSHOT_ACTION, isMultiPanelTab } from '../modules/share-trigger.js';
 import { removeDeprecatedClaudeModelMode } from '../modules/settings.js';
@@ -109,6 +113,7 @@ async function migrateProviderSettingsForUpdate(details) {
   }
 
   try {
+    await loadCustomProviders();
     const currentSettings = await chrome.storage.sync.get({
       enabledProviders: null,
       providerOrder: null
@@ -194,6 +199,10 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'sync' && changes.enabledProviders) {
     scheduleOptionalProviderReconcile();
     scheduleGrokWebSocketCookieReconcile();
+  }
+
+  if (namespace === 'local' && changes[CUSTOM_PROVIDERS_STORAGE_KEY]) {
+    scheduleOptionalProviderReconcile();
   }
 });
 

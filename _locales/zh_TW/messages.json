@@ -955,5 +955,80 @@
   },
   "msgShareWatermarkDisabled": {
     "message": "已關閉分享圖片浮水印"
+  },
+  "msgImagesSkippedForPanels": {
+    "message": "未向以下面板傳送圖片：$1"
+  },
+  "headingAddCustomProvider": {
+    "message": "新增自訂AI"
+  },
+  "labelCustomProviderName": {
+    "message": "名稱（最多40個字元）"
+  },
+  "placeholderCustomProviderName": {
+    "message": "我的AI助理"
+  },
+  "labelCustomProviderUrl": {
+    "message": "網址（URL）"
+  },
+  "placeholderCustomProviderUrl": {
+    "message": "https://chat.example.com或http://localhost:3000"
+  },
+  "btnAddCustomProvider": {
+    "message": "新增"
+  },
+  "msgCustomProviderOriginPreview": {
+    "message": "Panelize將請求存取$1的權限"
+  },
+  "msgCustomProviderUnsupportedChrome": {
+    "message": "新增或啟用自訂AI網站需要Chrome 145或更新版本。"
+  },
+  "errCustomNameRequired": {
+    "message": "請輸入自訂AI的名稱。"
+  },
+  "errCustomNameTooLong": {
+    "message": "名稱不得超過40個字元。"
+  },
+  "errCustomUrlInvalid": {
+    "message": "請輸入有效的網址（例如https://chat.example.com或http://localhost:3000）。"
+  },
+  "errCustomUrlUnsupportedScheme": {
+    "message": "僅支援https://與本機http://網址。"
+  },
+  "errCustomUrlEmptyHost": {
+    "message": "網址必須包含主機名稱。"
+  },
+  "errCustomUrlCredentials": {
+    "message": "請移除網址中的使用者名稱與密碼。"
+  },
+  "errCustomUrlInsecureHttp": {
+    "message": "明文http://僅允許用於localhost與區域網路私有IP，請改用https://。"
+  },
+  "errCustomUrlBuiltinOrigin": {
+    "message": "此網站已作為內建服務提供者提供。"
+  },
+  "errCustomUrlDuplicateOrigin": {
+    "message": "此來源（Origin）的自訂AI已新增過。"
+  },
+  "msgCustomProviderPermissionDenied": {
+    "message": "未授予對$1的網站存取權限。"
+  },
+  "errCustomProviderSaveFailed": {
+    "message": "儲存自訂AI失敗，請再試一次。"
+  },
+  "msgCustomProviderAdded": {
+    "message": "已新增自訂AI：$1"
+  },
+  "msgCustomProviderDeleted": {
+    "message": "已移除自訂AI：$1"
+  },
+  "msgConfirmDeleteCustomInline": {
+    "message": "確定移除？"
+  },
+  "btnConfirmDeleteCustom": {
+    "message": "確認"
+  },
+  "ariaDeleteCustomProvider": {
+    "message": "刪除$1"
   }
 }

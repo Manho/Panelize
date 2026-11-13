@@ -127,8 +127,13 @@ export async function resetSettings() {
   } catch (error) {
     console.warn('chrome.storage.sync unavailable, using local', error);
     try {
+      const preserved = await chrome.storage.local.get({ customProviders: undefined });
       await chrome.storage.local.clear();
-      await chrome.storage.local.set(DEFAULT_SETTINGS);
+      const nextLocal = { ...DEFAULT_SETTINGS };
+      if (preserved?.customProviders !== undefined) {
+        nextLocal.customProviders = preserved.customProviders;
+      }
+      await chrome.storage.local.set(nextLocal);
     } catch (localError) {
       console.warn('chrome.storage.local also unavailable');
     }
@@ -140,7 +145,8 @@ export async function exportSettings() {
 }
 
 export async function importSettings(settings) {
-  // Validate settings
+  // Validate settings. Custom provider definitions live in storage.local and are not
+  // imported; custom IDs inside the imported synced lists are kept as they are.
   const validKeys = Object.keys(DEFAULT_SETTINGS);
   const imported = {};
   const skipped = [];

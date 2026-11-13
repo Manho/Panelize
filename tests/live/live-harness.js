@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createPatchedExtensionCopy, REPO_EXTENSION_PATH } from '../e2e/extension-harness.js';
+import {
+  createPatchedExtensionCopy,
+  filterNonWildcardHostPermissions,
+  REPO_EXTENSION_PATH,
+} from '../e2e/extension-harness.js';
 import { PROVIDERS } from '../../modules/providers.js';
 import { OPTIONAL_PROVIDER_CONFIGS } from '../../modules/optional-provider-access.js';
 
@@ -54,9 +58,23 @@ export function getSelectedProviders() {
   return PROVIDERS.filter((provider) => requested.includes(provider.id));
 }
 
-/** Version parts are at most 65535; minutes since 2026 change every run. */
-function getCopyBuildNumber() {
-  return Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 60000) % 65535 + 1;
+/** Version parts are at most 65535; stay strictly monotonic even across runs in the same minute. */
+function getCopyBuildNumber(previousFourth = 0) {
+  const minuteBuild = Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 60000) % 65535 + 1;
+  if (Number.isInteger(previousFourth) && previousFourth >= minuteBuild && previousFourth < 65535) {
+    return previousFourth + 1;
+  }
+  return minuteBuild;
+}
+
+function readExistingLiveBuildNumber() {
+  try {
+    const existing = JSON.parse(readFileSync(path.join(LIVE_EXTENSION_PATH, 'manifest.json'), 'utf8'));
+    const fourth = Number(String(existing.version || '').split('.')[3]);
+    return Number.isInteger(fourth) && fourth > 0 ? fourth : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -70,10 +88,11 @@ function getCopyBuildNumber() {
  * @returns {Promise<string>} Extension path.
  */
 export async function prepareLiveExtension() {
+  const nextBuildNumber = getCopyBuildNumber(readExistingLiveBuildNumber());
   const { extensionPath } = await createPatchedExtensionCopy((manifest) => {
-    manifest.host_permissions.push(...(manifest.optional_host_permissions || []));
+    manifest.host_permissions.push(...filterNonWildcardHostPermissions(manifest.optional_host_permissions));
     const [major = 0, minor = 0, patch = 0] = manifest.version.split('.');
-    manifest.version = [major, minor, patch, getCopyBuildNumber()].join('.');
+    manifest.version = [major, minor, patch, nextBuildNumber].join('.');
   }, { destination: LIVE_EXTENSION_PATH });
   return extensionPath;
 }
@@ -91,8 +110,46 @@ export async function configureLiveProviders(serviceWorker, providerIds, {
   panelOrder = providerIds,
   layout = '1x1',
 } = {}) {
+  const optionalConfigs = providerIds
+    .map((id) => OPTIONAL_PROVIDER_CONFIGS[id])
+    .filter(Boolean);
+  const optionalScriptIds = optionalConfigs.map((cfg) => cfg.contentScript.id);
+  const optionalRuleIds = optionalConfigs
+    .map((cfg) => cfg.frameRule?.id)
+    .filter(Number.isInteger);
+
+  const checkAccessState = () => serviceWorker.evaluate(
+    async ({ scriptIds, ruleIds }) => {
+      const registeredScripts = (await chrome.scripting.getRegisteredContentScripts()).map(({ id }) => id);
+      const installedRuleIds = (await chrome.declarativeNetRequest.getDynamicRules()).map(({ id }) => id);
+      return {
+        allReady: (
+          scriptIds.every((id) => registeredScripts.includes(id)) &&
+          ruleIds.every((id) => installedRuleIds.includes(id))
+        ),
+        anyRemaining: (
+          scriptIds.some((id) => registeredScripts.includes(id)) ||
+          ruleIds.some((id) => installedRuleIds.includes(id))
+        ),
+      };
+    },
+    { scriptIds: optionalScriptIds, ruleIds: optionalRuleIds }
+  );
+
+  const initialAccess = await checkAccessState();
+  if (!initialAccess.allReady) {
+    await serviceWorker.evaluate(async () => {
+      await chrome.storage.sync.remove('enabledProviders');
+    });
+    const drainDeadline = Date.now() + 5000;
+    while (Date.now() < drainDeadline) {
+      const state = await checkAccessState();
+      if (!state.anyRemaining) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
   await serviceWorker.evaluate(async (settings) => {
-    await chrome.storage.sync.remove('enabledProviders');
     await chrome.storage.sync.set(settings);
   }, {
     enabledProviders: providerIds,
@@ -101,24 +158,19 @@ export async function configureLiveProviders(serviceWorker, providerIds, {
     multiPanelLayout: layout,
   });
 
-  const optionalScriptIds = providerIds
-    .filter((id) => OPTIONAL_PROVIDER_CONFIGS[id])
-    .map((id) => OPTIONAL_PROVIDER_CONFIGS[id].contentScript.id);
-  if (optionalScriptIds.length === 0) {
+  if (optionalScriptIds.length === 0 && optionalRuleIds.length === 0) {
     return;
   }
 
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
-    const registered = await serviceWorker.evaluate(async () => (
-      (await chrome.scripting.getRegisteredContentScripts()).map(({ id }) => id)
-    ));
-    if (optionalScriptIds.every((id) => registered.includes(id))) {
+    const state = await checkAccessState();
+    if (state.allReady) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error(`Optional provider content scripts were not registered: ${optionalScriptIds.join(', ')}`);
+  throw new Error(`Optional provider access was not ready: scripts=${optionalScriptIds.join(', ')}`);
 }
 
 const TEXT_INJECTION_SOURCE = readFileSync(
