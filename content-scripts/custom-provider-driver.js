@@ -19,6 +19,8 @@
     INJECT_TEXT: 'INJECT_TEXT',
     INJECT_TEXT_WITH_IMAGES: 'INJECT_TEXT_WITH_IMAGES',
     TRIGGER_SEND: 'TRIGGER_SEND',
+    ENABLE_TEMP_CHAT: 'ENABLE_TEMP_CHAT',
+    DISABLE_TEMP_CHAT: 'DISABLE_TEMP_CHAT',
     CLEAR_INPUT: 'CLEAR_INPUT',
     PANELIZE_RESTORE_USER_FOCUS: 'PANELIZE_RESTORE_USER_FOCUS',
     PANELIZE_CUSTOM_FRAME_PING: 'PANELIZE_CUSTOM_FRAME_PING',
@@ -28,6 +30,8 @@
     PANELIZE_ACTION_RESULT: 'PANELIZE_ACTION_RESULT',
     PANELIZE_PROVIDER_LOCATION: 'PANELIZE_PROVIDER_LOCATION',
     PANELIZE_PROVIDER_USER_INTERACTION: 'PANELIZE_PROVIDER_USER_INTERACTION',
+    PANELIZE_TEMP_CHAT_ENABLED: 'PANELIZE_TEMP_CHAT_ENABLED',
+    PANELIZE_TEMP_CHAT_DISABLED: 'PANELIZE_TEMP_CHAT_DISABLED',
     PANELIZE_CUSTOM_FRAME_PONG: 'PANELIZE_CUSTOM_FRAME_PONG',
     PANELIZE_CUSTOM_SW_RECOVERED: 'PANELIZE_CUSTOM_SW_RECOVERED',
   };
@@ -37,6 +41,7 @@
   const ACTION_FAILURE_REASONS = {
     UNSUPPORTED: 'unsupported',
     CONTROL_NOT_FOUND: 'control-not-found',
+    PREVIEW_TIMEOUT: 'preview-timeout',
     INJECTION_ERROR: 'injection-error',
   };
 
@@ -1213,10 +1218,651 @@
     return composer;
   }
 
+  // ===== Temporary Chat / Incognito Toggle Discovery =====
+
+  const TEMP_CHAT_EXIT_RE =
+    /\b(exit|leave|disable|turn\s*off|stop|end|deactivate)\s+(temporary(\s*(chat|session|conversation|mode))?|incognito(\s*mode)?|private\s*(chat|mode|session)|ephemeral(\s*chat)?|ghost\s*mode)\b|(退出|关闭|停用|结束)(临时(对话|聊天|会话|模式)?|无痕(模式|对话|聊天)?|隐身(模式|对话|聊天)?|私密(对话|聊天|模式)?)/i;
+
+  const TEMP_CHAT_ENTER_RE =
+    /\b(use|enable|turn\s*on|enter|start|activate)\s+(temporary(\s*(chat|session|conversation|mode))?|incognito(\s*mode)?|private\s*(chat|mode|session)|ephemeral(\s*chat)?|ghost\s*mode)\b|(开启|启用|使用|进入)(临时(对话|聊天|会话|模式)?|无痕(模式|对话|聊天)?|隐身(模式|对话|聊天)?|私密(对话|聊天|模式)?)/i;
+
+  const TEMP_CHAT_NEUTRAL_RE =
+    /\b(temporary[\s_-]*(chat|session|conversation|mode)|incognito([\s_-]*mode)?|private[\s_-]*(chat|mode|session)|ephemeral[\s_-]*chat|ghost[\s_-]*mode)\b|临时(对话|聊天|会话|模式)|无痕(模式|对话|聊天)|隐身(模式|对话|聊天)|私密(对话|聊天|模式)/i;
+
+  let neutralTempChatClickedOnDocument = false;
+
+  function hasUrlOrCookieTempChatActive() {
+    try {
+      const search = window.location && typeof window.location.search === 'string'
+        ? window.location.search
+        : '';
+      if (search) {
+        const params = new URLSearchParams(search);
+        if (
+          params.get('temporary-chat') === 'true' ||
+          params.get('temporary') === 'true' ||
+          params.get('incognito') === 'true'
+        ) {
+          return true;
+        }
+      }
+    } catch {
+      // Ignore URL parsing errors.
+    }
+    try {
+      const cookieStr = typeof document.cookie === 'string' ? document.cookie : '';
+      if (/(?:^|;\s*)pplx\.is-incognito=true(?:;|$)/i.test(cookieStr)) {
+        return true;
+      }
+    } catch {
+      // Ignore cookie access errors.
+    }
+    return false;
+  }
+
+  function getTempChatCandidateLabel(el) {
+    const shortText = ((el.textContent || '').trim().length <= 80 ? (el.textContent || '').trim() : '');
+    return [
+      el.id || '',
+      el.getAttribute('name') || '',
+      el.getAttribute('data-testid') || '',
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('title') || '',
+      el.getAttribute('mattooltip') || '',
+      shortText,
+    ]
+      .join(' ')
+      .trim();
+  }
+
+  function isEligibleTempChatControl(el) {
+    if (!el || el.tagName === 'A') {
+      return false;
+    }
+    if (typeof el.closest === 'function') {
+      if (
+        el.closest(
+          'a[href], [data-composer="true"], [role="article"], article, .prose, .markdown'
+        )
+      ) {
+        return false;
+      }
+    }
+    if (el.tagName === 'INPUT' && el.type === 'checkbox') {
+      return !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+    }
+    return isButtonEnabled(el);
+  }
+
+  function inspectTempChatState() {
+    const candidates = querySelectorAllDeep(
+      'button, [role="button"], [role="switch"], input[type="checkbox"]',
+      document
+    ).filter(isEligibleTempChatControl);
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const el = candidates[i];
+      const label = getTempChatCandidateLabel(el);
+      if (TEMP_CHAT_EXIT_RE.test(label)) {
+        return { status: 'active', control: el, hasExplicitState: true };
+      }
+    }
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const el = candidates[i];
+      const label = getTempChatCandidateLabel(el);
+      if (TEMP_CHAT_ENTER_RE.test(label)) {
+        return { status: 'inactive', control: el, hasExplicitState: true };
+      }
+    }
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const el = candidates[i];
+      const label = getTempChatCandidateLabel(el);
+      if (!TEMP_CHAT_NEUTRAL_RE.test(label)) {
+        continue;
+      }
+
+      if (el.tagName === 'INPUT' && el.type === 'checkbox') {
+        return {
+          status: el.checked ? 'active' : 'inactive',
+          control: el,
+          hasExplicitState: true,
+        };
+      }
+
+      const ariaPressed = el.getAttribute('aria-pressed');
+      const ariaChecked = el.getAttribute('aria-checked');
+      const dataState = (el.getAttribute('data-state') || '').toLowerCase();
+      const dataActive = el.getAttribute('data-active');
+
+      if (
+        ariaPressed === 'true' ||
+        ariaChecked === 'true' ||
+        dataState === 'checked' ||
+        dataState === 'on' ||
+        dataActive === 'true'
+      ) {
+        return { status: 'active', control: el, hasExplicitState: true };
+      }
+
+      if (
+        ariaPressed === 'false' ||
+        ariaChecked === 'false' ||
+        dataState === 'unchecked' ||
+        dataState === 'off' ||
+        dataActive === 'false'
+      ) {
+        return { status: 'inactive', control: el, hasExplicitState: true };
+      }
+
+      if (el.classList && (el.classList.contains('active') || el.classList.contains('is-active'))) {
+        return { status: 'active', control: el, hasExplicitState: true };
+      }
+
+      if (hasUrlOrCookieTempChatActive()) {
+        return { status: 'active', control: el, hasExplicitState: true };
+      }
+
+      if (neutralTempChatClickedOnDocument) {
+        return { status: 'active', control: el, hasExplicitState: false };
+      }
+
+      return { status: 'inactive', control: el, hasExplicitState: false };
+    }
+
+    return { status: 'missing', control: null, hasExplicitState: false };
+  }
+
+  function postTempChatStatus(type, providerId) {
+    if (!providerId) {
+      return;
+    }
+    postToMultiPanelHost({
+      type,
+      provider: providerId,
+      context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT,
+    });
+  }
+
+  async function handleEnableTempChat(providerId) {
+    const initial = inspectTempChatState();
+    if (initial.status === 'active') {
+      postTempChatStatus(FRAME_TO_HOST.PANELIZE_TEMP_CHAT_ENABLED, providerId);
+      return;
+    }
+    if (initial.status !== 'inactive' || !initial.control) {
+      return;
+    }
+
+    initial.control.click();
+
+    if (!initial.hasExplicitState) {
+      neutralTempChatClickedOnDocument = true;
+      await sleep(60);
+      postTempChatStatus(FRAME_TO_HOST.PANELIZE_TEMP_CHAT_ENABLED, providerId);
+      return;
+    }
+
+    const deadline = Date.now() + 220;
+    while (Date.now() < deadline) {
+      await sleep(40);
+      if (inspectTempChatState().status === 'active') {
+        postTempChatStatus(FRAME_TO_HOST.PANELIZE_TEMP_CHAT_ENABLED, providerId);
+        return;
+      }
+    }
+  }
+
+  async function handleDisableTempChat(providerId) {
+    const initial = inspectTempChatState();
+    if (initial.status === 'inactive') {
+      postTempChatStatus(FRAME_TO_HOST.PANELIZE_TEMP_CHAT_DISABLED, providerId);
+      return;
+    }
+    if (initial.status !== 'active' || !initial.control) {
+      return;
+    }
+
+    initial.control.click();
+    neutralTempChatClickedOnDocument = false;
+
+    if (!initial.hasExplicitState) {
+      await sleep(60);
+      postTempChatStatus(FRAME_TO_HOST.PANELIZE_TEMP_CHAT_DISABLED, providerId);
+      return;
+    }
+
+    const deadline = Date.now() + 220;
+    while (Date.now() < deadline) {
+      await sleep(40);
+      if (inspectTempChatState().status !== 'active') {
+        postTempChatStatus(FRAME_TO_HOST.PANELIZE_TEMP_CHAT_DISABLED, providerId);
+        return;
+      }
+    }
+  }
+
+  // ===== Generic Image Upload & Attachment Cleanup =====
+
+  const IMAGE_ACCEPT_HINT_RE =
+    /image\/|\*\s*\/\s*\*|\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)\b/i;
+
+  const REMOVE_ATTACHMENT_RE =
+    /\b(remove|delete|discard)\b.*\b(image|file|attachment|photo|upload|media)\b|^remove\s+\S+|\b(remove|delete)[\s_-]*(attachment|image|file|media|upload)\b|(移除|删除)(图片|附件|文件)/i;
+
+  function createFileFromImagePayload(image) {
+    if (!image || typeof image.dataUrl !== 'string') {
+      return null;
+    }
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/.exec(image.dataUrl.trim());
+    if (!match) {
+      return null;
+    }
+    try {
+      const mimeType = typeof image.type === 'string' && image.type.startsWith('image/')
+        ? image.type
+        : match[1];
+      const cleanBase64 = match[2].replace(/\s+/g, '');
+      const binary = atob(cleanBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const fallbackExt = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
+      const safeName =
+        typeof image.name === 'string' && image.name.trim().length > 0
+          ? image.name.trim()
+          : `image.${fallbackExt}`;
+      return new File([bytes], safeName, { type: mimeType, lastModified: Date.now() });
+    } catch {
+      return null;
+    }
+  }
+
+  function isImageAcceptingFileInput(input) {
+    if (!input || input.tagName !== 'INPUT' || (input.type || '').toLowerCase() !== 'file') {
+      return false;
+    }
+    if (input.disabled || input.getAttribute('aria-disabled') === 'true') {
+      return false;
+    }
+    const accept = (input.getAttribute('accept') || '').trim();
+    if (!accept) {
+      return true;
+    }
+    return IMAGE_ACCEPT_HINT_RE.test(accept);
+  }
+
+  function findImageFileInput(composer) {
+    if (composer) {
+      const scopes = collectComposerScopes(composer);
+      for (let i = 0; i < scopes.length; i += 1) {
+        const inputs = querySelectorAllDeep('input[type="file"]', scopes[i].node).filter(
+          isImageAcceptingFileInput
+        );
+        if (inputs.length > 0) {
+          const explicitImg = inputs.find((inp) =>
+            IMAGE_ACCEPT_HINT_RE.test(inp.getAttribute('accept') || '')
+          );
+          return explicitImg || inputs[0];
+        }
+      }
+    }
+
+    const docInputs = querySelectorAllDeep('input[type="file"]', document).filter(
+      isImageAcceptingFileInput
+    );
+    if (docInputs.length === 0) {
+      return null;
+    }
+    const explicitDocImg = docInputs.find((inp) =>
+      IMAGE_ACCEPT_HINT_RE.test(inp.getAttribute('accept') || '')
+    );
+    return explicitDocImg || docInputs[0];
+  }
+
+  function assignFilesToFileInput(fileInput, files) {
+    if (!fileInput || !Array.isArray(files) || files.length === 0) {
+      return false;
+    }
+    let assigned = false;
+    try {
+      const dt = new DataTransfer();
+      for (let i = 0; i < files.length; i += 1) {
+        dt.items.add(files[i]);
+      }
+      fileInput.files = dt.files;
+      assigned = Boolean(fileInput.files && fileInput.files.length === files.length);
+    } catch {
+      assigned = false;
+    }
+
+    if (!assigned) {
+      try {
+        Object.defineProperty(fileInput, 'files', {
+          configurable: true,
+          value: files,
+        });
+        assigned = true;
+      } catch {
+        return false;
+      }
+    }
+
+    fileInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    fileInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    return true;
+  }
+
+  function queryAcrossComposerScopes(composer, selector) {
+    if (!composer) {
+      const fallbackRoot = document.body || document.documentElement;
+      return fallbackRoot ? querySelectorAllDeep(selector, fallbackRoot) : [];
+    }
+    const scopes = collectComposerScopes(composer);
+    if (scopes.length === 0) {
+      const fallbackRoot = composer.parentElement || document.body || document.documentElement;
+      return fallbackRoot ? querySelectorAllDeep(selector, fallbackRoot) : [];
+    }
+    const seen = new Set();
+    const results = [];
+    for (let i = 0; i < scopes.length; i += 1) {
+      const matches = querySelectorAllDeep(selector, scopes[i].node);
+      for (let j = 0; j < matches.length; j += 1) {
+        const el = matches[j];
+        if (!seen.has(el)) {
+          seen.add(el);
+          results.push(el);
+        }
+      }
+    }
+    return results;
+  }
+
+  function inspectComposerAttachments(composer) {
+    const previewImages = queryAcrossComposerScopes(composer, 'img').filter((img) => {
+      const src = img.getAttribute('src') || '';
+      return src.startsWith('blob:') || src.startsWith('data:image/');
+    });
+
+    const buttons = queryAcrossComposerScopes(composer, 'button, [role="button"]');
+    let removeCount = 0;
+    let disabledPreviewCount = 0;
+
+    for (let i = 0; i < buttons.length; i += 1) {
+      const btn = buttons[i];
+      const aria = (btn.getAttribute('aria-label') || '').trim();
+      const title = (btn.getAttribute('title') || '').trim();
+      const desc = `${aria} ${title}`.trim();
+
+      if (/^preview\s+\S+/i.test(aria) && (btn.disabled || btn.getAttribute('aria-disabled') === 'true')) {
+        disabledPreviewCount += 1;
+      }
+      if (REMOVE_ATTACHMENT_RE.test(desc)) {
+        removeCount += 1;
+      }
+    }
+
+    const busyIndicators = queryAcrossComposerScopes(
+      composer,
+      '[role="progressbar"], [aria-busy="true"], [data-uploading="true"]'
+    );
+
+    const count = Math.max(previewImages.length, removeCount);
+    const pending = disabledPreviewCount > 0 || busyIndicators.length > 0;
+    return { count, pending };
+  }
+
+  async function waitForComposerUploadSettle(composer, baselineCount, expectedAdded, timeoutMs = 5500) {
+    const targetCount = baselineCount + expectedAdded;
+    const deadline = Date.now() + timeoutMs;
+    let bestAdded = 0;
+
+    while (Date.now() < deadline) {
+      await sleep(45);
+      const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
+      const state = inspectComposerAttachments(activeComposer);
+      const added = Math.max(0, state.count - baselineCount);
+      if (added > bestAdded) {
+        bestAdded = added;
+      }
+      if (added >= expectedAdded && !state.pending) {
+        return { ok: true, addedCount: expectedAdded };
+      }
+      if (state.count >= targetCount && !state.pending) {
+        return { ok: true, addedCount: expectedAdded };
+      }
+    }
+
+    return { ok: false, addedCount: Math.min(expectedAdded, bestAdded) };
+  }
+
+  function buildFileDataTransfer(files) {
+    try {
+      const dt = new DataTransfer();
+      for (let i = 0; i < files.length; i += 1) {
+        dt.items.add(files[i]);
+      }
+      if (dt.files && dt.files.length === files.length) {
+        return dt;
+      }
+    } catch {
+      // Fallback shim below for test DOM environments.
+    }
+    return {
+      files,
+      types: ['Files'],
+      items: files.map((file) => ({ kind: 'file', type: file.type, getAsFile: () => file })),
+      getData: () => '',
+    };
+  }
+
+  async function tryPasteOrDropFiles(composer, files) {
+    if (!composer || files.length === 0) {
+      return { handled: false, ok: false, addedCount: 0 };
+    }
+
+    const baseline = inspectComposerAttachments(composer).count;
+    try {
+      composer.focus({ preventScroll: true });
+    } catch {
+      composer.focus();
+    }
+
+    const dt = buildFileDataTransfer(files);
+
+    // 1. Try synthetic ClipboardEvent('paste')
+    let pasteIntercepted = false;
+    try {
+      let pasteEvent;
+      try {
+        pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clipboardData: dt instanceof DataTransfer ? dt : undefined,
+        });
+      } catch {
+        pasteEvent = new Event('paste', { bubbles: true, cancelable: true, composed: true });
+      }
+      if (!pasteEvent.clipboardData || !pasteEvent.clipboardData.files || pasteEvent.clipboardData.files.length === 0) {
+        Object.defineProperty(pasteEvent, 'clipboardData', {
+          configurable: true,
+          value: dt,
+        });
+      }
+      const notCancelled = composer.dispatchEvent(pasteEvent);
+      pasteIntercepted = !notCancelled || Boolean(pasteEvent.defaultPrevented);
+    } catch {
+      pasteIntercepted = false;
+    }
+
+    if (pasteIntercepted) {
+      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
+      return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
+    }
+
+    await sleep(10);
+    if (inspectComposerAttachments(composer).count > baseline) {
+      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
+      return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
+    }
+
+    // 2. Try synthetic DragEvent('drop')
+    let dropIntercepted = false;
+    try {
+      let dropEvent;
+      try {
+        dropEvent = new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          dataTransfer: dt instanceof DataTransfer ? dt : undefined,
+        });
+      } catch {
+        dropEvent = new Event('drop', { bubbles: true, cancelable: true, composed: true });
+      }
+      if (!dropEvent.dataTransfer || !dropEvent.dataTransfer.files || dropEvent.dataTransfer.files.length === 0) {
+        Object.defineProperty(dropEvent, 'dataTransfer', {
+          configurable: true,
+          value: dt,
+        });
+      }
+      const notCancelled = composer.dispatchEvent(dropEvent);
+      dropIntercepted = !notCancelled || Boolean(dropEvent.defaultPrevented);
+    } catch {
+      dropIntercepted = false;
+    }
+
+    if (dropIntercepted) {
+      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
+      return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
+    }
+
+    await sleep(10);
+    if (inspectComposerAttachments(composer).count > baseline) {
+      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
+      return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
+    }
+
+    return { handled: false, ok: false, addedCount: 0 };
+  }
+
+  async function uploadImagesToComposer(composer, images) {
+    const entries = [];
+    for (let i = 0; i < images.length; i += 1) {
+      const img = images[i];
+      const file = createFileFromImagePayload(img);
+      if (!file) {
+        return {
+          ok: false,
+          reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
+          succeededImageIds: [],
+        };
+      }
+      entries.push({ id: img.id, file });
+    }
+
+    const fileInput = findImageFileInput(composer);
+    if (fileInput) {
+      if (entries.length === 1 || fileInput.multiple) {
+        const baseline = inspectComposerAttachments(composer).count;
+        const files = entries.map((entry) => entry.file);
+        if (!assignFilesToFileInput(fileInput, files)) {
+          return {
+            ok: false,
+            reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
+            succeededImageIds: [],
+          };
+        }
+        const settled = await waitForComposerUploadSettle(composer, baseline, entries.length, 5500);
+        const succeededImageIds = entries
+          .slice(0, settled.addedCount)
+          .map((entry) => entry.id)
+          .filter((id) => typeof id === 'string');
+        return settled.ok
+          ? { ok: true, succeededImageIds }
+          : {
+              ok: false,
+              reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+              succeededImageIds,
+            };
+      }
+
+      // Single-file input with multiple images: upload sequentially
+      const succeededImageIds = [];
+      for (let i = 0; i < entries.length; i += 1) {
+        const currentInput = findImageFileInput(composer) || fileInput;
+        const baseline = inspectComposerAttachments(composer).count;
+        if (!assignFilesToFileInput(currentInput, [entries[i].file])) {
+          return {
+            ok: false,
+            reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
+            succeededImageIds,
+          };
+        }
+        const settled = await waitForComposerUploadSettle(composer, baseline, 1, 5500);
+        if (!settled.ok) {
+          return {
+            ok: false,
+            reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+            succeededImageIds,
+          };
+        }
+        if (typeof entries[i].id === 'string') {
+          succeededImageIds.push(entries[i].id);
+        }
+      }
+      return { ok: true, succeededImageIds };
+    }
+
+    // No <input type="file"> in DOM: attempt paste/drop on composer
+    const fallback = await tryPasteOrDropFiles(composer, entries.map((entry) => entry.file));
+    if (!fallback.handled) {
+      return {
+        ok: false,
+        reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
+        succeededImageIds: [],
+      };
+    }
+
+    const succeededImageIds = entries
+      .slice(0, fallback.addedCount)
+      .map((entry) => entry.id)
+      .filter((id) => typeof id === 'string');
+    return fallback.ok
+      ? { ok: true, succeededImageIds }
+      : {
+          ok: false,
+          reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+          succeededImageIds,
+        };
+  }
+
+  function clearComposerAttachments(composer) {
+    const buttons = queryAcrossComposerScopes(composer, 'button, [role="button"]');
+    let removed = 0;
+    for (let i = 0; i < buttons.length; i += 1) {
+      const btn = buttons[i];
+      if (!isButtonEnabled(btn)) {
+        continue;
+      }
+      const desc = `${btn.getAttribute('aria-label') || ''} ${btn.getAttribute('title') || ''}`.trim();
+      if (REMOVE_ATTACHMENT_RE.test(desc)) {
+        btn.click();
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
   // ===== Message Dispatch =====
 
   async function handleFillWithResult(eventData, providerId) {
     const { text, images, autoSubmit, requestId, retry = false } = eventData;
+    const hasImages = Array.isArray(images) && images.length > 0;
+    const hasText = typeof text === 'string' && text.length > 0;
 
     if (requestId && providerId) {
       startUserInteractionTracking(requestId, providerId);
@@ -1224,24 +1870,7 @@
       stopUserInteractionTracking();
     }
 
-    // Custom generic driver does not upload images; inject text if provided and
-    // return 'unsupported' immediately so the host never stalls on its preview timer.
-    if (Array.isArray(images) && images.length > 0) {
-      if (typeof text === 'string' && text.length > 0 && text.length <= MAX_TEXT_BYTES) {
-        const composer = await findComposerWithRetry(500);
-        if (composer) {
-          await injectTextIntoComposer(composer, text, { skipIfAlreadyPresent: Boolean(retry) });
-        }
-      }
-      postActionResult(requestId, providerId, {
-        ok: false,
-        reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
-        succeededImageIds: [],
-      });
-      return;
-    }
-
-    if (typeof text !== 'string' || text.length === 0 || text.length > MAX_TEXT_BYTES) {
+    if (typeof text === 'string' && text.length > MAX_TEXT_BYTES) {
       postActionResult(requestId, providerId, {
         ok: false,
         reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
@@ -1250,7 +1879,16 @@
       return;
     }
 
-    const composer = await findComposerWithRetry(1000);
+    if (!hasImages && !hasText) {
+      postActionResult(requestId, providerId, {
+        ok: false,
+        reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
+        succeededImageIds: [],
+      });
+      return;
+    }
+
+    const composer = await findComposerWithRetry(hasImages ? 600 : 1000);
     if (!composer) {
       postActionResult(requestId, providerId, {
         ok: false,
@@ -1260,26 +1898,60 @@
       return;
     }
 
-    const injected = await injectTextIntoComposer(composer, text, {
-      skipIfAlreadyPresent: Boolean(retry),
-    });
-    if (!injected) {
-      postActionResult(requestId, providerId, {
-        ok: false,
-        reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
-        succeededImageIds: [],
+    let succeededImageIds = [];
+    if (hasImages) {
+      const uploadResult = await uploadImagesToComposer(composer, images);
+      succeededImageIds = uploadResult.succeededImageIds || [];
+      if (!uploadResult.ok) {
+        if (hasText) {
+          const refreshedComposer = composer.isConnected ? composer : findComposerElement();
+          if (refreshedComposer) {
+            await injectTextIntoComposer(refreshedComposer, text, {
+              skipIfAlreadyPresent: Boolean(retry),
+            });
+          }
+        }
+        postActionResult(requestId, providerId, {
+          ok: false,
+          reason: uploadResult.reason || ACTION_FAILURE_REASONS.INJECTION_ERROR,
+          succeededImageIds,
+        });
+        return;
+      }
+    }
+
+    if (hasText) {
+      const activeComposer = composer.isConnected ? composer : await findComposerWithRetry(500);
+      if (!activeComposer) {
+        postActionResult(requestId, providerId, {
+          ok: false,
+          reason: ACTION_FAILURE_REASONS.CONTROL_NOT_FOUND,
+          succeededImageIds,
+        });
+        return;
+      }
+      const injected = await injectTextIntoComposer(activeComposer, text, {
+        skipIfAlreadyPresent: Boolean(retry),
       });
-      return;
+      if (!injected) {
+        postActionResult(requestId, providerId, {
+          ok: false,
+          reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
+          succeededImageIds,
+        });
+        return;
+      }
     }
 
     if (autoSubmit === true) {
       await sleep(80);
-      await triggerSendWithSettle(composer, { waitForEnabledMs: 700 });
+      const activeComposer = composer.isConnected ? composer : findComposerElement();
+      await triggerSendWithSettle(activeComposer, { waitForEnabledMs: 700 });
     }
 
     postActionResult(requestId, providerId, {
       ok: true,
-      succeededImageIds: [],
+      succeededImageIds,
     });
   }
 
@@ -1366,9 +2038,22 @@
       return;
     }
 
+    if (type === HOST_TO_FRAME.ENABLE_TEMP_CHAT && context === MULTI_PANEL_CONTEXT) {
+      void handleEnableTempChat(providerId);
+      return;
+    }
+
+    if (type === HOST_TO_FRAME.DISABLE_TEMP_CHAT && context === MULTI_PANEL_CONTEXT) {
+      void handleDisableTempChat(providerId);
+      return;
+    }
+
     if (type === HOST_TO_FRAME.CLEAR_INPUT && context === MULTI_PANEL_CONTEXT) {
       stopUserInteractionTracking();
       const composer = findComposerElement();
+      if (event.data.clearImages === true) {
+        clearComposerAttachments(composer);
+      }
       if (composer) {
         clearComposer(composer);
       }

@@ -3,8 +3,13 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CUSTOM_PROVIDERS_STORAGE_KEY,
+  CUSTOM_PROVIDER_ICON,
+  CUSTOM_PROVIDER_ICON_DARK,
 } from '../modules/custom-providers.js';
-import { setCustomProviderDescriptors } from '../modules/provider-registry.js';
+import {
+  resetExtraProviderDescriptors,
+  setCustomProviderDescriptors,
+} from '../modules/provider-registry.js';
 import {
   SNAPSHOT_MESSAGES,
   captureCurrentView,
@@ -186,6 +191,7 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
     }
     document.body.innerHTML = '';
     setCustomProviderDescriptors([]);
+    resetExtraProviderDescriptors();
     vi.restoreAllMocks();
     delete globalThis.fetch;
     delete globalThis.createImageBitmap;
@@ -546,9 +552,270 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
       expect(customIframe.getAttribute('src')).toBe('http://127.0.0.1:3000/chat');
     });
 
-    it('sends text-only INJECT_TEXT_WITH_IMAGES (images: []) to imageUpload: false panels, shows localized toast, and never puts them in failedFillPanelIds because of images', async () => {
+    it('forwards images to custom web panels by default, and gracefully treats runtime reason: "unsupported" as image-skipped without blocking fill cleanup', async () => {
       const { mpMod, chatgptEl, deepseekEl, customEl } =
         await bootMultiPanelWithBuiltinsAndCustom();
+
+      const chatgptIframe = chatgptEl.querySelector('iframe');
+      const deepseekIframe = deepseekEl.querySelector('iframe');
+      const customIframe = customEl.querySelector('iframe');
+
+      const attachActionResponder = (
+        iframe,
+        { providerId, origin, failReason = null }
+      ) => {
+        const calls = [];
+        const cw = {
+          postMessage: vi.fn((message, targetOrigin) => {
+            calls.push({ message: structuredClone(message), targetOrigin });
+            if (targetOrigin !== origin) {
+              return;
+            }
+            if (message.type === 'INJECT_TEXT_WITH_IMAGES' && message.action === 'fill') {
+              queueMicrotask(() => {
+                const ev = new MessageEvent('message', {
+                  origin,
+                  source: cw,
+                  data: failReason
+                    ? {
+                        type: 'PANELIZE_ACTION_RESULT',
+                        context: 'multi-panel-action-result',
+                        requestId: message.requestId,
+                        provider: providerId,
+                        action: 'fill',
+                        status: 'failed',
+                        reason: failReason,
+                        succeededImageIds: [],
+                      }
+                    : {
+                        type: 'PANELIZE_ACTION_RESULT',
+                        context: 'multi-panel-action-result',
+                        requestId: message.requestId,
+                        provider: providerId,
+                        action: 'fill',
+                        status: 'succeeded',
+                        succeededImageIds: (message.images || []).map((img) => img.id),
+                      },
+                });
+                window.dispatchEvent(ev);
+              });
+            }
+          }),
+        };
+        Object.defineProperty(iframe, 'contentWindow', {
+          configurable: true,
+          value: cw,
+        });
+        return { cw, calls };
+      };
+
+      const chatgptFrame = attachActionResponder(chatgptIframe, {
+        providerId: 'chatgpt',
+        origin: 'https://chatgpt.com',
+      });
+      const deepseekFrame = attachActionResponder(deepseekIframe, {
+        providerId: 'deepseek',
+        origin: 'https://chat.deepseek.com',
+      });
+      const customFrame = attachActionResponder(customIframe, {
+        providerId: CUSTOM_RECORD.id,
+        origin: 'http://127.0.0.1:3000',
+      });
+
+      const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+      const imageFile = new File([pngBytes], 'diagram.png', { type: 'image/png' });
+      const fileInput = document.getElementById('image-file-input');
+      Object.defineProperty(fileInput, 'files', {
+        configurable: true,
+        value: [imageFile],
+      });
+      fileInput.dispatchEvent(new Event('change'));
+
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.image-preview-item')).toHaveLength(1);
+      });
+
+      document.querySelectorAll('.panelize-toast').forEach((el) => el.remove());
+
+      // 1. Image-capable custom web panel (e.g. Perplexity) receives full images payload and succeeds with zero skipped toast
+      await mpMod.broadcastMessage('Explain this architecture diagram', false);
+
+      expect(chatgptFrame.calls[0].message.images).toHaveLength(1);
+      expect(deepseekFrame.calls[0].message.images).toHaveLength(1);
+      expect(customFrame.calls).toHaveLength(1);
+      expect(customFrame.calls[0].targetOrigin).toBe('http://127.0.0.1:3000');
+      expect(customFrame.calls[0].message.type).toBe('INJECT_TEXT_WITH_IMAGES');
+      expect(customFrame.calls[0].message.providerId).toBe(CUSTOM_RECORD.id);
+      expect(customFrame.calls[0].message.images).toHaveLength(1);
+      expect(customFrame.calls[0].message.images[0].name).toBe('diagram.png');
+
+      const fillBtn = document.getElementById('fill-input-btn');
+      expect(fillBtn.dataset.retryFailed).toBe('false');
+      expect(document.getElementById('send-status').textContent).toBe('Filled 3 inputs');
+      expect(document.querySelectorAll('.image-preview-item')).toHaveLength(0);
+      expect(
+        Array.from(document.querySelectorAll('.panelize-toast')).map((el) => el.textContent)
+      ).not.toContain('Images were not sent to: Local Open WebUI');
+
+      // 2. Text-only custom web site replying reason: 'unsupported' triggers localized skipped toast without entering failedFillPanelIds
+      const textOnlyCustomFrame = attachActionResponder(customIframe, {
+        providerId: CUSTOM_RECORD.id,
+        origin: 'http://127.0.0.1:3000',
+        failReason: 'unsupported',
+      });
+      chatgptFrame.calls.length = 0;
+      deepseekFrame.calls.length = 0;
+
+      const secondFile = new File([pngBytes], 'second.png', { type: 'image/png' });
+      Object.defineProperty(fileInput, 'files', {
+        configurable: true,
+        value: [secondFile],
+      });
+      fileInput.dispatchEvent(new Event('change'));
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.image-preview-item')).toHaveLength(1);
+      });
+      document.querySelectorAll('.panelize-toast').forEach((el) => el.remove());
+
+      await mpMod.broadcastMessage('Text fallback prompt', false);
+
+      expect(textOnlyCustomFrame.calls[0].message.images).toHaveLength(1);
+      expect(fillBtn.dataset.retryFailed).toBe('false');
+      expect(document.getElementById('send-status').textContent).toBe('Filled 3 inputs');
+      expect(document.querySelectorAll('.image-preview-item')).toHaveLength(0);
+      expect(
+        Array.from(document.querySelectorAll('.panelize-toast')).map((el) => el.textContent)
+      ).toContain('Images were not sent to: Local Open WebUI');
+    });
+
+    it('sends ENABLE_TEMP_CHAT on custom web iframe load when temporary chat is enabled and DISABLE_TEMP_CHAT when disabled', async () => {
+      const { customEl } = await bootMultiPanelWithBuiltinsAndCustom();
+      const customIframe = customEl.querySelector('iframe');
+      const sentTypes = [];
+
+      const cw = {
+        postMessage: vi.fn((message, targetOrigin) => {
+          if (targetOrigin !== 'http://127.0.0.1:3000') return;
+          sentTypes.push(message.type);
+          if (message.type === 'PANELIZE_CUSTOM_FRAME_PING') {
+            queueMicrotask(() => {
+              window.dispatchEvent(
+                new MessageEvent('message', {
+                  origin: 'http://127.0.0.1:3000',
+                  source: cw,
+                  data: {
+                    type: 'PANELIZE_CUSTOM_FRAME_PONG',
+                    provider: CUSTOM_RECORD.id,
+                    requestId: message.requestId,
+                    context: 'multi-panel-provider-status',
+                  },
+                })
+              );
+            });
+          } else if (message.type === 'ENABLE_TEMP_CHAT') {
+            queueMicrotask(() => {
+              window.dispatchEvent(
+                new MessageEvent('message', {
+                  origin: 'http://127.0.0.1:3000',
+                  source: cw,
+                  data: {
+                    type: 'PANELIZE_TEMP_CHAT_ENABLED',
+                    provider: CUSTOM_RECORD.id,
+                    context: 'multi-panel-provider-status',
+                  },
+                })
+              );
+            });
+          } else if (message.type === 'DISABLE_TEMP_CHAT') {
+            queueMicrotask(() => {
+              window.dispatchEvent(
+                new MessageEvent('message', {
+                  origin: 'http://127.0.0.1:3000',
+                  source: cw,
+                  data: {
+                    type: 'PANELIZE_TEMP_CHAT_DISABLED',
+                    provider: CUSTOM_RECORD.id,
+                    context: 'multi-panel-provider-status',
+                  },
+                })
+              );
+            });
+          }
+        }),
+      };
+      Object.defineProperty(customIframe, 'contentWindow', {
+        configurable: true,
+        value: cw,
+      });
+
+      const tempBtn = document.getElementById('temporary-chat-btn');
+      tempBtn.click();
+      expect(customIframe.getAttribute('src')).toBe('http://127.0.0.1:3000/chat');
+
+      // Simulate iframe load after reload -> triggers ping -> ENABLE_TEMP_CHAT
+      customIframe.dispatchEvent(new Event('load'));
+      await vi.waitFor(() => {
+        expect(sentTypes).toContain('ENABLE_TEMP_CHAT');
+      });
+
+      // Now disable temporary chat -> reloads iframe -> on load sends DISABLE_TEMP_CHAT
+      sentTypes.length = 0;
+      tempBtn.disabled = false;
+      tempBtn.click();
+      customIframe.dispatchEvent(new Event('load'));
+      await vi.waitFor(() => {
+        expect(sentTypes).toContain('DISABLE_TEMP_CHAT');
+      });
+    });
+
+    it('sends text-only INJECT_TEXT_WITH_IMAGES (images: []) to explicit imageUpload: false descriptors, shows localized toast, and never puts them in failedFillPanelIds because of images', async () => {
+      vi.resetModules();
+      document.body.innerHTML = MULTI_PANEL_BODY_HTML;
+
+      installStatefulChromeStorage({
+        localInitial: {},
+        syncInitial: {
+          theme: 'light',
+          language: 'en',
+          multiPanelLayout: '1x3',
+          enabledProviders: ['chatgpt', 'deepseek', 'textonly-builtin'],
+          providerOrder: ['chatgpt', 'deepseek', 'textonly-builtin'],
+          multiPanelProviders: ['chatgpt', 'deepseek', 'textonly-builtin'],
+        },
+      });
+
+      const regMod = await import('../modules/provider-registry.js');
+      regMod.registerExtraProviderDescriptors([
+        {
+          id: 'textonly-builtin',
+          name: 'TextOnly AI',
+          url: 'http://127.0.0.1:3000/chat',
+          topLevelUrl: 'http://127.0.0.1:3000/chat',
+          icon: CUSTOM_PROVIDER_ICON,
+          iconDark: CUSTOM_PROVIDER_ICON_DARK,
+          enabled: true,
+          access: 'builtin',
+          frameOrigins: ['http://127.0.0.1:3000'],
+          allowedHosts: ['127.0.0.1'],
+          permissionOrigins: null,
+          contentScript: null,
+          frameRule: null,
+          tempChat: null,
+          capabilities: {
+            imageUpload: false,
+            inPageNewChat: false,
+            snapshotStitch: false,
+          },
+        },
+      ]);
+
+      const mpMod = await import('../multi-panel/multi-panel.js');
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('#panel-grid .panel-item')).toHaveLength(3);
+      });
+      const [chatgptEl, deepseekEl, customEl] = Array.from(
+        document.querySelectorAll('#panel-grid .panel-item')
+      );
 
       const chatgptIframe = chatgptEl.querySelector('iframe');
       const deepseekIframe = deepseekEl.querySelector('iframe');
@@ -610,7 +877,7 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
         origin: 'https://chat.deepseek.com',
       });
       const customFrame = attachActionResponder(customIframe, {
-        providerId: CUSTOM_RECORD.id,
+        providerId: 'textonly-builtin',
         origin: 'http://127.0.0.1:3000',
       });
 
@@ -644,14 +911,13 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
       expect(deepseekFrame.calls[0].message.images).toHaveLength(1);
       expect('providerId' in deepseekFrame.calls[0].message).toBe(false);
 
-      // Custom panel received INJECT_TEXT_WITH_IMAGES with images: [], action: 'fill', and providerId
+      // imageUpload: false panel received INJECT_TEXT_WITH_IMAGES with images: []
       expect(customFrame.calls).toHaveLength(1);
       expect(customFrame.calls[0]).toEqual({
         targetOrigin: 'http://127.0.0.1:3000',
         message: expect.objectContaining({
           type: 'INJECT_TEXT_WITH_IMAGES',
           context: 'multi-panel',
-          providerId: CUSTOM_RECORD.id,
           action: 'fill',
           text: 'Explain this architecture diagram',
           images: [],
@@ -659,16 +925,16 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
         }),
       });
 
-      // Waiter succeeded for all panels; custom panel did NOT enter failedFillPanelIds
+      // Waiter succeeded for all panels; imageUpload: false panel did NOT enter failedFillPanelIds
       const fillBtn = document.getElementById('fill-input-btn');
       expect(fillBtn.dataset.retryFailed).toBe('false');
       expect(document.getElementById('send-status').textContent).toBe('Filled 3 inputs');
 
-      // One localized toast naming the skipped custom panel was displayed
+      // One localized toast naming the skipped panel was displayed
       const toasts = Array.from(document.querySelectorAll('.panelize-toast')).map(
         (el) => el.textContent
       );
-      expect(toasts).toContain('Images were not sent to: Local Open WebUI');
+      expect(toasts).toContain('Images were not sent to: TextOnly AI');
 
       // Now verify partial failure + image-only empty-text broadcast:
       // Make DeepSeek fail image upload while ChatGPT succeeds and Custom skips images with empty text

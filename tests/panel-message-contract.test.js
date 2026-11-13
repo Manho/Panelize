@@ -200,17 +200,18 @@ describe('panel-message-contract', () => {
     expect(contractSource).toContain('iframe.contentWindow');
   });
 
-  it('forward check: every listed host-to-frame message appears in a host sender and in the content-script receiver', () => {
-    const receiverSource = readProjectSource('content-scripts/text-injection-all-providers.js');
-
+  it('forward check: every listed host-to-frame message appears in a host sender and in a listed content-script receiver', () => {
     for (const entry of HOST_TO_FRAME_MESSAGES) {
       expect(entry.direction).toBe('host-to-frame');
       const appearsInListedSender = entry.senderFiles.some((senderFile) =>
         containsQuotedLiteral(readProjectSource(senderFile), entry.type)
       );
       expect(appearsInListedSender, `host sender missing ${entry.type}`).toBe(true);
+      const appearsInListedReceiver = entry.receiverFiles.some((receiverFile) =>
+        containsQuotedLiteral(readProjectSource(receiverFile), entry.type)
+      );
       expect(
-        containsQuotedLiteral(receiverSource, entry.type),
+        appearsInListedReceiver,
         `content-script receiver missing ${entry.type}`
       ).toBe(true);
 
@@ -223,13 +224,14 @@ describe('panel-message-contract', () => {
     }
   });
 
-  it('forward check: every listed frame-to-host message appears in the content-script sender and in its host receiver', () => {
-    const senderSource = readProjectSource('content-scripts/text-injection-all-providers.js');
-
+  it('forward check: every listed frame-to-host message appears in a listed content-script sender and in its host receiver', () => {
     for (const entry of FRAME_TO_HOST_MESSAGES) {
       expect(entry.direction).toBe('frame-to-host');
+      const appearsInListedSender = entry.senderFiles.some((senderFile) =>
+        containsQuotedLiteral(readProjectSource(senderFile), entry.type)
+      );
       expect(
-        containsQuotedLiteral(senderSource, entry.type),
+        appearsInListedSender,
         `content-script sender missing ${entry.type}`
       ).toBe(true);
 
@@ -239,8 +241,11 @@ describe('panel-message-contract', () => {
       expect(appearsInListedReceiver, `host receiver missing ${entry.type}`).toBe(true);
 
       if (entry.action) {
+        const actionInSender = entry.senderFiles.some((senderFile) =>
+          containsQuotedLiteral(readProjectSource(senderFile), entry.action)
+        );
         expect(
-          containsQuotedLiteral(senderSource, entry.action),
+          actionInSender,
           `content-script sender missing action ${entry.action}`
         ).toBe(true);
         const actionInReceiver = entry.receiverFiles.some((receiverFile) =>

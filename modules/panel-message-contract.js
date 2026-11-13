@@ -45,7 +45,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
       'context'
     ],
     senderFiles: ['multi-panel/multi-panel.js', 'modules/panel-action-results.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'INJECT_TEXT_WITH_IMAGES',
@@ -63,7 +66,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
       'context'
     ],
     senderFiles: ['multi-panel/multi-panel.js', 'modules/panel-action-results.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'TRIGGER_SEND',
@@ -71,7 +77,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
     direction: 'host-to-frame',
     payloadFields: ['type', 'requestId', 'providerMode', 'context'],
     senderFiles: ['multi-panel/multi-panel.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'NEW_CHAT',
@@ -87,7 +96,18 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
     direction: 'host-to-frame',
     payloadFields: ['type', 'providerMode', 'context'],
     senderFiles: ['multi-panel/multi-panel.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
+  }),
+  freezeContractEntry({
+    type: 'DISABLE_TEMP_CHAT',
+    action: null,
+    direction: 'host-to-frame',
+    payloadFields: ['type', 'providerMode', 'context'],
+    senderFiles: ['multi-panel/multi-panel.js'],
+    receiverFiles: ['content-scripts/custom-provider-driver.js']
   }),
   freezeContractEntry({
     type: 'CLEAR_INPUT',
@@ -95,7 +115,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
     direction: 'host-to-frame',
     payloadFields: ['type', 'clearImages', 'providerMode', 'context'],
     senderFiles: ['multi-panel/multi-panel.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'PANELIZE_RESTORE_USER_FOCUS',
@@ -103,7 +126,10 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
     direction: 'host-to-frame',
     payloadFields: ['type', 'context'],
     senderFiles: ['multi-panel/multi-panel.js'],
-    receiverFiles: ['content-scripts/text-injection-all-providers.js']
+    receiverFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ]
   }),
   freezeContractEntry({
     type: 'PANELIZE_SNAPSHOT_PREPARE',
@@ -156,7 +182,10 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
       'succeededImageIds',
       'reason'
     ],
-    senderFiles: ['content-scripts/text-injection-all-providers.js'],
+    senderFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ],
     receiverFiles: ['modules/panel-action-results.js']
   }),
   freezeContractEntry({
@@ -164,7 +193,10 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
     action: null,
     direction: 'frame-to-host',
     payloadFields: ['type', 'provider', 'url', 'context'],
-    senderFiles: ['content-scripts/text-injection-all-providers.js'],
+    senderFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ],
     receiverFiles: ['multi-panel/multi-panel.js']
   }),
   freezeContractEntry({
@@ -196,7 +228,10 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
     action: null,
     direction: 'frame-to-host',
     payloadFields: ['type', 'requestId', 'provider', 'phase', 'context'],
-    senderFiles: ['content-scripts/text-injection-all-providers.js'],
+    senderFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ],
     receiverFiles: ['multi-panel/multi-panel.js']
   }),
   freezeContractEntry({
@@ -204,7 +239,18 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
     action: null,
     direction: 'frame-to-host',
     payloadFields: ['type', 'provider', 'context'],
-    senderFiles: ['content-scripts/text-injection-all-providers.js'],
+    senderFiles: [
+      'content-scripts/text-injection-all-providers.js',
+      'content-scripts/custom-provider-driver.js'
+    ],
+    receiverFiles: ['multi-panel/multi-panel.js']
+  }),
+  freezeContractEntry({
+    type: 'PANELIZE_TEMP_CHAT_DISABLED',
+    action: null,
+    direction: 'frame-to-host',
+    payloadFields: ['type', 'provider', 'context'],
+    senderFiles: ['content-scripts/custom-provider-driver.js'],
     receiverFiles: ['multi-panel/multi-panel.js']
   }),
   freezeContractEntry({

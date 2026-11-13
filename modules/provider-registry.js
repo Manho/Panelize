@@ -19,7 +19,7 @@ const DEFAULT_BUILTIN_CAPABILITIES = Object.freeze({
 });
 
 const DEFAULT_CUSTOM_CAPABILITIES = Object.freeze({
-  imageUpload: false,
+  imageUpload: true,
   inPageNewChat: false,
   snapshotStitch: false
 });
@@ -577,12 +577,13 @@ export function validateProviderDescriptor(
     }
   }
 
-  if (isCustom && descriptor.tempChat !== null) {
-    errors.push(`Provider "${id || '<unnamed>'}": custom provider tempChat must be null`);
+  if (isCustomApi && descriptor.tempChat !== null) {
+    errors.push(`Provider "${id || '<unnamed>'}": custom API provider tempChat must be null`);
   } else if (descriptor.tempChat !== null && descriptor.tempChat !== undefined) {
     const tc = descriptor.tempChat;
     if (
       typeof tc !== 'object' ||
+      Array.isArray(tc) ||
       (tc.url !== null && tc.url !== undefined && !isHttpOrHttpsUrl(tc.url)) ||
       !isHttpOrHttpsUrl(tc.normalUrl) ||
       typeof tc.retry !== 'boolean'
@@ -590,6 +591,24 @@ export function validateProviderDescriptor(
       errors.push(
         `Provider "${id || '<unnamed>'}": tempChat must have nullable http(s) url, http(s) normalUrl, and boolean retry`
       );
+    } else if (isCustom) {
+      if ((tc.url === null || tc.url === undefined) && tc.retry !== true) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": custom provider non-URL tempChat must specify retry: true`
+        );
+      }
+      if (customOrigin !== null) {
+        if (new URL(tc.normalUrl).origin !== customOrigin) {
+          errors.push(
+            `Provider "${id || '<unnamed>'}": custom provider tempChat.normalUrl origin must match frameOrigins[0]`
+          );
+        }
+        if (tc.url && new URL(tc.url).origin !== customOrigin) {
+          errors.push(
+            `Provider "${id || '<unnamed>'}": custom provider tempChat.url origin must match frameOrigins[0]`
+          );
+        }
+      }
     }
   }
 

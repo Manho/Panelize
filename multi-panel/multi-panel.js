@@ -156,6 +156,9 @@ let sendFocusHardTimeoutIds = new Map();
 let tempChatRetryTimerIds = new Map();
 let tempChatCleanupTimerId = null;
 let tempChatPendingPanelIds = new Set();
+let tempChatDeactivationRetryTimerIds = new Map();
+let tempChatDeactivationCleanupTimerId = null;
+let tempChatDeactivationPendingPanelIds = new Set();
 let tempChatButtonRestoreTimerId = null;
 let isTemporaryChatModeEnabled = false;
 let customApiHostBridge = null;
@@ -235,9 +238,11 @@ const PANELIZE_PROVIDER_BUSY = 'PANELIZE_PROVIDER_BUSY';
 const PANELIZE_PROVIDER_IDLE = 'PANELIZE_PROVIDER_IDLE';
 const PANELIZE_PROVIDER_USER_INTERACTION = 'PANELIZE_PROVIDER_USER_INTERACTION';
 const PANELIZE_TEMP_CHAT_ENABLED = 'PANELIZE_TEMP_CHAT_ENABLED';
+const PANELIZE_TEMP_CHAT_DISABLED = 'PANELIZE_TEMP_CHAT_DISABLED';
 const PANELIZE_PROVIDER_LOCATION = 'PANELIZE_PROVIDER_LOCATION';
 const PANELIZE_PAGE_WIDTH = 'PANELIZE_PAGE_WIDTH';
 const TEMP_CHAT_RETRY_DELAYS = [1200, 2500, 4000];
+const CUSTOM_TEMP_CHAT_RETRY_DELAYS = [150, 800, 2000];
 const TEMP_CHAT_OPERATION_TIMEOUT_MS = 5000;
 let isInitialized = false;
 
@@ -912,6 +917,49 @@ function cancelTemporaryChatActivation({ restoreButton = true } = {}) {
   }
 }
 
+function clearTemporaryChatDeactivationRetriesForPanel(panelId) {
+  const timerIds = tempChatDeactivationRetryTimerIds.get(panelId) || [];
+  timerIds.forEach(timerId => clearTimeout(timerId));
+  tempChatDeactivationRetryTimerIds.delete(panelId);
+}
+
+function cancelTemporaryChatDeactivation() {
+  tempChatDeactivationRetryTimerIds.forEach((timerIds) => {
+    timerIds.forEach(timerId => clearTimeout(timerId));
+  });
+  tempChatDeactivationRetryTimerIds.clear();
+  tempChatDeactivationPendingPanelIds.clear();
+
+  if (typeof tempChatDeactivationCleanupTimerId === 'number') {
+    clearTimeout(tempChatDeactivationCleanupTimerId);
+  }
+  tempChatDeactivationCleanupTimerId = null;
+}
+
+function startTemporaryChatDeactivationCycle() {
+  cancelTemporaryChatDeactivation();
+  tempChatDeactivationCleanupTimerId = setTimeout(() => {
+    cancelTemporaryChatDeactivation();
+  }, TEMP_CHAT_OPERATION_TIMEOUT_MS);
+}
+
+function startTemporaryChatDeactivationForPanel(panel) {
+  if (
+    !panel ||
+    !isCustomWebProvider(panel.providerId) ||
+    !tempChatDeactivationPendingPanelIds.has(panel.id) ||
+    !panel.iframe ||
+    !panel.iframe.contentWindow
+  ) {
+    return;
+  }
+
+  clearTemporaryChatDeactivationRetriesForPanel(panel.id);
+  CUSTOM_TEMP_CHAT_RETRY_DELAYS.forEach(delay =>
+    scheduleTemporaryChatDeactivationRetry(panel, delay)
+  );
+}
+
 function startTemporaryChatActivationForPanel(panel) {
   if (!panel || !requiresTemporaryChatActivationRetry(panel.providerId) || !panel.iframe || !panel.iframe.contentWindow) {
     return;
@@ -919,7 +967,10 @@ function startTemporaryChatActivationForPanel(panel) {
 
   clearTemporaryChatRetriesForPanel(panel.id);
   tempChatPendingPanelIds.add(panel.id);
-  TEMP_CHAT_RETRY_DELAYS.forEach(delay => scheduleTemporaryChatRetry(panel, delay));
+  const retryDelays = isCustomWebProvider(panel.providerId)
+    ? CUSTOM_TEMP_CHAT_RETRY_DELAYS
+    : TEMP_CHAT_RETRY_DELAYS;
+  retryDelays.forEach(delay => scheduleTemporaryChatRetry(panel, delay));
 }
 
 function startTemporaryChatActivationCycle() {
@@ -1127,7 +1178,8 @@ function handleProviderStatusMessage(event) {
     return;
   }
 
-  const isTempChatMessage = data.type === PANELIZE_TEMP_CHAT_ENABLED;
+  const isTempChatMessage =
+    data.type === PANELIZE_TEMP_CHAT_ENABLED || data.type === PANELIZE_TEMP_CHAT_DISABLED;
   const isLocationMessage = data.type === PANELIZE_PROVIDER_LOCATION;
   const isPageWidthMessage = data.type === PANELIZE_PAGE_WIDTH;
   if (data.context !== MULTI_PANEL_PROVIDER_STATUS_CONTEXT
@@ -1187,6 +1239,13 @@ function handleProviderStatusMessage(event) {
       }
       clearTemporaryChatRetriesForPanel(panel.id);
       tempChatPendingPanelIds.delete(panel.id);
+      break;
+    case PANELIZE_TEMP_CHAT_DISABLED:
+      if (!tempChatDeactivationPendingPanelIds.has(panel.id)) {
+        return;
+      }
+      clearTemporaryChatDeactivationRetriesForPanel(panel.id);
+      tempChatDeactivationPendingPanelIds.delete(panel.id);
       break;
     default:
       break;
@@ -1668,6 +1727,12 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
       const livePanel = panels.find(p => p.id === panelId);
       if (isTemporaryChatModeEnabled && livePanel && requiresTemporaryChatActivationRetry(livePanel.providerId)) {
         startTemporaryChatActivationForPanel(livePanel);
+      } else if (
+        !isTemporaryChatModeEnabled &&
+        livePanel &&
+        tempChatDeactivationPendingPanelIds.has(livePanel.id)
+      ) {
+        startTemporaryChatDeactivationForPanel(livePanel);
       }
       setTimeout(() => {
         loadingPanelIds.delete(panelId);
@@ -2029,7 +2094,30 @@ export async function broadcastMessage(text, autoSubmit = true) {
         ).finally(releaseFocusTracking);
       })
     );
-    const normalizedResults = normalizePanelResults(panelResults, targetPanels);
+    const rawNormalizedResults = normalizePanelResults(panelResults, targetPanels);
+    const runtimeUnsupportedPanels = [];
+    const normalizedResults = hasImages
+      ? rawNormalizedResults.map(result => {
+          if (
+            result &&
+            !result.ok &&
+            result.reason === 'unsupported' &&
+            isCustomWebProvider(result.provider)
+          ) {
+            const panel = panels.find(candidate => candidate.id === result.panelId);
+            if (panel && !imageSkippedPanels.some(skipped => skipped.id === panel.id)) {
+              runtimeUnsupportedPanels.push(panel);
+            }
+            return {
+              ok: true,
+              panelId: result.panelId,
+              provider: result.provider,
+              succeededImageIds: []
+            };
+          }
+          return result;
+        })
+      : rawNormalizedResults;
 
     if (hasImages) {
       if (fillPayloadRevision !== payloadRevisionAtStart) {
@@ -2042,8 +2130,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
         return;
       }
 
-      if (imageSkippedPanels.length > 0) {
-        const skippedNames = imageSkippedPanels.map(
+      const allImageSkippedPanels = [...imageSkippedPanels, ...runtimeUnsupportedPanels];
+      if (allImageSkippedPanels.length > 0) {
+        const skippedNames = allImageSkippedPanels.map(
           panel => getProviderById(panel.providerId)?.name || panel.providerId
         );
         showToast(
@@ -3140,14 +3229,42 @@ function scheduleTemporaryChatRetry(panel, delay) {
   tempChatRetryTimerIds.set(panel.id, timerIds);
 }
 
+function scheduleTemporaryChatDeactivationRetry(panel, delay) {
+  const timerId = setTimeout(() => {
+    if (
+      isTemporaryChatModeEnabled ||
+      !tempChatDeactivationPendingPanelIds.has(panel.id) ||
+      !panel.iframe ||
+      !panel.iframe.contentWindow
+    ) {
+      return;
+    }
+
+    focusUnifiedInput({ force: true });
+    postToPanelFrame(panel, {
+      type: 'DISABLE_TEMP_CHAT',
+      providerMode: getPanelProviderMode(panel),
+      context: 'multi-panel'
+    });
+  }, delay);
+
+  const timerIds = tempChatDeactivationRetryTimerIds.get(panel.id) || [];
+  timerIds.push(timerId);
+  tempChatDeactivationRetryTimerIds.set(panel.id, timerIds);
+}
+
 async function temporaryChatAllProviders() {
   if (isTemporaryChatModeEnabled) {
     cancelTemporaryChatActivation({ restoreButton: false });
+    startTemporaryChatDeactivationCycle();
     setTemporaryChatModeEnabled(false);
     setTemporaryChatButtonDisabled(true);
 
     panels.forEach(panel => {
       if (isTemporaryChatSupportedProvider(panel.providerId)) {
+        if (isCustomWebProvider(panel.providerId)) {
+          tempChatDeactivationPendingPanelIds.add(panel.id);
+        }
         reloadPanelIframe(panel, getTemporaryChatNormalUrl(panel.providerId));
         return;
       }
@@ -3162,6 +3279,7 @@ async function temporaryChatAllProviders() {
     return;
   }
 
+  cancelTemporaryChatDeactivation();
   setTemporaryChatModeEnabled(true);
   startTemporaryChatActivationCycle();
 
