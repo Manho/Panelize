@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.3 - 2026-11-13
+- Fixed Full answers Share snapshots not scrolling and stitching long responses on Custom Web UI providers (such as Perplexity), while suppressing sticky composer halos and repeated side-rail overlays across stitched frames.
+
 ## 2.2.2 - 2026-11-13
 - Added Temporary Chat toggling for Custom Web UI providers (such as Perplexity incognito mode and generic Temporary Chat switches), including clearing sticky cookie-persisted incognito states when disabled.
 - Added single and multi-image uploads and attachment clearing for Custom Web UI providers via file inputs and paste/drop fallbacks, with graceful text-only fallback when a site has no upload control.
