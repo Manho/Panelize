@@ -8,6 +8,7 @@ import { migrateEnabledProvidersOnUpdate } from '../modules/provider-defaults.js
 import { SHARE_SNAPSHOT_ACTION, isMultiPanelTab } from '../modules/share-trigger.js';
 import { removeDeprecatedClaudeModelMode } from '../modules/settings.js';
 import {
+  OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION,
   reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
 import {
@@ -386,6 +387,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Handle version check request from options page
     handleFetchLatestCommit().then(sendResponse);
     return true; // Keep channel open for async response
+  }
+
+  if (message.action === OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION) {
+    if (sender?.id !== chrome.runtime?.id) {
+      sendResponse({
+        success: false,
+        error: 'Optional provider access sync is only available to extension pages'
+      });
+      return false;
+    }
+
+    scheduleOptionalProviderReconcile().then(
+      () => sendResponse({ success: true }),
+      (error) => sendResponse({ success: false, error: error?.message || String(error) })
+    );
+    return true;
   }
 
   if (message.action === GROK_WEBSOCKET_COOKIE_SYNC_ACTION) {

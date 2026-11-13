@@ -26,9 +26,11 @@ import {
   subscribeCustomProvidersChanged
 } from '../modules/custom-providers.js';
 import { createCustomApiHostBridge } from '../modules/custom-api-bridge.js';
+import { createCustomSwRecoveryController } from '../modules/custom-sw-recovery.js';
 import { preserveForeignCustomIds } from '../modules/provider-order.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
+import { OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION } from '../modules/optional-provider-access.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
   GOOGLE_PROVIDER_MODE_AI,
@@ -157,6 +159,7 @@ let tempChatPendingPanelIds = new Set();
 let tempChatButtonRestoreTimerId = null;
 let isTemporaryChatModeEnabled = false;
 let customApiHostBridge = null;
+let customSwRecoveryController = null;
 
 function getResolvedHostTheme() {
   return isDarkThemeActive() ? 'dark' : 'light';
@@ -259,6 +262,14 @@ async function init() {
   customApiHostBridge = createCustomApiHostBridge({
     getPanels: () => panels,
     getTheme: getResolvedHostTheme
+  });
+  customSwRecoveryController?.dispose();
+  customSwRecoveryController = createCustomSwRecoveryController({
+    getPanels: () => panels,
+    isCustomWebProvider,
+    getProviderOrigin: (providerId) => getCustomProviderOrigin(providerId),
+    syncAccess: requestOptionalProviderAccessSync,
+    reloadPanel: (panel, targetUrl, options) => reloadPanelIframe(panel, targetUrl, options)
   });
   await initializeLanguage();
   translatePage();
@@ -364,6 +375,32 @@ function isGoogleProvider(providerId) {
 
 export function isSendFocusTrackedProvider(providerId) {
   return providerId === 'chatgpt' || providerId === 'aistudio';
+}
+
+function isCustomWebProvider(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  return Boolean(descriptor?.access === 'custom' && descriptor.customKind !== 'api');
+}
+
+function requiresOptionalProviderAccessSync(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  return descriptor?.access === 'optional' || descriptor?.access === 'custom';
+}
+
+async function requestOptionalProviderAccessSync() {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION
+    });
+    if (response && response.success === false) {
+      console.warn('[Multi-Panel] Optional provider access sync failed:', response.error);
+    }
+  } catch (error) {
+    console.warn('[Multi-Panel] Optional provider access sync failed:', error);
+  }
 }
 
 // The service worker owns the forwarding rule and serializes updates to it;
@@ -604,7 +641,7 @@ function showPanelLoadingState(panelEl, provider) {
   renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
 }
 
-function reloadPanelIframe(panel, overrideUrl = null) {
+function reloadPanelIframe(panel, overrideUrl = null, { isRecoveryReload = false } = {}) {
   customApiHostBridge?.abortPanelStream(panel.id);
   const panelEl = document.getElementById(panel.id);
   const provider = getProviderById(panel.providerId);
@@ -617,11 +654,13 @@ function reloadPanelIframe(panel, overrideUrl = null) {
     return;
   }
 
+  const nextUrl = overrideUrl || getProviderFrameUrl(panel.providerId);
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
   panel.currentUrl = null;
-  iframe.src = overrideUrl || getProviderFrameUrl(panel.providerId);
   panel.iframe = iframe;
+  customSwRecoveryController?.notifyNavigationStart(panel, nextUrl, { isRecoveryReload });
+  iframe.src = nextUrl;
 }
 
 async function openProviderTopLevel(panel) {
@@ -1450,6 +1489,11 @@ async function initializePanels() {
 
     const panelCount = LAYOUT_PANEL_COUNTS[currentLayout] || 4;
     const count = Math.min(providerIds.length, panelCount);
+    const initialProviderIds = providerIds.slice(0, count);
+
+    if (initialProviderIds.some(requiresOptionalProviderAccessSync)) {
+      await requestOptionalProviderAccessSync();
+    }
 
     // Create all panels and load in parallel for fastest total time
     for (let i = 0; i < count; i++) {
@@ -1522,6 +1566,9 @@ function appendMenuOriginBadgeIfCustom(itemEl, nameSpan, providerId) {
 async function addPanel(providerId, { saveConfig = true } = {}) {
   // Sync before the capacity check so no await separates the check from the
   // panel being added.
+  if (saveConfig && requiresOptionalProviderAccessSync(providerId)) {
+    await requestOptionalProviderAccessSync();
+  }
   if (providerId === 'grok') {
     await requestGrokWebSocketCookieSync();
   }
@@ -1590,41 +1637,14 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
 
   const iframe = document.createElement('iframe');
-  iframe.setAttribute('src', getProviderFrameUrl(providerId));
+  const initialFrameUrl = getProviderFrameUrl(providerId);
   iframe.setAttribute(
     'sandbox',
     'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
   );
   iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
 
-  iframeContainerEl.append(loadingEl, iframe);
-  panelEl.append(headerEl, iframeContainerEl);
-
-  panelGrid.appendChild(panelEl);
-
-  // Handle iframe load
-  // Grace period after load to catch AI pages that auto-focus after JS init
-  const LOAD_GRACE_PERIOD = 3000;
-  loadingPanelIds.add(panelId);
-  iframe.addEventListener('load', () => {
-    loadingEl.classList.add('hidden');
-    const panel = panels.find(p => p.id === panelId);
-    if (isTemporaryChatModeEnabled && panel && requiresTemporaryChatActivationRetry(panel.providerId)) {
-      startTemporaryChatActivationForPanel(panel);
-    }
-    setTimeout(() => {
-      loadingPanelIds.delete(panelId);
-    }, LOAD_GRACE_PERIOD);
-  });
-
-  iframe.addEventListener('error', () => {
-    const currentPanel = panels.find(p => p.id === panelId);
-    const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
-    renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
-    loadingPanelIds.delete(panelId);
-  });
-
-  // Add to panels array
+  // Add to panels array before setting src / mounting so load handlers always see panel state
   const panel = {
     id: panelId,
     providerId,
@@ -1635,6 +1655,43 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
     fit: createPanelFitState()
   };
   panels.push(panel);
+  customSwRecoveryController?.notifyNavigationStart(panel, initialFrameUrl);
+
+  // Handle iframe load
+  // Grace period after load to catch AI pages that auto-focus after JS init
+  const LOAD_GRACE_PERIOD = 3000;
+  loadingPanelIds.add(panelId);
+  iframe.addEventListener('load', () => {
+    const currentPanel = panels.find(p => p.id === panelId);
+    const finishLoad = () => {
+      loadingEl.classList.add('hidden');
+      const livePanel = panels.find(p => p.id === panelId);
+      if (isTemporaryChatModeEnabled && livePanel && requiresTemporaryChatActivationRetry(livePanel.providerId)) {
+        startTemporaryChatActivationForPanel(livePanel);
+      }
+      setTimeout(() => {
+        loadingPanelIds.delete(panelId);
+      }, LOAD_GRACE_PERIOD);
+    };
+    if (currentPanel && customSwRecoveryController && isCustomWebProvider(currentPanel.providerId)) {
+      void customSwRecoveryController.handleFrameLoad(currentPanel, { onSettled: finishLoad });
+      return;
+    }
+    finishLoad();
+  });
+
+  iframe.addEventListener('error', () => {
+    const currentPanel = panels.find(p => p.id === panelId);
+    const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
+    renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
+    loadingPanelIds.delete(panelId);
+  });
+
+  iframe.setAttribute('src', initialFrameUrl);
+  iframeContainerEl.append(loadingEl, iframe);
+  panelEl.append(headerEl, iframeContainerEl);
+
+  panelGrid.appendChild(panelEl);
   panelFitObserver?.observe(iframe.parentElement);
   resetFillRetryState();
 
@@ -1654,6 +1711,7 @@ function removePanel(panelId, { saveConfig = true } = {}) {
   if (panelIndex === -1) return;
 
   customApiHostBridge?.abortPanelStream(panelId);
+  customSwRecoveryController?.notifyPanelRemoved(panelId);
   clearTemporaryChatRetriesForPanel(panelId);
 
   const fitContainer = panels[panelIndex].iframe?.parentElement;
@@ -1714,6 +1772,10 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();
+  }
+
+  if (requiresOptionalProviderAccessSync(newProviderId)) {
+    await requestOptionalProviderAccessSync();
   }
 
   if (newProviderId === 'grok') {

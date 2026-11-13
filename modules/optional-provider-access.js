@@ -10,6 +10,8 @@ import {
 
 export { supportsScopedFrameRules } from './frame-header-rules.js';
 
+export const OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION = 'syncOptionalProviderAccess';
+
 const optionalConfigCache = new WeakMap();
 const CUSTOM_PROVIDER_SCRIPT_ID_PATTERN = /^custom-[0-9a-f]{10}-scripts$/;
 

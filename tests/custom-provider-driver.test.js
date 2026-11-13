@@ -864,4 +864,171 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('replies to PANELIZE_CUSTOM_FRAME_PING and purges only framing-blocked CacheStorage entries inside extension frames', async () => {
+    const unregisterMock = vi.fn().mockResolvedValue(true);
+    const deleteEntryMock = vi.fn().mockResolvedValue(true);
+    const env = createDriverEnvironment({
+      url: 'https://www.perplexity.ai/',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      const poisonedReq = { url: 'https://www.perplexity.ai/spa/index.html' };
+      const safeReq = { url: 'https://www.perplexity.ai/static/app.js' };
+      Object.defineProperty(env.win.navigator, 'serviceWorker', {
+        configurable: true,
+        value: {
+          getRegistrations: vi.fn().mockResolvedValue([{ unregister: unregisterMock }]),
+          addEventListener: vi.fn(),
+        },
+      });
+      Object.defineProperty(env.win, 'caches', {
+        configurable: true,
+        value: {
+          keys: vi.fn().mockResolvedValue(['pplx-html-v2']),
+          open: vi.fn().mockResolvedValue({
+            keys: vi.fn().mockResolvedValue([poisonedReq, safeReq]),
+            match: vi.fn(async (req) => {
+              if (req === poisonedReq) {
+                return {
+                  headers: new Headers({
+                    'content-type': 'text/html',
+                    'x-frame-options': 'DENY',
+                    'content-security-policy': "frame-ancestors 'self'",
+                  }),
+                };
+              }
+              return {
+                headers: new Headers({ 'content-type': 'application/javascript' }),
+              };
+            }),
+            delete: deleteEntryMock,
+          }),
+        },
+      });
+
+      env.evaluateDriver();
+      await wait(30);
+
+      // No unsolicited postMessage before host ping
+      expect(env.parent.postMessage).not.toHaveBeenCalled();
+      expect(unregisterMock).toHaveBeenCalled();
+      expect(deleteEntryMock).toHaveBeenCalledWith(poisonedReq);
+      expect(deleteEntryMock).not.toHaveBeenCalledWith(safeReq);
+
+      env.postFromHost({
+        type: 'PANELIZE_CUSTOM_FRAME_PING',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'ping-1',
+      });
+
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_CUSTOM_FRAME_PONG',
+          provider: CUSTOM_PROVIDER_ID,
+          requestId: 'ping-1',
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_PROVIDER_LOCATION',
+          provider: CUSTOM_PROVIDER_ID,
+          url: 'https://www.perplexity.ai/',
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('cleans Service Workers and poisoned CacheStorage on __panelize_sw_recover probe URL and reports completion', async () => {
+    const unregisterMock = vi.fn().mockResolvedValue(true);
+    const deleteEntryMock = vi.fn().mockResolvedValue(true);
+    const env = createDriverEnvironment({
+      url: 'https://www.perplexity.ai/robots.txt?q=1&__panelize_sw_recover=nonce-42',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      const poisonedReq = { url: 'https://www.perplexity.ai/spa/index.html' };
+      Object.defineProperty(env.win.navigator, 'serviceWorker', {
+        configurable: true,
+        value: {
+          getRegistrations: vi.fn().mockResolvedValue([{ unregister: unregisterMock }]),
+        },
+      });
+      Object.defineProperty(env.win, 'caches', {
+        configurable: true,
+        value: {
+          keys: vi.fn().mockResolvedValue(['pplx-html-v2']),
+          open: vi.fn().mockResolvedValue({
+            keys: vi.fn().mockResolvedValue([poisonedReq]),
+            match: vi.fn().mockResolvedValue({
+              headers: new Headers({
+                'content-security-policy': "default-src 'self'; frame-ancestors 'self'",
+              }),
+            }),
+            delete: deleteEntryMock,
+          }),
+        },
+      });
+
+      env.evaluateDriver();
+      await wait(40);
+
+      expect(unregisterMock).toHaveBeenCalledTimes(1);
+      expect(deleteEntryMock).toHaveBeenCalledWith(poisonedReq);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_CUSTOM_SW_RECOVERED',
+          nonce: 'nonce-42',
+          origin: 'https://www.perplexity.ai',
+          context: 'multi-panel-provider-status',
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('never touches Service Workers or CacheStorage when unframed or framed by a third-party page', async () => {
+    for (const opts of [
+      { framed: false, url: 'https://www.perplexity.ai/robots.txt?q=1&__panelize_sw_recover=1' },
+      {
+        framed: true,
+        url: 'https://www.perplexity.ai/robots.txt?q=1&__panelize_sw_recover=1',
+        ancestorOrigins: ['https://evil.example'],
+      },
+    ]) {
+      const getRegistrationsMock = vi.fn();
+      const cacheKeysMock = vi.fn();
+      const env = createDriverEnvironment(opts);
+      try {
+        Object.defineProperty(env.win.navigator, 'serviceWorker', {
+          configurable: true,
+          value: { getRegistrations: getRegistrationsMock },
+        });
+        Object.defineProperty(env.win, 'caches', {
+          configurable: true,
+          value: { keys: cacheKeysMock },
+        });
+
+        env.evaluateDriver();
+        await wait(30);
+
+        expect(getRegistrationsMock).not.toHaveBeenCalled();
+        expect(cacheKeysMock).not.toHaveBeenCalled();
+        expect(env.parent.postMessage).not.toHaveBeenCalled();
+      } finally {
+        await env.close();
+      }
+    }
+  });
 });

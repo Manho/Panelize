@@ -21,13 +21,18 @@
     TRIGGER_SEND: 'TRIGGER_SEND',
     CLEAR_INPUT: 'CLEAR_INPUT',
     PANELIZE_RESTORE_USER_FOCUS: 'PANELIZE_RESTORE_USER_FOCUS',
+    PANELIZE_CUSTOM_FRAME_PING: 'PANELIZE_CUSTOM_FRAME_PING',
   };
 
   const FRAME_TO_HOST = {
     PANELIZE_ACTION_RESULT: 'PANELIZE_ACTION_RESULT',
     PANELIZE_PROVIDER_LOCATION: 'PANELIZE_PROVIDER_LOCATION',
     PANELIZE_PROVIDER_USER_INTERACTION: 'PANELIZE_PROVIDER_USER_INTERACTION',
+    PANELIZE_CUSTOM_FRAME_PONG: 'PANELIZE_CUSTOM_FRAME_PONG',
+    PANELIZE_CUSTOM_SW_RECOVERED: 'PANELIZE_CUSTOM_SW_RECOVERED',
   };
+
+  const SW_RECOVERY_QUERY_PARAM = '__panelize_sw_recover';
 
   const ACTION_FAILURE_REASONS = {
     UNSUPPORTED: 'unsupported',
@@ -110,6 +115,126 @@
     });
   } catch {
     window[DRIVER_LOADED_SYMBOL] = true;
+  }
+
+  function getSwRecoveryProbeNonce() {
+    try {
+      const search = window.location && typeof window.location.search === 'string'
+        ? window.location.search
+        : '';
+      if (!search) {
+        return null;
+      }
+      const params = new URLSearchParams(search);
+      if (!params.has(SW_RECOVERY_QUERY_PARAM)) {
+        return null;
+      }
+      return params.get(SW_RECOVERY_QUERY_PARAM) || '';
+    } catch {
+      return null;
+    }
+  }
+
+  function hasFramingRefusalHeaders(response) {
+    if (!response || !response.headers || typeof response.headers.get !== 'function') {
+      return false;
+    }
+    try {
+      const xfo = response.headers.get('x-frame-options');
+      if (typeof xfo === 'string' && xfo.trim().length > 0) {
+        return true;
+      }
+      const csp = response.headers.get('content-security-policy') || '';
+      if (/\bframe-ancestors\b/i.test(csp)) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
+  async function sanitizeFramingServiceWorkerAndCaches() {
+    if (!isFramedByExtensionHost()) {
+      return { unregisteredCount: 0, deletedCacheEntries: 0 };
+    }
+
+    let unregisteredCount = 0;
+    let deletedCacheEntries = 0;
+
+    try {
+      const swContainer = window.navigator && window.navigator.serviceWorker;
+      if (swContainer && typeof swContainer.getRegistrations === 'function') {
+        const registrations = await swContainer.getRegistrations();
+        if (Array.isArray(registrations)) {
+          for (let i = 0; i < registrations.length; i += 1) {
+            const reg = registrations[i];
+            if (reg && typeof reg.unregister === 'function') {
+              try {
+                if (await reg.unregister()) {
+                  unregisteredCount += 1;
+                }
+              } catch {
+                // Ignore individual unregister errors.
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore environments where serviceWorker is restricted.
+    }
+
+    try {
+      const cacheStorage = window.caches;
+      if (cacheStorage && typeof cacheStorage.keys === 'function' && typeof cacheStorage.open === 'function') {
+        const cacheNames = await cacheStorage.keys();
+        if (Array.isArray(cacheNames)) {
+          for (let i = 0; i < cacheNames.length; i += 1) {
+            try {
+              const cache = await cacheStorage.open(cacheNames[i]);
+              if (!cache || typeof cache.keys !== 'function' || typeof cache.match !== 'function') {
+                continue;
+              }
+              const requests = await cache.keys();
+              if (!Array.isArray(requests)) {
+                continue;
+              }
+              for (let j = 0; j < requests.length; j += 1) {
+                const req = requests[j];
+                const res = await cache.match(req);
+                if (hasFramingRefusalHeaders(res) && typeof cache.delete === 'function') {
+                  if (await cache.delete(req)) {
+                    deletedCacheEntries += 1;
+                  }
+                }
+              }
+            } catch {
+              // Ignore individual CacheStorage errors.
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore environments where CacheStorage is unavailable.
+    }
+
+    return { unregisteredCount, deletedCacheEntries };
+  }
+
+  const swRecoveryNonce = getSwRecoveryProbeNonce();
+  if (swRecoveryNonce !== null) {
+    void sanitizeFramingServiceWorkerAndCaches().then((summary) => {
+      postToMultiPanelHost({
+        type: FRAME_TO_HOST.PANELIZE_CUSTOM_SW_RECOVERED,
+        nonce: swRecoveryNonce,
+        origin: window.location ? window.location.origin : '',
+        unregisteredCount: summary.unregisteredCount,
+        deletedCacheEntries: summary.deletedCacheEntries,
+        context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT,
+      });
+    });
+    return;
   }
 
   let knownProviderId = null;
@@ -1218,6 +1343,18 @@
 
     const { type, context } = event.data;
 
+    if (type === HOST_TO_FRAME.PANELIZE_CUSTOM_FRAME_PING && context === MULTI_PANEL_CONTEXT) {
+      if (providerId && typeof event.data.requestId === 'string' && event.data.requestId.length > 0) {
+        postToMultiPanelHost({
+          type: FRAME_TO_HOST.PANELIZE_CUSTOM_FRAME_PONG,
+          provider: providerId,
+          requestId: event.data.requestId,
+          context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT,
+        });
+      }
+      return;
+    }
+
     if (type === HOST_TO_FRAME.PANELIZE_RESTORE_USER_FOCUS && context === MULTI_PANEL_CONTEXT) {
       restoreUserFocus();
       return;
@@ -1253,6 +1390,28 @@
     }
   }
 
+  function setupServiceWorkerFramingHygiene() {
+    void sanitizeFramingServiceWorkerAndCaches();
+    const resanitize = () => {
+      void sanitizeFramingServiceWorkerAndCaches();
+      setTimeout(() => {
+        void sanitizeFramingServiceWorkerAndCaches();
+      }, 800);
+    };
+    window.addEventListener('load', resanitize, { once: true });
+    try {
+      const swContainer = window.navigator && window.navigator.serviceWorker;
+      if (swContainer && typeof swContainer.addEventListener === 'function') {
+        swContainer.addEventListener('controllerchange', () => {
+          void sanitizeFramingServiceWorkerAndCaches();
+        });
+      }
+    } catch {
+      // Ignore environments where serviceWorker events are unavailable.
+    }
+  }
+
+  setupServiceWorkerFramingHygiene();
   setupLocationReporting();
   window.addEventListener('message', handleHostMessage);
 })();

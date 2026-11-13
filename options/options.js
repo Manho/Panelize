@@ -36,6 +36,7 @@ import {
   preserveForeignCustomIds
 } from '../modules/provider-order.js';
 import {
+  OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION,
   hasOptionalProviderPermission,
   requestOptionalProviderPermission,
   supportsScopedFrameRules
@@ -355,6 +356,17 @@ async function withTemporaryOriginStripSessionRule(origin, fn) {
     if (installed) {
       await dnr.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
     }
+  }
+}
+
+async function requestOptionalProviderAccessSync() {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    await chrome.runtime.sendMessage({ action: OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION });
+  } catch {
+    // Ignore when service worker message listener is unavailable in unit tests
   }
 }
 
@@ -1972,6 +1984,7 @@ async function handleInlineEditSubmit(event, inlineState) {
       }
 
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
+      await requestOptionalProviderAccessSync();
 
       editingCustomProviderId = null;
       if (activeInlineEditState === inlineState) {
@@ -2272,6 +2285,7 @@ export async function handleCustomProviderFormSubmit(event) {
 
       await chrome.storage.sync.set({ enabledProviders, providerOrder });
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
+      await requestOptionalProviderAccessSync();
 
       if (nameInput) nameInput.value = '';
       if (urlInput) urlInput.value = '';
@@ -2347,6 +2361,7 @@ export async function deleteCustomProviderEntry(providerId) {
     syncUpdates.multiPanelProviders = syncState.multiPanelProviders.filter((id) => id !== providerId);
   }
   await chrome.storage.sync.set(syncUpdates);
+  await requestOptionalProviderAccessSync();
 
   if (origin && !isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
     await chrome.permissions.remove({ origins: [`${origin}/*`] }).catch((error) => {

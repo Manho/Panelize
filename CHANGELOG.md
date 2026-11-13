@@ -2,7 +2,8 @@
 
 ## 2.2.1 - 2026-11-13
 - Added `+ Add custom AI / More providers…` action and empty-state guidance to Multi-Panel `+` and `⇄` dropdown menus, plus full keyboard navigation (`ArrowUp`/`ArrowDown`/`Home`/`End`/`Escape`).
-- Added guided 3-mode Custom AI setup (`AI Website`, `Local / Self-hosted Web`, `OpenAI-compatible API`) in Settings with quick-fill presets, localized Chinese presets, setup guide link, and repeatable `#custom-provider-card` deep-link focus/highlighting.
+- Added guided 3-mode Custom AI setup (`AI Website`, `Local / Self-hosted Web`, `OpenAI-compatible API`) in Settings with quick-fill presets (including Magpie), localized Chinese presets, setup guide link, and repeatable `#custom-provider-card` deep-link focus/highlighting.
+- Fixed Custom Web UI providers (such as Perplexity) failing to load on subsequent visits when a site's Service Worker caches HTML responses containing `X-Frame-Options` or `Content-Security-Policy: frame-ancestors` headers.
 - Updated 10-locale store descriptions, READMEs, and GitHub provider-request issue template.
 - Clarified documentation: optional custom API keys are stored locally in browser IndexedDB on your device (not encrypted, never synced).
 
