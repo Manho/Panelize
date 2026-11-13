@@ -40,6 +40,7 @@ function createOptionalContentScriptSpec(matchPattern, enterBehaviorScript) {
 }
 
 function freezeDescriptor(descriptor) {
+  const isCustomApi = descriptor.access === 'custom' && descriptor.customKind === 'api';
   const frozenFrameOrigins = Object.freeze([...descriptor.frameOrigins]);
   const frozenAllowedHosts = Object.freeze([...descriptor.allowedHosts]);
   const frozenPermissionOrigins = descriptor.permissionOrigins
@@ -57,6 +58,20 @@ function freezeDescriptor(descriptor) {
         urlFilter: descriptor.frameRule.urlFilter
       })
     : null;
+  const frozenApiOriginRule = isCustomApi && descriptor.apiOriginRule
+    ? Object.freeze({
+        id: descriptor.apiOriginRule.id,
+        urlFilter: descriptor.apiOriginRule.urlFilter
+      })
+    : null;
+  const frozenApiConfig = isCustomApi && descriptor.apiConfig
+    ? Object.freeze({
+        endpointUrl: descriptor.apiConfig.endpointUrl,
+        apiOrigin: descriptor.apiConfig.apiOrigin,
+        model: descriptor.apiConfig.model,
+        hasApiKey: Boolean(descriptor.apiConfig.hasApiKey)
+      })
+    : null;
   const frozenTempChat = descriptor.tempChat
     ? Object.freeze({
         url: descriptor.tempChat.url ?? null,
@@ -65,14 +80,16 @@ function freezeDescriptor(descriptor) {
       })
     : null;
   const rawCapabilities = descriptor.capabilities
-    ?? (descriptor.access === 'custom' ? DEFAULT_CUSTOM_CAPABILITIES : DEFAULT_BUILTIN_CAPABILITIES);
+    ?? (isCustomApi
+      ? DEFAULT_BUILTIN_CAPABILITIES
+      : (descriptor.access === 'custom' ? DEFAULT_CUSTOM_CAPABILITIES : DEFAULT_BUILTIN_CAPABILITIES));
   const frozenCapabilities = Object.freeze({
     imageUpload: Boolean(rawCapabilities.imageUpload),
     inPageNewChat: Boolean(rawCapabilities.inPageNewChat),
     snapshotStitch: Boolean(rawCapabilities.snapshotStitch)
   });
 
-  const frozen = Object.freeze({
+  const base = {
     id: descriptor.id,
     name: descriptor.name,
     url: descriptor.url,
@@ -88,9 +105,39 @@ function freezeDescriptor(descriptor) {
     frameRule: frozenFrameRule,
     tempChat: frozenTempChat,
     capabilities: frozenCapabilities
-  });
+  };
+
+  if (isCustomApi) {
+    base.customKind = 'api';
+    base.apiOriginRule = frozenApiOriginRule;
+    base.apiConfig = frozenApiConfig;
+  }
+
+  const frozen = Object.freeze(base);
   frozenDescriptors.add(frozen);
   return frozen;
+}
+
+const EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-z0-9_-]+$/i;
+
+function isExactExtensionOrigin(origin) {
+  return typeof origin === 'string' && EXTENSION_ORIGIN_PATTERN.test(origin);
+}
+
+function isApiPanelExtensionUrl(rawUrl, expectedExtensionOrigin = null) {
+  if (typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
+    return false;
+  }
+  const match = /^(chrome-extension:\/\/[a-z0-9_-]+)\/api-panel\/api-panel\.html(?:\?[^#]*)?$/i.exec(
+    rawUrl
+  );
+  if (!match) {
+    return false;
+  }
+  if (expectedExtensionOrigin && match[1] !== expectedExtensionOrigin) {
+    return false;
+  }
+  return true;
 }
 
 function isValidHttpHostname(hostname) {
@@ -198,6 +245,25 @@ export function validateProviderDescriptor(
 
   const { id } = descriptor;
   const isCustom = descriptor.access === 'custom';
+  const isCustomApi = isCustom && descriptor.customKind === 'api';
+
+  if (
+    'apiKey' in descriptor ||
+    (descriptor.apiConfig &&
+      typeof descriptor.apiConfig === 'object' &&
+      'apiKey' in descriptor.apiConfig)
+  ) {
+    errors.push(
+      `Provider "${id || '<unnamed>'}": raw apiKey must never appear on a provider descriptor`
+    );
+  }
+
+  if (descriptor.customKind !== undefined && !isCustomApi) {
+    errors.push(
+      `Provider "${id || '<unnamed>'}": customKind is only allowed as "api" on access === "custom"`
+    );
+  }
+
   if (typeof id !== 'string' || id.trim().length === 0 || id !== id.trim()) {
     errors.push('Descriptor id must be a non-empty trimmed string');
   } else {
@@ -219,12 +285,23 @@ export function validateProviderDescriptor(
     errors.push(`Provider "${id || '<unnamed>'}": name must be a non-empty string`);
   }
 
-  if (!isHttpOrHttpsUrl(descriptor.url)) {
-    errors.push(`Provider "${id || '<unnamed>'}": url must be a valid http(s) URL`);
-  }
+  if (isCustomApi) {
+    if (!isApiPanelExtensionUrl(descriptor.url)) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": custom API provider url must be an extension api-panel URL`
+      );
+    }
+    if (descriptor.topLevelUrl !== null) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom API provider topLevelUrl must be null`);
+    }
+  } else {
+    if (!isHttpOrHttpsUrl(descriptor.url)) {
+      errors.push(`Provider "${id || '<unnamed>'}": url must be a valid http(s) URL`);
+    }
 
-  if (!isHttpOrHttpsUrl(descriptor.topLevelUrl)) {
-    errors.push(`Provider "${id || '<unnamed>'}": topLevelUrl must be a valid http(s) URL`);
+    if (!isHttpOrHttpsUrl(descriptor.topLevelUrl)) {
+      errors.push(`Provider "${id || '<unnamed>'}": topLevelUrl must be a valid http(s) URL`);
+    }
   }
 
   if (typeof descriptor.icon !== 'string' || descriptor.icon.trim().length === 0) {
@@ -250,8 +327,23 @@ export function validateProviderDescriptor(
   }
 
   let customOrigin = null;
+  let customApiOrigin = null;
   if (!Array.isArray(descriptor.frameOrigins) || descriptor.frameOrigins.length === 0) {
     errors.push(`Provider "${id || '<unnamed>'}": frameOrigins must be a non-empty array`);
+  } else if (isCustomApi) {
+    if (descriptor.frameOrigins.length !== 1) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": custom API provider frameOrigins must contain exactly one extension origin`
+      );
+    } else if (!isExactExtensionOrigin(descriptor.frameOrigins[0])) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": invalid extension frame origin "${String(descriptor.frameOrigins[0])}"`
+      );
+    } else if (!isApiPanelExtensionUrl(descriptor.url, descriptor.frameOrigins[0])) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": custom API provider url origin must match frameOrigins[0]`
+      );
+    }
   } else {
     if (isCustom && descriptor.frameOrigins.length !== 1) {
       errors.push(`Provider "${id || '<unnamed>'}": custom provider frameOrigins must contain exactly one origin`);
@@ -275,6 +367,52 @@ export function validateProviderDescriptor(
         errors.push(`Provider "${id || '<unnamed>'}": custom provider topLevelUrl origin must match frameOrigins[0]`);
       }
     }
+  }
+
+  if (isCustomApi) {
+    const cfg = descriptor.apiConfig;
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom API provider apiConfig is required`);
+    } else {
+      if (!isHttpOrHttpsUrl(cfg.endpointUrl)) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": apiConfig.endpointUrl must be a valid http(s) URL`
+        );
+      }
+      if (!isExactHttpOrigin(cfg.apiOrigin)) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": apiConfig.apiOrigin must be an exact http(s) origin`
+        );
+      } else {
+        customApiOrigin = cfg.apiOrigin;
+      }
+      if (
+        isHttpOrHttpsUrl(cfg.endpointUrl) &&
+        customApiOrigin !== null &&
+        new URL(cfg.endpointUrl).origin !== customApiOrigin
+      ) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": apiConfig.endpointUrl origin must match apiConfig.apiOrigin`
+        );
+      }
+      if (
+        typeof cfg.model !== 'string' ||
+        cfg.model.trim().length === 0 ||
+        cfg.model !== cfg.model.trim() ||
+        cfg.model.length > 200
+      ) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": apiConfig.model must be a non-empty trimmed string up to 200 chars`
+        );
+      }
+      if (typeof cfg.hasApiKey !== 'boolean') {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": apiConfig.hasApiKey must be a boolean`
+        );
+      }
+    }
+  } else if (descriptor.apiConfig !== undefined && descriptor.apiConfig !== null) {
+    errors.push(`Provider "${id || '<unnamed>'}": non-API provider apiConfig must be omitted`);
   }
 
   if (isCustom) {
@@ -303,6 +441,17 @@ export function validateProviderDescriptor(
         `Provider "${id || '<unnamed>'}": optional provider permissionOrigins must be a non-empty array of http(s) origin/* patterns`
       );
     }
+  } else if (isCustomApi) {
+    if (
+      !Array.isArray(descriptor.permissionOrigins) ||
+      descriptor.permissionOrigins.length !== 1 ||
+      !isOriginMatchPattern(descriptor.permissionOrigins[0]) ||
+      (customApiOrigin !== null && descriptor.permissionOrigins[0] !== `${customApiOrigin}/*`)
+    ) {
+      errors.push(
+        `Provider "${id || '<unnamed>'}": custom API provider permissionOrigins must be ["<apiOrigin>/*"]`
+      );
+    }
   } else if (isCustom) {
     if (
       !Array.isArray(descriptor.permissionOrigins) ||
@@ -320,73 +469,109 @@ export function validateProviderDescriptor(
     );
   }
 
-  if (isCustom && (descriptor.contentScript === null || descriptor.contentScript === undefined)) {
-    errors.push(`Provider "${id || '<unnamed>'}": custom provider contentScript is required`);
-  }
+  if (isCustomApi) {
+    if (descriptor.contentScript !== null) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom API provider contentScript must be null`);
+    }
+  } else {
+    if (isCustom && (descriptor.contentScript === null || descriptor.contentScript === undefined)) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom provider contentScript is required`);
+    }
 
-  if (descriptor.contentScript !== null && descriptor.contentScript !== undefined) {
-    const cs = descriptor.contentScript;
-    if (
-      typeof cs !== 'object' ||
-      !Array.isArray(cs.matches) ||
-      cs.matches.length === 0 ||
-      !cs.matches.every((pattern) => typeof pattern === 'string' && pattern.trim().length > 0) ||
-      !Array.isArray(cs.js) ||
-      cs.js.length === 0 ||
-      !cs.js.every((file) => typeof file === 'string' && file.trim().length > 0)
-    ) {
-      errors.push(
-        `Provider "${id || '<unnamed>'}": contentScript must specify non-empty matches and js arrays`
-      );
-    } else if (
-      isCustom &&
-      customOrigin !== null &&
-      (cs.matches.length !== 1 || cs.matches[0] !== `${customOrigin}/*`)
-    ) {
-      errors.push(
-        `Provider "${id || '<unnamed>'}": custom provider contentScript.matches must be ["<origin>/*"]`
-      );
+    if (descriptor.contentScript !== null && descriptor.contentScript !== undefined) {
+      const cs = descriptor.contentScript;
+      if (
+        typeof cs !== 'object' ||
+        !Array.isArray(cs.matches) ||
+        cs.matches.length === 0 ||
+        !cs.matches.every((pattern) => typeof pattern === 'string' && pattern.trim().length > 0) ||
+        !Array.isArray(cs.js) ||
+        cs.js.length === 0 ||
+        !cs.js.every((file) => typeof file === 'string' && file.trim().length > 0)
+      ) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": contentScript must specify non-empty matches and js arrays`
+        );
+      } else if (
+        isCustom &&
+        customOrigin !== null &&
+        (cs.matches.length !== 1 || cs.matches[0] !== `${customOrigin}/*`)
+      ) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": custom provider contentScript.matches must be ["<origin>/*"]`
+        );
+      }
     }
   }
 
-  if (isCustom && (descriptor.frameRule === null || descriptor.frameRule === undefined)) {
-    errors.push(`Provider "${id || '<unnamed>'}": custom provider frameRule is required`);
-  }
-
-  if (descriptor.frameRule !== null && descriptor.frameRule !== undefined) {
-    const rule = descriptor.frameRule;
+  if (isCustomApi) {
+    if (descriptor.frameRule !== null) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom API provider frameRule must be null`);
+    }
+    const apiRule = descriptor.apiOriginRule;
     if (
-      typeof rule !== 'object' ||
-      !Number.isInteger(rule.id) ||
-      rule.id <= 0 ||
-      typeof rule.urlFilter !== 'string' ||
-      rule.urlFilter.trim().length === 0
+      !apiRule ||
+      typeof apiRule !== 'object' ||
+      !Number.isInteger(apiRule.id) ||
+      apiRule.id < CUSTOM_FRAME_RULE_ID_MIN ||
+      apiRule.id > CUSTOM_FRAME_RULE_ID_MAX ||
+      typeof apiRule.urlFilter !== 'string' ||
+      apiRule.urlFilter.trim().length === 0 ||
+      (customApiOrigin !== null && apiRule.urlFilter !== `|${customApiOrigin}/`)
     ) {
       errors.push(
-        `Provider "${id || '<unnamed>'}": frameRule must have a positive integer id and non-empty urlFilter`
+        `Provider "${id || '<unnamed>'}": custom API provider apiOriginRule must specify id in ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX} and urlFilter "|<apiOrigin>/"`
       );
-    } else {
-      if (isCustom) {
-        if (rule.id < CUSTOM_FRAME_RULE_ID_MIN || rule.id > CUSTOM_FRAME_RULE_ID_MAX) {
-          errors.push(
-            `Provider "${id || '<unnamed>'}": custom provider frameRule.id must be in ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX}`
-          );
-        }
-        if (customOrigin !== null && rule.urlFilter !== `|${customOrigin}/`) {
-          errors.push(
-            `Provider "${id || '<unnamed>'}": custom provider frameRule.urlFilter must be "|${customOrigin}/"`
-          );
-        }
-      } else if (rule.id >= CUSTOM_FRAME_RULE_ID_MIN && rule.id <= CUSTOM_FRAME_RULE_ID_MAX) {
-        errors.push(
-          `Provider "${id || '<unnamed>'}": non-custom frameRule.id must not fall in reserved custom range ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX}`
-        );
+    } else if (seenFrameRuleIds instanceof Set) {
+      if (seenFrameRuleIds.has(apiRule.id)) {
+        errors.push(`Duplicate frameRule id: ${apiRule.id}`);
+      } else {
+        seenFrameRuleIds.add(apiRule.id);
       }
-      if (seenFrameRuleIds instanceof Set) {
-        if (seenFrameRuleIds.has(rule.id)) {
-          errors.push(`Duplicate frameRule id: ${rule.id}`);
-        } else {
-          seenFrameRuleIds.add(rule.id);
+    }
+  } else {
+    if (descriptor.apiOriginRule !== undefined && descriptor.apiOriginRule !== null) {
+      errors.push(`Provider "${id || '<unnamed>'}": non-API provider apiOriginRule must be omitted`);
+    }
+    if (isCustom && (descriptor.frameRule === null || descriptor.frameRule === undefined)) {
+      errors.push(`Provider "${id || '<unnamed>'}": custom provider frameRule is required`);
+    }
+
+    if (descriptor.frameRule !== null && descriptor.frameRule !== undefined) {
+      const rule = descriptor.frameRule;
+      if (
+        typeof rule !== 'object' ||
+        !Number.isInteger(rule.id) ||
+        rule.id <= 0 ||
+        typeof rule.urlFilter !== 'string' ||
+        rule.urlFilter.trim().length === 0
+      ) {
+        errors.push(
+          `Provider "${id || '<unnamed>'}": frameRule must have a positive integer id and non-empty urlFilter`
+        );
+      } else {
+        if (isCustom) {
+          if (rule.id < CUSTOM_FRAME_RULE_ID_MIN || rule.id > CUSTOM_FRAME_RULE_ID_MAX) {
+            errors.push(
+              `Provider "${id || '<unnamed>'}": custom provider frameRule.id must be in ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX}`
+            );
+          }
+          if (customOrigin !== null && rule.urlFilter !== `|${customOrigin}/`) {
+            errors.push(
+              `Provider "${id || '<unnamed>'}": custom provider frameRule.urlFilter must be "|${customOrigin}/"`
+            );
+          }
+        } else if (rule.id >= CUSTOM_FRAME_RULE_ID_MIN && rule.id <= CUSTOM_FRAME_RULE_ID_MAX) {
+          errors.push(
+            `Provider "${id || '<unnamed>'}": non-custom frameRule.id must not fall in reserved custom range ${CUSTOM_FRAME_RULE_ID_MIN}..${CUSTOM_FRAME_RULE_ID_MAX}`
+          );
+        }
+        if (seenFrameRuleIds instanceof Set) {
+          if (seenFrameRuleIds.has(rule.id)) {
+            errors.push(`Duplicate frameRule id: ${rule.id}`);
+          } else {
+            seenFrameRuleIds.add(rule.id);
+          }
         }
       }
     }

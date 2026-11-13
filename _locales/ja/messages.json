@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "$PROVIDER$ を有効にするにはサイトへのアクセス権が必要です。",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "$PROVIDER$ のサイトアクセス権をリクエストできませんでした。",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "キーボードショートカットが有効になりました"
@@ -813,7 +821,9 @@
   "switchToPopupModeTitle": {
     "message": "ポップアップモードに切り替え"
   },
-  "openProviderTopLevelTitle": { "message": "新しいタブで開く" },
+  "openProviderTopLevelTitle": {
+    "message": "新しいタブで開く"
+  },
   "msgOpenModeUpdated": {
     "message": "開くモードを更新しました"
   },
@@ -1034,5 +1044,89 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "$1 を削除"
+  },
+  "labelCustomProviderKind": {
+    "message": "接続タイプ"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "Web UI（チャットサイトを埋め込む）"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "OpenAI互換API"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "ベースURLまたはChat Completions URL"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1 または http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "モデルID"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini または qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "APIキー（ローカルエンドポイントでは任意）"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-...（このデバイスにのみ保存）"
+  },
+  "btnShowApiKey": {
+    "message": "表示"
+  },
+  "btnHideApiKey": {
+    "message": "非表示"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelizeは $1 へのアクセスを要求します · エンドポイント: $2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "APIキーはこのデバイス上にのみローカル保存され、同期やエクスポートは行われず、設定したエンドポイントにのみ送信されます。"
+  },
+  "errCustomModelRequired": {
+    "message": "モデルIDを入力してください（例: gpt-4o-mini または qwen2.5:14b）。"
+  },
+  "errCustomModelTooLong": {
+    "message": "モデルIDは200文字以内で入力してください。"
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "APIキーが最大文字数を超えています。"
+  },
+  "ariaEditCustomProvider": {
+    "message": "$1 を編集"
+  },
+  "headingEditCustomProvider": {
+    "message": "カスタムAIを編集"
+  },
+  "btnSaveCustomProvider": {
+    "message": "変更を保存"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "空欄のままで保存済みキーを維持、または新しいキーを入力"
+  },
+  "labelClearSavedApiKey": {
+    "message": "保存済みのAPIキーを削除"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "カスタムAIを更新しました: $1"
+  },
+  "btnLoadModels": {
+    "message": "モデル取得"
+  },
+  "btnRefreshModels": {
+    "message": "更新"
+  },
+  "msgModelsLoading": {
+    "message": "取得中…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 件のモデル"
+  },
+  "msgModelsNoMatch": {
+    "message": "一致するモデルがありません（入力したモデルIDをそのまま使用できます）"
+  },
+  "errModelsLoadFailed": {
+    "message": "モデル一覧を取得できませんでした（$1）。モデルIDは手動で直接入力できます。"
   }
 }

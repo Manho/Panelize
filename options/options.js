@@ -9,12 +9,26 @@ import {
   addCustomProvider,
   allocateCustomFrameRuleId,
   generateCustomProviderId,
+  getCustomProviderOrigin,
   loadCustomProviders,
+  MAX_CUSTOM_API_MODEL_LENGTH,
   MAX_CUSTOM_PROVIDER_NAME_LENGTH,
   removeCustomProvider,
   subscribeCustomProvidersChanged,
+  updateCustomProvider,
+  validateCustomApiEndpointUrl,
   validateCustomProviderUrl
 } from '../modules/custom-providers.js';
+import {
+  deleteCustomApiKey,
+  getCustomApiKey,
+  MAX_CUSTOM_API_KEY_LENGTH,
+  saveCustomApiKey
+} from '../modules/custom-api-secrets.js';
+import {
+  fetchOpenAiModels,
+  resolveModelsUrl
+} from '../modules/openai-chat-client.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import {
   appendProviderToOrder,
@@ -59,6 +73,37 @@ export const CUSTOM_URL_REASON_MESSAGE_KEYS = Object.freeze({
 });
 
 let isSubmittingCustomProvider = false;
+let isSubmittingInlineEdit = false;
+let editingCustomProviderId = null;
+let activeInlineEditState = null;
+let addFormModelCombobox = null;
+let sessionModelsRuleSeq = 0;
+
+const modelCatalogCache = new Map();
+const transientProbedOrigins = new Set();
+
+function getEditingCustomProviderDescriptor() {
+  if (!editingCustomProviderId) {
+    return null;
+  }
+  const descriptor = getProviderDescriptor(editingCustomProviderId);
+  return descriptor?.access === 'custom' ? descriptor : null;
+}
+
+function focusCustomProviderEditButton(providerId) {
+  if (!providerId) {
+    return;
+  }
+  const buttons = document.querySelectorAll(
+    '#provider-list [data-action="edit-custom-provider"]'
+  );
+  for (const button of buttons) {
+    if (button.dataset.providerId === providerId) {
+      button.focus?.();
+      return;
+    }
+  }
+}
 
 export function getCustomProviderUrlErrorMessage(reason) {
   const key = CUSTOM_URL_REASON_MESSAGE_KEYS[reason] || 'errCustomUrlInvalid';
@@ -84,11 +129,604 @@ export function isOriginUsedByAnyProvider(origin, { excludeProviderId = null } =
   });
 }
 
+async function withTemporaryOriginStripSessionRule(origin, fn) {
+  const dnr = chrome?.declarativeNetRequest;
+  const extensionId = chrome?.runtime?.id;
+  if (typeof dnr?.updateSessionRules !== 'function' || !extensionId || !origin) {
+    return fn();
+  }
+  const ruleId = 19950 + (sessionModelsRuleSeq++ % 40);
+  let installed = false;
+  try {
+    await dnr.updateSessionRules({
+      removeRuleIds: [ruleId],
+      addRules: [
+        {
+          id: ruleId,
+          priority: 2,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'Origin', operation: 'remove' }]
+          },
+          condition: {
+            urlFilter: `|${origin}/`,
+            initiatorDomains: [extensionId],
+            resourceTypes: ['xmlhttprequest', 'other']
+          }
+        }
+      ]
+    });
+    installed = true;
+  } catch {
+    installed = false;
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (installed) {
+      await dnr.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
+    }
+  }
+}
+
+async function cleanupUnusedProbedOrigins({ keepOrigin = null } = {}) {
+  const probed = [...transientProbedOrigins];
+  for (const origin of probed) {
+    transientProbedOrigins.delete(origin);
+    if (origin === keepOrigin) {
+      continue;
+    }
+    if (!isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
+      await chrome.permissions.remove({ origins: [`${origin}/*`] }).catch(() => {});
+    }
+  }
+}
+
+function createModelComboboxController({
+  idPrefix,
+  fieldContainer,
+  modelInput,
+  loadButton,
+  listbox,
+  countBadge,
+  hintEl,
+  getEndpointRawUrl,
+  resolveEffectiveApiKey,
+  onInvalidUrl,
+  onSelectModel,
+  isEnabledKind
+}) {
+  let loadedModels = [];
+  let loadedSourceKey = '';
+  let inFlightSourceKey = '';
+  let requestGeneration = 0;
+  let isLoading = false;
+  let disabledByForm = false;
+  let isOpen = false;
+  let filterByInput = false;
+  let activeIndex = -1;
+  let filteredModels = [];
+  let activeAbortController = null;
+  let documentListenersBound = false;
+  let destroyed = false;
+
+  const showHint = (message) => {
+    if (!hintEl) {
+      return;
+    }
+    hintEl.textContent = message;
+    hintEl.hidden = !message;
+  };
+
+  const hideHint = () => {
+    if (!hintEl) {
+      return;
+    }
+    hintEl.textContent = '';
+    hintEl.hidden = true;
+  };
+
+  const syncUiLabels = () => {
+    if (loadButton) {
+      if (isLoading) {
+        loadButton.textContent = t('msgModelsLoading');
+        loadButton.disabled = true;
+      } else {
+        const btnKey = loadedModels.length > 0 ? 'btnRefreshModels' : 'btnLoadModels';
+        loadButton.dataset.i18n = btnKey;
+        loadButton.textContent = t(btnKey);
+        loadButton.disabled = disabledByForm;
+      }
+    }
+    if (countBadge) {
+      if (loadedModels.length > 0) {
+        countBadge.textContent = t('msgModelsLoadedCount', String(loadedModels.length));
+        countBadge.hidden = false;
+      } else {
+        countBadge.textContent = '';
+        countBadge.hidden = true;
+      }
+    }
+  };
+
+  const computeFilteredModels = () => {
+    if (!filterByInput) {
+      return loadedModels;
+    }
+    const rawQuery = (modelInput?.value || '').trim().toLowerCase();
+    if (!rawQuery) {
+      return loadedModels;
+    }
+    const tokens = rawQuery.split(/\s+/).filter(Boolean);
+    return loadedModels.filter((entry) => {
+      const haystack = `${entry.id} ${entry.name || ''}`.toLowerCase();
+      return tokens.every((tok) => haystack.includes(tok));
+    });
+  };
+
+  const onDocumentPointerDown = (event) => {
+    if (!fieldContainer?.contains(event.target)) {
+      closeListbox();
+    }
+  };
+
+  const onDocumentFocusIn = (event) => {
+    if (!fieldContainer?.contains(event.target)) {
+      closeListbox();
+    }
+  };
+
+  const bindDocumentListeners = () => {
+    if (documentListenersBound) {
+      return;
+    }
+    documentListenersBound = true;
+    document.addEventListener('mousedown', onDocumentPointerDown);
+    document.addEventListener('focusin', onDocumentFocusIn);
+  };
+
+  const unbindDocumentListeners = () => {
+    if (!documentListenersBound) {
+      return;
+    }
+    documentListenersBound = false;
+    document.removeEventListener('mousedown', onDocumentPointerDown);
+    document.removeEventListener('focusin', onDocumentFocusIn);
+  };
+
+  const renderListbox = () => {
+    if (!listbox) {
+      return;
+    }
+    if (!isOpen || loadedModels.length === 0 || !isEnabledKind()) {
+      listbox.hidden = true;
+      listbox.replaceChildren();
+      modelInput?.setAttribute('aria-expanded', 'false');
+      modelInput?.removeAttribute('aria-activedescendant');
+      return;
+    }
+
+    filteredModels = computeFilteredModels();
+    listbox.replaceChildren();
+    listbox.hidden = false;
+    modelInput?.setAttribute('aria-expanded', 'true');
+
+    if (filteredModels.length === 0) {
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'custom-provider-model-empty';
+      emptyEl.textContent = t('msgModelsNoMatch');
+      listbox.appendChild(emptyEl);
+      activeIndex = -1;
+      modelInput?.removeAttribute('aria-activedescendant');
+      return;
+    }
+
+    if (activeIndex >= filteredModels.length) {
+      activeIndex = filteredModels.length - 1;
+    }
+
+    const currentVal = (modelInput?.value || '').trim();
+    const fragment = document.createDocumentFragment();
+    let scrollTargetEl = null;
+
+    filteredModels.forEach((entry, index) => {
+      const optionEl = document.createElement('div');
+      optionEl.className = 'custom-provider-model-option';
+      optionEl.id = `${idPrefix}-opt-${index}`;
+      optionEl.setAttribute('role', 'option');
+      optionEl.dataset.modelId = entry.id;
+      const isSelected = entry.id === currentVal;
+      optionEl.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+
+      if (index === activeIndex) {
+        optionEl.classList.add('is-active');
+        modelInput?.setAttribute('aria-activedescendant', optionEl.id);
+        scrollTargetEl = optionEl;
+      } else if (isSelected && !scrollTargetEl) {
+        scrollTargetEl = optionEl;
+      }
+
+      const idSpan = document.createElement('span');
+      idSpan.className = 'custom-provider-model-option-id';
+      idSpan.textContent = entry.id;
+      optionEl.appendChild(idSpan);
+
+      if (entry.name) {
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'custom-provider-model-option-name';
+        nameSpan.textContent = entry.name;
+        optionEl.appendChild(nameSpan);
+      }
+
+      optionEl.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        selectModel(entry);
+      });
+      optionEl.addEventListener('click', (event) => {
+        event.preventDefault();
+        selectModel(entry);
+      });
+
+      fragment.appendChild(optionEl);
+    });
+
+    listbox.appendChild(fragment);
+    if (activeIndex < 0) {
+      modelInput?.removeAttribute('aria-activedescendant');
+    }
+    scrollTargetEl?.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  function openListbox({ filter = false } = {}) {
+    if (destroyed || loadedModels.length === 0 || !isEnabledKind() || disabledByForm) {
+      return;
+    }
+    filterByInput = filter;
+    isOpen = true;
+    bindDocumentListeners();
+    const candidates = computeFilteredModels();
+    const currentVal = (modelInput?.value || '').trim();
+    const selectedIdx = candidates.findIndex((entry) => entry.id === currentVal);
+    activeIndex = selectedIdx >= 0 ? selectedIdx : (filter && candidates.length > 0 ? 0 : -1);
+    renderListbox();
+  }
+
+  function closeListbox() {
+    isOpen = false;
+    activeIndex = -1;
+    unbindDocumentListeners();
+    renderListbox();
+  }
+
+  function selectModel(entry) {
+    if (!entry || !modelInput) {
+      return;
+    }
+    modelInput.value = entry.id;
+    closeListbox();
+    onSelectModel?.(entry);
+    modelInput.focus?.();
+  }
+
+  function invalidateCatalog() {
+    requestGeneration += 1;
+    const prevController = activeAbortController;
+    activeAbortController = null;
+    inFlightSourceKey = '';
+    isLoading = false;
+    prevController?.abort();
+    loadedModels = [];
+    loadedSourceKey = '';
+    closeListbox();
+    hideHint();
+    syncUiLabels();
+  }
+
+  async function loadModels({ interactive = false, openWhenLoaded = false } = {}) {
+    if (destroyed || disabledByForm || !isEnabledKind() || !supportsScopedFrameRules()) {
+      return false;
+    }
+
+    const rawUrl = getEndpointRawUrl();
+    const urlCheck = validateCustomApiEndpointUrl(rawUrl);
+    if (!urlCheck.ok) {
+      if (interactive) {
+        onInvalidUrl?.(urlCheck.reason);
+      }
+      return false;
+    }
+
+    const expectedModelsUrl = resolveModelsUrl(urlCheck.endpointUrl);
+    const permissionOrigin = `${urlCheck.origin}/*`;
+    let permissionPromise;
+    if (interactive) {
+      // Must invoke chrome.permissions.request synchronously before any await
+      // to preserve Chrome's transient user activation from clicking Load models.
+      try {
+        permissionPromise = chrome?.permissions?.request
+          ? chrome.permissions.request({ origins: [permissionOrigin] })
+          : Promise.resolve(false);
+      } catch {
+        showHint(t('msgProviderPermissionRequestFailed', urlCheck.origin));
+        return false;
+      }
+    } else {
+      permissionPromise = chrome?.permissions?.contains
+        ? chrome.permissions.contains({ origins: [permissionOrigin] })
+        : Promise.resolve(false);
+    }
+
+    requestGeneration += 1;
+    const myGeneration = requestGeneration;
+    activeAbortController?.abort();
+    const abortController = new AbortController();
+    activeAbortController = abortController;
+    inFlightSourceKey = expectedModelsUrl;
+    isLoading = true;
+    hideHint();
+    syncUiLabels();
+
+    const isRequestCurrent = () => {
+      if (
+        destroyed ||
+        abortController.signal.aborted ||
+        activeAbortController !== abortController ||
+        requestGeneration !== myGeneration ||
+        !isEnabledKind()
+      ) {
+        return false;
+      }
+      const currentCheck = validateCustomApiEndpointUrl(getEndpointRawUrl());
+      if (!currentCheck.ok) {
+        return false;
+      }
+      return resolveModelsUrl(currentCheck.endpointUrl) === expectedModelsUrl;
+    };
+
+    try {
+      let granted = false;
+      try {
+        granted = Boolean(await permissionPromise);
+      } catch {
+        if (isRequestCurrent() && interactive) {
+          showHint(t('msgProviderPermissionRequestFailed', urlCheck.origin));
+        }
+        return false;
+      }
+
+      if (!isRequestCurrent()) {
+        return false;
+      }
+
+      if (!granted) {
+        if (interactive) {
+          showHint(t('msgCustomProviderPermissionDenied', urlCheck.origin));
+        }
+        return false;
+      }
+
+      if (interactive && !isOriginUsedByAnyProvider(urlCheck.origin)) {
+        transientProbedOrigins.add(urlCheck.origin);
+      }
+
+      const apiKey = await resolveEffectiveApiKey(urlCheck.origin);
+      if (!isRequestCurrent()) {
+        return false;
+      }
+
+      const cacheKey = `${expectedModelsUrl}\n${apiKey || ''}`;
+
+      let models = null;
+      if (!interactive && modelCatalogCache.has(cacheKey)) {
+        models = modelCatalogCache.get(cacheKey);
+      } else {
+        const result = await withTemporaryOriginStripSessionRule(urlCheck.origin, () =>
+          fetchOpenAiModels({
+            endpointUrl: urlCheck.endpointUrl,
+            apiKey,
+            signal: abortController.signal
+          })
+        );
+        models = result.models;
+        modelCatalogCache.set(cacheKey, models);
+      }
+
+      if (!isRequestCurrent()) {
+        return false;
+      }
+
+      loadedModels = models;
+      loadedSourceKey = expectedModelsUrl;
+      hideHint();
+      syncUiLabels();
+
+      if (openWhenLoaded && loadedModels.length > 0) {
+        const currentVal = (modelInput?.value || '').trim();
+        const shouldFilter =
+          currentVal.length > 0 && !loadedModels.some((entry) => entry.id === currentVal);
+        if (interactive) {
+          modelInput?.focus?.();
+        }
+        openListbox({ filter: shouldFilter });
+      } else if (isOpen) {
+        renderListbox();
+      }
+      return true;
+    } catch (error) {
+      if (!isRequestCurrent() || error?.name === 'AbortError') {
+        return false;
+      }
+      if (interactive) {
+        const reason = error?.message || 'HTTP error';
+        showHint(t('errModelsLoadFailed', reason));
+      }
+      return false;
+    } finally {
+      if (activeAbortController === abortController) {
+        activeAbortController = null;
+        inFlightSourceKey = '';
+        isLoading = false;
+        syncUiLabels();
+      }
+    }
+  }
+
+  const syncEndpointContext = () => {
+    const rawUrl = getEndpointRawUrl();
+    const urlCheck = validateCustomApiEndpointUrl(rawUrl);
+    const nextModelsUrl = urlCheck.ok ? resolveModelsUrl(urlCheck.endpointUrl) : '';
+    if (
+      (inFlightSourceKey && inFlightSourceKey !== nextModelsUrl) ||
+      (loadedSourceKey && loadedSourceKey !== nextModelsUrl)
+    ) {
+      invalidateCatalog();
+    }
+  };
+
+  loadButton?.addEventListener('click', (event) => {
+    event.preventDefault();
+    loadModels({ interactive: true, openWhenLoaded: true });
+  });
+
+  modelInput?.addEventListener('focus', () => {
+    if (isOpen) {
+      return;
+    }
+    if (loadedModels.length > 0) {
+      openListbox({ filter: false });
+    } else {
+      loadModels({ interactive: false, openWhenLoaded: true });
+    }
+  });
+
+  fieldContainer?.addEventListener('focusout', (event) => {
+    const nextTarget = event.relatedTarget;
+    if (isOpen && nextTarget && !fieldContainer.contains(nextTarget)) {
+      closeListbox();
+    }
+  });
+
+  modelInput?.addEventListener('click', () => {
+    if (!isOpen && loadedModels.length > 0) {
+      openListbox({ filter: false });
+    }
+  });
+
+  modelInput?.addEventListener('input', () => {
+    if (loadedModels.length > 0) {
+      openListbox({ filter: true });
+    }
+  });
+
+  modelInput?.addEventListener('keydown', (event) => {
+    if (event.isComposing) {
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      if (!isOpen && loadedModels.length > 0) {
+        event.preventDefault();
+        openListbox({ filter: false });
+        return;
+      }
+      if (isOpen && filteredModels.length > 0) {
+        event.preventDefault();
+        activeIndex = Math.min(filteredModels.length - 1, activeIndex + 1);
+        renderListbox();
+      }
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      if (isOpen && filteredModels.length > 0) {
+        event.preventDefault();
+        activeIndex = activeIndex <= 0 ? 0 : activeIndex - 1;
+        renderListbox();
+      }
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      if (isOpen && activeIndex >= 0 && filteredModels[activeIndex]) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectModel(filteredModels[activeIndex]);
+      }
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      if (isOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeListbox();
+      }
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      closeListbox();
+    }
+  });
+
+  syncUiLabels();
+
+  return {
+    loadModels,
+    openListbox,
+    closeListbox,
+    syncEndpointContext,
+    invalidateCatalog,
+    setDisabled(nextDisabled) {
+      disabledByForm = Boolean(nextDisabled);
+      if (disabledByForm) {
+        closeListbox();
+      }
+      syncUiLabels();
+    },
+    reset() {
+      invalidateCatalog();
+    },
+    refreshTranslations() {
+      syncUiLabels();
+      if (isOpen) {
+        renderListbox();
+      }
+    },
+    destroy() {
+      destroyed = true;
+      requestGeneration += 1;
+      const prevController = activeAbortController;
+      activeAbortController = null;
+      inFlightSourceKey = '';
+      isLoading = false;
+      prevController?.abort();
+      closeListbox();
+    }
+  };
+}
+
 function getCustomProviderFormElements() {
   return {
     form: document.getElementById('custom-provider-form'),
+    formTitle: document.getElementById('custom-provider-form-title'),
+    kindWebRadio: document.getElementById('custom-provider-kind-web'),
+    kindApiRadio: document.getElementById('custom-provider-kind-api'),
     nameInput: document.getElementById('custom-provider-name'),
+    urlLabel: document.getElementById('custom-provider-url-label'),
     urlInput: document.getElementById('custom-provider-url'),
+    apiFieldsWrapper: document.getElementById('custom-provider-api-fields'),
+    modelFieldContainer: document
+      .getElementById('custom-provider-model')
+      ?.closest('.custom-provider-field-model'),
+    modelInput: document.getElementById('custom-provider-model'),
+    modelCountBadge: document.getElementById('custom-provider-model-count'),
+    loadModelsButton: document.getElementById('custom-provider-load-models-btn'),
+    modelListbox: document.getElementById('custom-provider-model-listbox'),
+    modelHint: document.getElementById('custom-provider-model-hint'),
+    apiKeyInput: document.getElementById('custom-provider-api-key'),
+    apiKeyToggleButton: document.getElementById('custom-provider-api-key-toggle'),
+    apiNote: document.getElementById('custom-provider-api-note'),
     addButton: document.getElementById('custom-provider-add-btn'),
     originPreview: document.getElementById('custom-provider-origin-preview'),
     errorMessage: document.getElementById('custom-provider-error'),
@@ -96,14 +734,105 @@ function getCustomProviderFormElements() {
   };
 }
 
+function getSelectedCustomProviderKind() {
+  const checked = document.querySelector('input[name="customProviderKind"]:checked');
+  return checked?.value === 'api' ? 'api' : 'web';
+}
+
+function setPasswordFieldRevealedState(inputEl, toggleButtonEl, revealed) {
+  if (!inputEl || !toggleButtonEl) {
+    return;
+  }
+  inputEl.type = revealed ? 'text' : 'password';
+  toggleButtonEl.setAttribute('aria-pressed', revealed ? 'true' : 'false');
+  const i18nKey = revealed ? 'btnHideApiKey' : 'btnShowApiKey';
+  toggleButtonEl.dataset.i18n = i18nKey;
+  toggleButtonEl.textContent = t(i18nKey);
+}
+
+function setApiKeyRevealedState(revealed) {
+  const { apiKeyInput, apiKeyToggleButton } = getCustomProviderFormElements();
+  setPasswordFieldRevealedState(apiKeyInput, apiKeyToggleButton, revealed);
+}
+
+export function syncCustomProviderKindFields() {
+  const {
+    formTitle,
+    urlLabel,
+    urlInput,
+    apiFieldsWrapper,
+    modelInput,
+    apiKeyInput,
+    apiNote,
+    addButton
+  } = getCustomProviderFormElements();
+  const isApi = getSelectedCustomProviderKind() === 'api';
+
+  if (formTitle) {
+    formTitle.dataset.i18n = 'headingAddCustomProvider';
+    formTitle.textContent = t('headingAddCustomProvider');
+  }
+  if (addButton) {
+    addButton.dataset.i18n = 'btnAddCustomProvider';
+    addButton.textContent = t('btnAddCustomProvider');
+  }
+
+  if (apiFieldsWrapper) {
+    apiFieldsWrapper.hidden = !isApi;
+  }
+  if (apiNote) {
+    apiNote.hidden = !isApi;
+  }
+  if (modelInput) {
+    modelInput.required = isApi;
+  }
+  if (!isApi) {
+    addFormModelCombobox?.closeListbox();
+  }
+  if (urlLabel) {
+    const labelKey = isApi ? 'labelCustomApiEndpointUrl' : 'labelCustomProviderUrl';
+    urlLabel.dataset.i18n = labelKey;
+    urlLabel.textContent = t(labelKey);
+  }
+  if (urlInput) {
+    const placeholderKey = isApi
+      ? 'placeholderCustomApiEndpointUrl'
+      : 'placeholderCustomProviderUrl';
+    urlInput.dataset.i18nPlaceholder = placeholderKey;
+    urlInput.placeholder = t(placeholderKey);
+  }
+  if (apiKeyInput) {
+    apiKeyInput.dataset.i18nPlaceholder = 'placeholderCustomProviderApiKey';
+    apiKeyInput.placeholder = t('placeholderCustomProviderApiKey');
+  }
+}
+
 export function syncCustomProviderFormAvailability() {
-  const { nameInput, urlInput, addButton, unsupportedNote } = getCustomProviderFormElements();
+  const {
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    apiKeyToggleButton,
+    addButton,
+    unsupportedNote
+  } = getCustomProviderFormElements();
   const supported = supportsScopedFrameRules();
   const disabled = !supported || isSubmittingCustomProvider;
+
+  syncCustomProviderKindFields();
 
   if (unsupportedNote) {
     unsupportedNote.textContent = t('msgCustomProviderUnsupportedChrome');
     unsupportedNote.hidden = supported;
+  }
+  if (kindWebRadio) {
+    kindWebRadio.disabled = disabled;
+  }
+  if (kindApiRadio) {
+    kindApiRadio.disabled = disabled;
   }
   if (nameInput) {
     nameInput.disabled = disabled;
@@ -111,15 +840,853 @@ export function syncCustomProviderFormAvailability() {
   if (urlInput) {
     urlInput.disabled = disabled;
   }
+  if (modelInput) {
+    modelInput.disabled = disabled;
+  }
+  if (apiKeyInput) {
+    apiKeyInput.disabled = disabled;
+  }
+  if (apiKeyToggleButton) {
+    apiKeyToggleButton.disabled = disabled;
+  }
   if (addButton) {
     addButton.disabled = disabled;
+  }
+  addFormModelCombobox?.setDisabled(disabled);
+
+  if (activeInlineEditState) {
+    activeInlineEditState.syncAvailability();
+  }
+}
+
+function applyInlineEditToRenderedRows() {
+  document
+    .querySelectorAll('#provider-list .provider-item[data-custom-provider="true"]')
+    .forEach((row) => {
+      const rowId = row.dataset.providerId;
+      const isRowEditing = Boolean(
+        editingCustomProviderId &&
+        rowId === editingCustomProviderId &&
+        activeInlineEditState?.providerId === rowId
+      );
+      const editBtn = row.querySelector('[data-action="edit-custom-provider"]');
+      if (editBtn) {
+        editBtn.setAttribute('aria-expanded', isRowEditing ? 'true' : 'false');
+      }
+      if (isRowEditing) {
+        row.dataset.editing = 'true';
+        row.classList.remove('draggable');
+        row.setAttribute('draggable', 'false');
+        if (activeInlineEditState.formEl.parentElement !== row) {
+          row.appendChild(activeInlineEditState.formEl);
+        }
+      } else {
+        delete row.dataset.editing;
+        const isEnabled =
+          row.dataset.enabledPreference === 'true' && row.dataset.hasAccess === 'true';
+        row.classList.toggle('draggable', isEnabled);
+        row.setAttribute('draggable', String(isEnabled));
+        row.querySelector('.custom-provider-inline-edit')?.remove();
+      }
+    });
+}
+
+function createInlineEditFormState(descriptor) {
+  const providerId = descriptor.id;
+  const isApi = descriptor.customKind === 'api';
+  const idPrefix = `inline-edit-${providerId}`;
+  const hasSavedApiKey = Boolean(isApi && descriptor.apiConfig?.hasApiKey);
+
+  const formEl = document.createElement('form');
+  formEl.className = 'custom-provider-form custom-provider-inline-edit';
+  formEl.dataset.inlineEditProviderId = providerId;
+  formEl.noValidate = true;
+
+  // Prevent row drag-and-drop or toggle clicks when interacting with inline form controls
+  formEl.addEventListener('mousedown', (event) => {
+    event.stopPropagation();
+  });
+  formEl.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+  formEl.addEventListener('dragstart', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'custom-provider-inline-header';
+
+  const titleEl = document.createElement('h4');
+  titleEl.className = 'custom-provider-inline-title';
+  titleEl.id = `${idPrefix}-title`;
+  titleEl.textContent = t('headingEditCustomProvider');
+  formEl.setAttribute('aria-labelledby', titleEl.id);
+
+  const kindBadgeEl = document.createElement('span');
+  kindBadgeEl.className = 'custom-provider-inline-kind-badge';
+  kindBadgeEl.textContent = t(isApi ? 'optionCustomProviderKindApi' : 'optionCustomProviderKindWeb');
+
+  headerEl.append(titleEl, kindBadgeEl);
+  formEl.appendChild(headerEl);
+
+  const fieldsEl = document.createElement('div');
+  fieldsEl.className = 'custom-provider-fields';
+
+  // Name field
+  const nameFieldEl = document.createElement('div');
+  nameFieldEl.className = 'custom-provider-field custom-provider-field-name';
+  const nameLabelEl = document.createElement('label');
+  nameLabelEl.htmlFor = `${idPrefix}-name`;
+  nameLabelEl.textContent = t('labelCustomProviderName');
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.id = `${idPrefix}-name`;
+  nameInput.name = 'customProviderName';
+  nameInput.maxLength = MAX_CUSTOM_PROVIDER_NAME_LENGTH;
+  nameInput.required = true;
+  nameInput.autocomplete = 'off';
+  nameInput.placeholder = t('placeholderCustomProviderName');
+  nameInput.value = descriptor.name || '';
+  nameInput.setAttribute('aria-describedby', `${idPrefix}-error`);
+  nameFieldEl.append(nameLabelEl, nameInput);
+
+  // URL field
+  const urlFieldEl = document.createElement('div');
+  urlFieldEl.className = 'custom-provider-field custom-provider-field-url';
+  const urlLabelEl = document.createElement('label');
+  urlLabelEl.htmlFor = `${idPrefix}-url`;
+  urlLabelEl.textContent = t(isApi ? 'labelCustomApiEndpointUrl' : 'labelCustomProviderUrl');
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text';
+  urlInput.inputMode = 'url';
+  urlInput.id = `${idPrefix}-url`;
+  urlInput.name = 'customProviderUrl';
+  urlInput.required = true;
+  urlInput.autocomplete = 'off';
+  urlInput.setAttribute('autocorrect', 'off');
+  urlInput.setAttribute('autocapitalize', 'none');
+  urlInput.spellcheck = false;
+  urlInput.placeholder = t(
+    isApi ? 'placeholderCustomApiEndpointUrl' : 'placeholderCustomProviderUrl'
+  );
+  urlInput.value = isApi ? (descriptor.apiConfig?.endpointUrl || '') : (descriptor.url || '');
+  urlInput.setAttribute('aria-describedby', `${idPrefix}-origin-preview ${idPrefix}-error`);
+  urlFieldEl.append(urlLabelEl, urlInput);
+
+  fieldsEl.append(nameFieldEl, urlFieldEl);
+
+  let modelFieldEl = null;
+  let modelLabelEl = null;
+  let modelCountBadge = null;
+  let modelInput = null;
+  let loadModelsButton = null;
+  let modelListbox = null;
+  let modelHintEl = null;
+  let apiKeyLabelEl = null;
+  let apiKeyInput = null;
+  let apiKeyToggleButton = null;
+  let clearKeyRow = null;
+  let clearApiKeyCheckbox = null;
+  let clearApiKeyLabel = null;
+  let apiNoteEl = null;
+
+  if (isApi) {
+    const apiFieldsEl = document.createElement('div');
+    apiFieldsEl.className = 'custom-provider-api-fields';
+
+    modelFieldEl = document.createElement('div');
+    modelFieldEl.className = 'custom-provider-field custom-provider-field-model';
+
+    const modelLabelRow = document.createElement('div');
+    modelLabelRow.className = 'custom-provider-label-row';
+    modelLabelEl = document.createElement('label');
+    modelLabelEl.htmlFor = `${idPrefix}-model`;
+    modelLabelEl.textContent = t('labelCustomProviderModel');
+    modelCountBadge = document.createElement('span');
+    modelCountBadge.className = 'custom-provider-model-count';
+    modelCountBadge.hidden = true;
+    modelLabelRow.append(modelLabelEl, modelCountBadge);
+
+    const modelWrapEl = document.createElement('div');
+    modelWrapEl.className = 'custom-provider-model-wrap';
+    modelInput = document.createElement('input');
+    modelInput.type = 'text';
+    modelInput.id = `${idPrefix}-model`;
+    modelInput.name = 'customProviderModel';
+    modelInput.setAttribute('role', 'combobox');
+    modelInput.setAttribute('aria-autocomplete', 'list');
+    modelInput.setAttribute('aria-expanded', 'false');
+    modelInput.setAttribute('aria-controls', `${idPrefix}-model-listbox`);
+    modelInput.maxLength = MAX_CUSTOM_API_MODEL_LENGTH;
+    modelInput.required = true;
+    modelInput.autocomplete = 'off';
+    modelInput.setAttribute('autocorrect', 'off');
+    modelInput.setAttribute('autocapitalize', 'none');
+    modelInput.spellcheck = false;
+    modelInput.placeholder = t('placeholderCustomProviderModel');
+    modelInput.value = descriptor.apiConfig?.model || '';
+    modelInput.setAttribute('aria-describedby', `${idPrefix}-error`);
+
+    loadModelsButton = document.createElement('button');
+    loadModelsButton.type = 'button';
+    loadModelsButton.className = 'btn-load-models';
+    loadModelsButton.dataset.action = 'load-inline-models';
+    loadModelsButton.textContent = t('btnLoadModels');
+
+    modelListbox = document.createElement('div');
+    modelListbox.className = 'custom-provider-model-listbox';
+    modelListbox.id = `${idPrefix}-model-listbox`;
+    modelListbox.setAttribute('role', 'listbox');
+    modelListbox.hidden = true;
+
+    modelWrapEl.append(modelInput, loadModelsButton, modelListbox);
+
+    modelHintEl = document.createElement('p');
+    modelHintEl.className = 'custom-provider-model-hint';
+    modelHintEl.hidden = true;
+
+    modelFieldEl.append(modelLabelRow, modelWrapEl, modelHintEl);
+
+    const apiKeyFieldEl = document.createElement('div');
+    apiKeyFieldEl.className = 'custom-provider-field custom-provider-field-api-key';
+    apiKeyLabelEl = document.createElement('label');
+    apiKeyLabelEl.htmlFor = `${idPrefix}-api-key`;
+    apiKeyLabelEl.textContent = t('labelCustomProviderApiKey');
+
+    const pwdWrapEl = document.createElement('div');
+    pwdWrapEl.className = 'custom-provider-password-wrap';
+    apiKeyInput = document.createElement('input');
+    apiKeyInput.type = 'password';
+    apiKeyInput.id = `${idPrefix}-api-key`;
+    apiKeyInput.name = 'customProviderApiKey';
+    apiKeyInput.autocomplete = 'off';
+    apiKeyInput.setAttribute('autocorrect', 'off');
+    apiKeyInput.setAttribute('autocapitalize', 'none');
+    apiKeyInput.spellcheck = false;
+    // Never populate stored IndexedDB API keys into the DOM.
+    apiKeyInput.value = '';
+    apiKeyInput.placeholder = t(
+      hasSavedApiKey
+        ? 'placeholderCustomProviderApiKeyKeepExisting'
+        : 'placeholderCustomProviderApiKey'
+    );
+    apiKeyInput.setAttribute('aria-describedby', `${idPrefix}-api-note ${idPrefix}-error`);
+
+    apiKeyToggleButton = document.createElement('button');
+    apiKeyToggleButton.type = 'button';
+    apiKeyToggleButton.className = 'btn-api-key-toggle';
+    apiKeyToggleButton.setAttribute('aria-pressed', 'false');
+    apiKeyToggleButton.textContent = t('btnShowApiKey');
+
+    pwdWrapEl.append(apiKeyInput, apiKeyToggleButton);
+
+    clearKeyRow = document.createElement('div');
+    clearKeyRow.className = 'custom-provider-clear-key-row';
+    clearKeyRow.hidden = !hasSavedApiKey;
+
+    clearApiKeyCheckbox = document.createElement('input');
+    clearApiKeyCheckbox.type = 'checkbox';
+    clearApiKeyCheckbox.id = `${idPrefix}-clear-api-key`;
+    clearApiKeyCheckbox.name = 'clearCustomProviderApiKey';
+
+    clearApiKeyLabel = document.createElement('label');
+    clearApiKeyLabel.htmlFor = `${idPrefix}-clear-api-key`;
+    clearApiKeyLabel.textContent = t('labelClearSavedApiKey');
+
+    clearKeyRow.append(clearApiKeyCheckbox, clearApiKeyLabel);
+    apiKeyFieldEl.append(apiKeyLabelEl, pwdWrapEl, clearKeyRow);
+
+    apiFieldsEl.append(modelFieldEl, apiKeyFieldEl);
+    fieldsEl.appendChild(apiFieldsEl);
+
+    apiNoteEl = document.createElement('p');
+    apiNoteEl.className = 'custom-provider-api-note';
+    apiNoteEl.id = `${idPrefix}-api-note`;
+    apiNoteEl.textContent = t('noteCustomApiLocalOnly');
+  }
+
+  const submitGroupEl = document.createElement('div');
+  submitGroupEl.className = 'custom-provider-submit';
+
+  const saveButton = document.createElement('button');
+  saveButton.type = 'submit';
+  saveButton.className = 'btn btn-primary';
+  saveButton.dataset.action = 'save-inline-custom-provider';
+  saveButton.textContent = t('btnSaveCustomProvider');
+
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'btn btn-secondary';
+  cancelButton.dataset.action = 'cancel-inline-custom-provider';
+  cancelButton.textContent = t('btnCancel');
+
+  submitGroupEl.append(saveButton, cancelButton);
+  fieldsEl.appendChild(submitGroupEl);
+  formEl.appendChild(fieldsEl);
+
+  if (apiNoteEl) {
+    formEl.appendChild(apiNoteEl);
+  }
+
+  const originPreviewEl = document.createElement('p');
+  originPreviewEl.className = 'custom-provider-origin-preview';
+  originPreviewEl.id = `${idPrefix}-origin-preview`;
+  originPreviewEl.hidden = true;
+
+  const errorMessageEl = document.createElement('p');
+  errorMessageEl.className = 'custom-provider-error';
+  errorMessageEl.id = `${idPrefix}-error`;
+  errorMessageEl.setAttribute('role', 'alert');
+  errorMessageEl.hidden = true;
+
+  formEl.append(originPreviewEl, errorMessageEl);
+
+  const clearError = () => {
+    nameInput.removeAttribute('aria-invalid');
+    urlInput.removeAttribute('aria-invalid');
+    modelInput?.removeAttribute('aria-invalid');
+    apiKeyInput?.removeAttribute('aria-invalid');
+    errorMessageEl.textContent = '';
+    errorMessageEl.hidden = true;
+  };
+
+  const setError = (message, invalidField = null) => {
+    clearError();
+    if (invalidField) {
+      invalidField.setAttribute('aria-invalid', 'true');
+    }
+    errorMessageEl.textContent = message;
+    errorMessageEl.hidden = false;
+  };
+
+  const syncSavedApiKeyFieldState = () => {
+    if (!isApi) {
+      return;
+    }
+    const latestDescriptor = getProviderDescriptor(providerId) || descriptor;
+    const latestHasSavedKey = Boolean(latestDescriptor.apiConfig?.hasApiKey);
+    const savedOrigin = getCustomProviderOrigin(latestDescriptor);
+    const raw = (urlInput.value || '').trim();
+    let staysOnSavedOrigin = true;
+    if (raw.length > 0) {
+      const endpointCheck = validateCustomApiEndpointUrl(raw);
+      if (endpointCheck.ok && endpointCheck.origin && savedOrigin) {
+        staysOnSavedOrigin = endpointCheck.origin === savedOrigin;
+      } else if (!endpointCheck.ok) {
+        staysOnSavedOrigin = false;
+      }
+    }
+    const canKeepExistingKey = latestHasSavedKey && staysOnSavedOrigin;
+    if (apiKeyInput) {
+      apiKeyInput.placeholder = t(
+        canKeepExistingKey
+          ? 'placeholderCustomProviderApiKeyKeepExisting'
+          : 'placeholderCustomProviderApiKey'
+      );
+    }
+    if (clearKeyRow) {
+      clearKeyRow.hidden = !canKeepExistingKey;
+    }
+  };
+
+  const updatePreview = () => {
+    syncSavedApiKeyFieldState();
+    const raw = urlInput.value;
+    if (!raw || raw.trim().length === 0) {
+      originPreviewEl.textContent = '';
+      originPreviewEl.hidden = true;
+      return;
+    }
+    if (isApi) {
+      const endpointCheck = validateCustomApiEndpointUrl(raw);
+      if (endpointCheck.ok && endpointCheck.origin && endpointCheck.endpointUrl) {
+        originPreviewEl.textContent = t('msgCustomApiEndpointPreview', [
+          endpointCheck.origin,
+          endpointCheck.endpointUrl
+        ]);
+        originPreviewEl.hidden = false;
+        return;
+      }
+      originPreviewEl.textContent = '';
+      originPreviewEl.hidden = true;
+      return;
+    }
+    const check = validateCustomProviderUrl(raw, { ignoreProviderId: providerId });
+    if (check.ok && check.origin) {
+      originPreviewEl.textContent = t('msgCustomProviderOriginPreview', check.origin);
+      originPreviewEl.hidden = false;
+      return;
+    }
+    originPreviewEl.textContent = '';
+    originPreviewEl.hidden = true;
+  };
+
+  let modelCombobox = null;
+  if (isApi) {
+    modelCombobox = createModelComboboxController({
+      idPrefix: `${idPrefix}-models`,
+      fieldContainer: modelFieldEl,
+      modelInput,
+      loadButton: loadModelsButton,
+      listbox: modelListbox,
+      countBadge: modelCountBadge,
+      hintEl: modelHintEl,
+      getEndpointRawUrl: () => urlInput.value || '',
+      resolveEffectiveApiKey: async (targetOrigin) => {
+        const typedKey = (apiKeyInput?.value || '').trim();
+        if (typedKey.length > 0) {
+          return typedKey;
+        }
+        if (clearApiKeyCheckbox?.checked) {
+          return '';
+        }
+        const liveDescriptor = getProviderDescriptor(providerId);
+        const savedOrigin = liveDescriptor ? getCustomProviderOrigin(liveDescriptor) : null;
+        if (savedOrigin && savedOrigin === targetOrigin) {
+          return (await getCustomApiKey(providerId)) || '';
+        }
+        return '';
+      },
+      onInvalidUrl: (reason) => {
+        setError(getCustomProviderUrlErrorMessage(reason), urlInput);
+        urlInput.focus?.();
+      },
+      onSelectModel: () => {
+        clearError();
+      },
+      isEnabledKind: () => true
+    });
+  }
+
+  nameInput.addEventListener('input', clearError);
+  urlInput.addEventListener('input', () => {
+    clearError();
+    updatePreview();
+    modelCombobox?.syncEndpointContext();
+  });
+  urlInput.addEventListener('blur', () => {
+    if (!supportsScopedFrameRules()) {
+      return;
+    }
+    const raw = urlInput.value;
+    if (!raw || raw.trim().length === 0) {
+      return;
+    }
+    const check = isApi
+      ? validateCustomApiEndpointUrl(raw)
+      : validateCustomProviderUrl(raw, { ignoreProviderId: providerId });
+    if (!check.ok) {
+      setError(getCustomProviderUrlErrorMessage(check.reason), urlInput);
+    }
+  });
+
+  modelInput?.addEventListener('input', clearError);
+
+  apiKeyInput?.addEventListener('input', () => {
+    clearError();
+    if (apiKeyInput.value.trim().length > 0 && clearApiKeyCheckbox?.checked) {
+      clearApiKeyCheckbox.checked = false;
+    }
+    modelCombobox?.invalidateCatalog();
+  });
+
+  clearApiKeyCheckbox?.addEventListener('change', () => {
+    clearError();
+    if (clearApiKeyCheckbox.checked && apiKeyInput) {
+      apiKeyInput.value = '';
+      setPasswordFieldRevealedState(apiKeyInput, apiKeyToggleButton, false);
+    }
+    modelCombobox?.invalidateCatalog();
+  });
+
+  apiKeyToggleButton?.addEventListener('click', () => {
+    const isRevealed = apiKeyToggleButton.getAttribute('aria-pressed') === 'true';
+    setPasswordFieldRevealedState(apiKeyInput, apiKeyToggleButton, !isRevealed);
+  });
+
+  cancelButton.addEventListener('click', () => {
+    cancelEditingCustomProvider({ restoreFocus: true });
+  });
+
+  formEl.addEventListener('keydown', (event) => {
+    if (
+      event.key === 'Escape' &&
+      !event.isComposing &&
+      !event.defaultPrevented &&
+      !isSubmittingInlineEdit
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelEditingCustomProvider({ restoreFocus: true });
+    }
+  });
+
+  const syncAvailability = () => {
+    const supported = supportsScopedFrameRules();
+    const disabled = !supported || isSubmittingInlineEdit;
+    nameInput.disabled = disabled;
+    urlInput.disabled = disabled;
+    if (modelInput) modelInput.disabled = disabled;
+    if (apiKeyInput) apiKeyInput.disabled = disabled;
+    if (apiKeyToggleButton) apiKeyToggleButton.disabled = disabled;
+    if (clearApiKeyCheckbox) clearApiKeyCheckbox.disabled = disabled;
+    saveButton.disabled = disabled;
+    cancelButton.disabled = isSubmittingInlineEdit;
+    modelCombobox?.setDisabled(disabled);
+  };
+
+  const refreshTranslations = () => {
+    const latestDescriptor = getProviderDescriptor(providerId) || descriptor;
+    const latestHasSavedKey = Boolean(isApi && latestDescriptor.apiConfig?.hasApiKey);
+    titleEl.textContent = t('headingEditCustomProvider');
+    kindBadgeEl.textContent = t(
+      isApi ? 'optionCustomProviderKindApi' : 'optionCustomProviderKindWeb'
+    );
+    nameLabelEl.textContent = t('labelCustomProviderName');
+    nameInput.placeholder = t('placeholderCustomProviderName');
+    urlLabelEl.textContent = t(isApi ? 'labelCustomApiEndpointUrl' : 'labelCustomProviderUrl');
+    urlInput.placeholder = t(
+      isApi ? 'placeholderCustomApiEndpointUrl' : 'placeholderCustomProviderUrl'
+    );
+    if (isApi) {
+      if (modelLabelEl) modelLabelEl.textContent = t('labelCustomProviderModel');
+      if (modelInput) modelInput.placeholder = t('placeholderCustomProviderModel');
+      if (apiKeyLabelEl) apiKeyLabelEl.textContent = t('labelCustomProviderApiKey');
+      if (apiKeyInput) {
+        apiKeyInput.placeholder = t(
+          latestHasSavedKey
+            ? 'placeholderCustomProviderApiKeyKeepExisting'
+            : 'placeholderCustomProviderApiKey'
+        );
+      }
+      if (apiKeyToggleButton) {
+        const revealed = apiKeyToggleButton.getAttribute('aria-pressed') === 'true';
+        apiKeyToggleButton.textContent = t(revealed ? 'btnHideApiKey' : 'btnShowApiKey');
+      }
+      if (clearApiKeyLabel) clearApiKeyLabel.textContent = t('labelClearSavedApiKey');
+      if (apiNoteEl) apiNoteEl.textContent = t('noteCustomApiLocalOnly');
+      modelCombobox?.refreshTranslations();
+    }
+    saveButton.textContent = t('btnSaveCustomProvider');
+    cancelButton.textContent = t('btnCancel');
+    updatePreview();
+  };
+
+  const state = {
+    providerId,
+    isApi,
+    formEl,
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput,
+    apiKeyToggleButton,
+    clearKeyRow,
+    clearApiKeyCheckbox,
+    saveButton,
+    cancelButton,
+    modelCombobox,
+    clearError,
+    setError,
+    updatePreview,
+    syncAvailability,
+    refreshTranslations,
+    destroy() {
+      modelCombobox?.destroy();
+      formEl.remove();
+    }
+  };
+
+  formEl.addEventListener('submit', (event) => {
+    handleInlineEditSubmit(event, state);
+  });
+
+  updatePreview();
+  syncAvailability();
+
+  return state;
+}
+
+export function startEditingCustomProvider(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  if (!descriptor || descriptor.access !== 'custom') {
+    return false;
+  }
+
+  if (activeInlineEditState) {
+    activeInlineEditState.destroy();
+    activeInlineEditState = null;
+  }
+
+  editingCustomProviderId = descriptor.id;
+  activeInlineEditState = createInlineEditFormState(descriptor);
+  applyInlineEditToRenderedRows();
+
+  activeInlineEditState.nameInput?.focus?.({ preventScroll: true });
+  if (document.activeElement !== activeInlineEditState.nameInput) {
+    activeInlineEditState.nameInput?.focus?.();
+  }
+
+  if (descriptor.customKind === 'api') {
+    activeInlineEditState.modelCombobox?.loadModels({
+      interactive: false,
+      openWhenLoaded: false
+    });
+  }
+
+  return true;
+}
+
+export function cancelEditingCustomProvider({ restoreFocus = true } = {}) {
+  const previousProviderId = editingCustomProviderId;
+  editingCustomProviderId = null;
+
+  if (activeInlineEditState) {
+    activeInlineEditState.destroy();
+    activeInlineEditState = null;
+  }
+
+  applyInlineEditToRenderedRows();
+  cleanupUnusedProbedOrigins().catch(() => {});
+
+  if (restoreFocus && previousProviderId) {
+    focusCustomProviderEditButton(previousProviderId);
+  }
+}
+
+async function handleInlineEditSubmit(event, inlineState) {
+  event?.preventDefault?.();
+
+  if (isSubmittingInlineEdit || !inlineState) {
+    return;
+  }
+
+  if (!supportsScopedFrameRules()) {
+    const message = t('msgCustomProviderUnsupportedChrome');
+    inlineState.setError(message);
+    showStatus('error', message);
+    return;
+  }
+
+  const editingDescriptor = getProviderDescriptor(inlineState.providerId);
+  if (!editingDescriptor || editingDescriptor.access !== 'custom') {
+    cancelEditingCustomProvider({ restoreFocus: false });
+    const message = t('errCustomProviderSaveFailed');
+    showStatus('error', message);
+    return;
+  }
+
+  const isApiKind = editingDescriptor.customKind === 'api';
+  const rawName = typeof inlineState.nameInput?.value === 'string' ? inlineState.nameInput.value : '';
+  const trimmedName = rawName.trim();
+  if (trimmedName.length === 0) {
+    inlineState.setError(t('errCustomNameRequired'), inlineState.nameInput);
+    inlineState.nameInput?.focus?.();
+    return;
+  }
+  if (trimmedName.length > MAX_CUSTOM_PROVIDER_NAME_LENGTH) {
+    inlineState.setError(t('errCustomNameTooLong'), inlineState.nameInput);
+    inlineState.nameInput?.focus?.();
+    return;
+  }
+
+  const rawUrl = typeof inlineState.urlInput?.value === 'string' ? inlineState.urlInput.value : '';
+  const urlCheck = isApiKind
+    ? validateCustomApiEndpointUrl(rawUrl)
+    : validateCustomProviderUrl(rawUrl, { ignoreProviderId: editingDescriptor.id });
+  if (!urlCheck.ok) {
+    const message = getCustomProviderUrlErrorMessage(urlCheck.reason);
+    inlineState.setError(message, inlineState.urlInput);
+    inlineState.urlInput?.focus?.();
+    return;
+  }
+
+  let trimmedModel = '';
+  let trimmedApiKey = '';
+  if (isApiKind) {
+    const rawModel =
+      typeof inlineState.modelInput?.value === 'string' ? inlineState.modelInput.value : '';
+    trimmedModel = rawModel.trim();
+    if (trimmedModel.length === 0) {
+      inlineState.setError(t('errCustomModelRequired'), inlineState.modelInput);
+      inlineState.modelInput?.focus?.();
+      return;
+    }
+    if (trimmedModel.length > MAX_CUSTOM_API_MODEL_LENGTH) {
+      inlineState.setError(t('errCustomModelTooLong'), inlineState.modelInput);
+      inlineState.modelInput?.focus?.();
+      return;
+    }
+
+    const rawApiKey =
+      typeof inlineState.apiKeyInput?.value === 'string' ? inlineState.apiKeyInput.value : '';
+    trimmedApiKey = rawApiKey.trim();
+    if (trimmedApiKey.length > MAX_CUSTOM_API_KEY_LENGTH) {
+      inlineState.setError(t('errCustomApiKeyTooLong'), inlineState.apiKeyInput);
+      inlineState.apiKeyInput?.focus?.();
+      return;
+    }
+  }
+
+  const permissionOrigin = `${urlCheck.origin}/*`;
+  inlineState.clearError();
+  inlineState.modelCombobox?.closeListbox();
+  isSubmittingInlineEdit = true;
+  inlineState.syncAvailability();
+
+  // Synchronously invoke chrome.permissions.request before any await so Chrome
+  // preserves transient user activation from clicking Save changes / pressing Enter.
+  let permissionPromise;
+  try {
+    permissionPromise = chrome?.permissions?.request
+      ? chrome.permissions.request({ origins: [permissionOrigin] })
+      : Promise.resolve(false);
+  } catch {
+    isSubmittingInlineEdit = false;
+    inlineState.syncAvailability();
+    const message = t('msgProviderPermissionRequestFailed', trimmedName);
+    inlineState.setError(message);
+    showStatus('error', message);
+    return;
+  }
+
+  try {
+    let granted = false;
+    try {
+      granted = Boolean(await permissionPromise);
+    } catch {
+      const message = t('msgProviderPermissionRequestFailed', trimmedName);
+      inlineState.setError(message);
+      showStatus('error', message);
+      return;
+    }
+
+    if (!granted) {
+      const message = t('msgCustomProviderPermissionDenied', urlCheck.origin);
+      inlineState.setError(message);
+      showStatus('error', message);
+      return;
+    }
+
+    const targetId = editingDescriptor.id;
+    const previousOrigin = getCustomProviderOrigin(editingDescriptor);
+    const previousEndpointUrl = editingDescriptor.apiConfig?.endpointUrl || null;
+    const sameOriginAsSaved = Boolean(previousOrigin && previousOrigin === urlCheck.origin);
+    let previousSecret = null;
+    let secretMutated = false;
+    let providerRecordPersisted = false;
+
+    try {
+      let nextHasApiKey = false;
+      if (isApiKind) {
+        previousSecret = await getCustomApiKey(targetId);
+        if (trimmedApiKey.length > 0) {
+          await saveCustomApiKey(targetId, trimmedApiKey, {
+            endpointUrl: urlCheck.endpointUrl
+          });
+          secretMutated = true;
+          nextHasApiKey = true;
+        } else if (inlineState.clearApiKeyCheckbox?.checked || !sameOriginAsSaved) {
+          if (previousSecret || editingDescriptor.apiConfig?.hasApiKey) {
+            await deleteCustomApiKey(targetId);
+            secretMutated = true;
+          }
+          nextHasApiKey = false;
+        } else {
+          if (previousSecret && previousEndpointUrl !== urlCheck.endpointUrl) {
+            await saveCustomApiKey(targetId, previousSecret, {
+              endpointUrl: urlCheck.endpointUrl
+            });
+            secretMutated = true;
+          }
+          nextHasApiKey =
+            Boolean(previousSecret) || Boolean(editingDescriptor.apiConfig?.hasApiKey);
+        }
+      }
+
+      const savedRecord = await updateCustomProvider(
+        targetId,
+        isApiKind
+          ? {
+              name: trimmedName,
+              endpointUrl: urlCheck.endpointUrl,
+              model: trimmedModel,
+              hasApiKey: nextHasApiKey
+            }
+          : {
+              name: trimmedName,
+              url: urlCheck.url
+            }
+      );
+      providerRecordPersisted = true;
+
+      if (
+        previousOrigin &&
+        previousOrigin !== urlCheck.origin &&
+        !isOriginUsedByAnyProvider(previousOrigin) &&
+        chrome?.permissions?.remove
+      ) {
+        await chrome.permissions.remove({ origins: [`${previousOrigin}/*`] }).catch((error) => {
+          console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
+        });
+      }
+
+      await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
+
+      editingCustomProviderId = null;
+      if (activeInlineEditState === inlineState) {
+        activeInlineEditState.destroy();
+        activeInlineEditState = null;
+      } else {
+        inlineState.destroy();
+      }
+
+      await renderProviderList();
+      focusCustomProviderEditButton(targetId);
+      showStatus('success', t('msgCustomProviderUpdated', savedRecord.name));
+    } catch (persistError) {
+      if (!providerRecordPersisted) {
+        if (secretMutated) {
+          if (previousSecret) {
+            await saveCustomApiKey(targetId, previousSecret, {
+              endpointUrl: previousEndpointUrl
+            }).catch(() => {});
+          } else {
+            await deleteCustomApiKey(targetId).catch(() => {});
+          }
+        }
+        await loadCustomProviders().catch(() => {});
+        if (
+          previousOrigin !== urlCheck.origin &&
+          !isOriginUsedByAnyProvider(urlCheck.origin) &&
+          chrome?.permissions?.remove
+        ) {
+          await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+        }
+      }
+      const message =
+        persistError?.reason && CUSTOM_URL_REASON_MESSAGE_KEYS[persistError.reason]
+          ? getCustomProviderUrlErrorMessage(persistError.reason)
+          : t('errCustomProviderSaveFailed');
+      inlineState.setError(message);
+      showStatus('error', message);
+    }
+  } finally {
+    isSubmittingInlineEdit = false;
+    if (activeInlineEditState === inlineState) {
+      inlineState.syncAvailability();
+    }
   }
 }
 
 function clearCustomProviderFormError() {
-  const { nameInput, urlInput, errorMessage } = getCustomProviderFormElements();
+  const { nameInput, urlInput, modelInput, apiKeyInput, errorMessage } =
+    getCustomProviderFormElements();
   nameInput?.removeAttribute('aria-invalid');
   urlInput?.removeAttribute('aria-invalid');
+  modelInput?.removeAttribute('aria-invalid');
+  apiKeyInput?.removeAttribute('aria-invalid');
   if (errorMessage) {
     errorMessage.textContent = '';
     errorMessage.hidden = true;
@@ -127,9 +1694,12 @@ function clearCustomProviderFormError() {
 }
 
 function setCustomProviderFormError(message, invalidField = null) {
-  const { nameInput, urlInput, errorMessage } = getCustomProviderFormElements();
+  const { nameInput, urlInput, modelInput, apiKeyInput, errorMessage } =
+    getCustomProviderFormElements();
   nameInput?.removeAttribute('aria-invalid');
   urlInput?.removeAttribute('aria-invalid');
+  modelInput?.removeAttribute('aria-invalid');
+  apiKeyInput?.removeAttribute('aria-invalid');
   if (invalidField) {
     invalidField.setAttribute('aria-invalid', 'true');
   }
@@ -146,6 +1716,23 @@ export function updateCustomProviderOriginPreview() {
   }
   const raw = urlInput.value;
   if (!raw || raw.trim().length === 0) {
+    originPreview.textContent = '';
+    originPreview.hidden = true;
+    return;
+  }
+
+  const isApi = getSelectedCustomProviderKind() === 'api';
+
+  if (isApi) {
+    const endpointCheck = validateCustomApiEndpointUrl(raw);
+    if (endpointCheck.ok && endpointCheck.origin && endpointCheck.endpointUrl) {
+      originPreview.textContent = t('msgCustomApiEndpointPreview', [
+        endpointCheck.origin,
+        endpointCheck.endpointUrl
+      ]);
+      originPreview.hidden = false;
+      return;
+    }
     originPreview.textContent = '';
     originPreview.hidden = true;
     return;
@@ -169,13 +1756,20 @@ export async function handleCustomProviderFormSubmit(event) {
     return;
   }
 
-  const { nameInput, urlInput } = getCustomProviderFormElements();
+  const {
+    nameInput,
+    urlInput,
+    modelInput,
+    apiKeyInput
+  } = getCustomProviderFormElements();
   if (!supportsScopedFrameRules()) {
     const message = t('msgCustomProviderUnsupportedChrome');
     setCustomProviderFormError(message);
     showStatus('error', message);
     return;
   }
+
+  const isApiKind = getSelectedCustomProviderKind() === 'api';
 
   const rawName = typeof nameInput?.value === 'string' ? nameInput.value : '';
   const trimmedName = rawName.trim();
@@ -191,7 +1785,9 @@ export async function handleCustomProviderFormSubmit(event) {
   }
 
   const rawUrl = typeof urlInput?.value === 'string' ? urlInput.value : '';
-  const urlCheck = validateCustomProviderUrl(rawUrl);
+  const urlCheck = isApiKind
+    ? validateCustomApiEndpointUrl(rawUrl)
+    : validateCustomProviderUrl(rawUrl);
   if (!urlCheck.ok) {
     const message = getCustomProviderUrlErrorMessage(urlCheck.reason);
     setCustomProviderFormError(message, urlInput);
@@ -199,12 +1795,37 @@ export async function handleCustomProviderFormSubmit(event) {
     return;
   }
 
+  let trimmedModel = '';
+  let trimmedApiKey = '';
+  if (isApiKind) {
+    const rawModel = typeof modelInput?.value === 'string' ? modelInput.value : '';
+    trimmedModel = rawModel.trim();
+    if (trimmedModel.length === 0) {
+      setCustomProviderFormError(t('errCustomModelRequired'), modelInput);
+      modelInput?.focus?.();
+      return;
+    }
+    if (trimmedModel.length > MAX_CUSTOM_API_MODEL_LENGTH) {
+      setCustomProviderFormError(t('errCustomModelTooLong'), modelInput);
+      modelInput?.focus?.();
+      return;
+    }
+
+    const rawApiKey = typeof apiKeyInput?.value === 'string' ? apiKeyInput.value : '';
+    trimmedApiKey = rawApiKey.trim();
+    if (trimmedApiKey.length > MAX_CUSTOM_API_KEY_LENGTH) {
+      setCustomProviderFormError(t('errCustomApiKeyTooLong'), apiKeyInput);
+      apiKeyInput?.focus?.();
+      return;
+    }
+  }
+
   let id;
   let frameRuleId;
   try {
     id = generateCustomProviderId();
     frameRuleId = allocateCustomFrameRuleId();
-  } catch (allocationError) {
+  } catch {
     const message = t('errCustomProviderSaveFailed');
     setCustomProviderFormError(message);
     showStatus('error', message);
@@ -215,6 +1836,7 @@ export async function handleCustomProviderFormSubmit(event) {
   const permissionOrigin = `${urlCheck.origin}/*`;
 
   clearCustomProviderFormError();
+  addFormModelCombobox?.closeListbox();
   isSubmittingCustomProvider = true;
   syncCustomProviderFormAvailability();
 
@@ -225,7 +1847,7 @@ export async function handleCustomProviderFormSubmit(event) {
     permissionPromise = chrome?.permissions?.request
       ? chrome.permissions.request({ origins: [permissionOrigin] })
       : Promise.resolve(false);
-  } catch (requestSyncError) {
+  } catch {
     isSubmittingCustomProvider = false;
     syncCustomProviderFormAvailability();
     const message = t('msgProviderPermissionRequestFailed', trimmedName);
@@ -238,7 +1860,7 @@ export async function handleCustomProviderFormSubmit(event) {
     let granted = false;
     try {
       granted = Boolean(await permissionPromise);
-    } catch (requestError) {
+    } catch {
       const message = t('msgProviderPermissionRequestFailed', trimmedName);
       setCustomProviderFormError(message);
       showStatus('error', message);
@@ -252,15 +1874,36 @@ export async function handleCustomProviderFormSubmit(event) {
       return;
     }
 
+    let savedSecret = false;
     let addedToLocal = false;
     try {
-      const savedRecord = await addCustomProvider({
-        id,
-        name: trimmedName,
-        url: urlCheck.url,
-        frameRuleId,
-        createdAt
-      });
+      if (isApiKind && trimmedApiKey.length > 0) {
+        await saveCustomApiKey(id, trimmedApiKey, {
+          endpointUrl: urlCheck.endpointUrl
+        });
+        savedSecret = true;
+      }
+
+      const savedRecord = await addCustomProvider(
+        isApiKind
+          ? {
+              id,
+              kind: 'api',
+              name: trimmedName,
+              endpointUrl: urlCheck.endpointUrl,
+              model: trimmedModel,
+              hasApiKey: trimmedApiKey.length > 0,
+              frameRuleId,
+              createdAt
+            }
+          : {
+              id,
+              name: trimmedName,
+              url: urlCheck.url,
+              frameRuleId,
+              createdAt
+            }
+      );
       addedToLocal = true;
 
       const settings = await getSettings();
@@ -289,14 +1932,22 @@ export async function handleCustomProviderFormSubmit(event) {
       );
 
       await chrome.storage.sync.set({ enabledProviders, providerOrder });
+      await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
 
       if (nameInput) nameInput.value = '';
       if (urlInput) urlInput.value = '';
+      if (modelInput) modelInput.value = '';
+      if (apiKeyInput) apiKeyInput.value = '';
+      setApiKeyRevealedState(false);
+      addFormModelCombobox?.reset();
       updateCustomProviderOriginPreview();
       clearCustomProviderFormError();
       await renderProviderList();
       showStatus('success', t('msgCustomProviderAdded', savedRecord.name));
     } catch (persistError) {
+      if (savedSecret) {
+        await deleteCustomApiKey(id).catch(() => {});
+      }
       if (addedToLocal) {
         await removeCustomProvider(id).catch(() => {});
       }
@@ -325,10 +1976,17 @@ export async function deleteCustomProviderEntry(providerId) {
     return false;
   }
 
-  const origin = descriptor.frameOrigins[0] || null;
+  const origin = getCustomProviderOrigin(descriptor);
   const providerName = descriptor.name;
 
+  if (editingCustomProviderId === providerId) {
+    cancelEditingCustomProvider({ restoreFocus: false });
+  }
+
   await removeCustomProvider(providerId);
+  await deleteCustomApiKey(providerId).catch((error) => {
+    console.warn(`Failed to delete API key for ${providerId}:`, error);
+  });
 
   const syncState = await chrome.storage.sync.get({
     enabledProviders: DEFAULT_ENABLED_PROVIDERS,
@@ -361,41 +2019,121 @@ export async function deleteCustomProviderEntry(providerId) {
 }
 
 function setupCustomProviderForm() {
-  const { form, nameInput, urlInput } = getCustomProviderFormElements();
+  const {
+    form,
+    kindWebRadio,
+    kindApiRadio,
+    nameInput,
+    urlInput,
+    modelFieldContainer,
+    modelInput,
+    modelCountBadge,
+    loadModelsButton,
+    modelListbox,
+    modelHint,
+    apiKeyInput,
+    apiKeyToggleButton
+  } = getCustomProviderFormElements();
+
+  const jumpButton = document.getElementById('jump-add-custom-provider-btn');
+  if (jumpButton && jumpButton.dataset.jumpBound !== 'true') {
+    jumpButton.dataset.jumpBound = 'true';
+    jumpButton.addEventListener('click', () => {
+      document
+        .getElementById('custom-provider-card')
+        ?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      nameInput?.focus?.();
+    });
+  }
+
+  if (form && form.dataset.customFormBound !== 'true') {
+    form.dataset.customFormBound = 'true';
+
+    addFormModelCombobox = createModelComboboxController({
+      idPrefix: 'add-custom-models',
+      fieldContainer: modelFieldContainer,
+      modelInput,
+      loadButton: loadModelsButton,
+      listbox: modelListbox,
+      countBadge: modelCountBadge,
+      hintEl: modelHint,
+      getEndpointRawUrl: () => urlInput?.value || '',
+      resolveEffectiveApiKey: async () => (apiKeyInput?.value || '').trim(),
+      onInvalidUrl: (reason) => {
+        setCustomProviderFormError(getCustomProviderUrlErrorMessage(reason), urlInput);
+        urlInput?.focus?.();
+      },
+      onSelectModel: (selectedModel) => {
+        clearCustomProviderFormError();
+        if (nameInput && nameInput.value.trim().length === 0) {
+          const suggested = (selectedModel.name || selectedModel.id || '').trim();
+          if (suggested) {
+            nameInput.value = suggested.slice(0, MAX_CUSTOM_PROVIDER_NAME_LENGTH);
+          }
+        }
+      },
+      isEnabledKind: () => getSelectedCustomProviderKind() === 'api'
+    });
+
+    const onKindChange = () => {
+      clearCustomProviderFormError();
+      syncCustomProviderKindFields();
+      updateCustomProviderOriginPreview();
+      if (getSelectedCustomProviderKind() !== 'api') {
+        addFormModelCombobox?.invalidateCatalog();
+      }
+    };
+    kindWebRadio?.addEventListener('change', onKindChange);
+    kindApiRadio?.addEventListener('change', onKindChange);
+
+    nameInput?.addEventListener('input', () => {
+      clearCustomProviderFormError();
+    });
+
+    urlInput?.addEventListener('input', () => {
+      clearCustomProviderFormError();
+      updateCustomProviderOriginPreview();
+      addFormModelCombobox?.syncEndpointContext();
+    });
+
+    modelInput?.addEventListener('input', () => {
+      clearCustomProviderFormError();
+    });
+
+    apiKeyInput?.addEventListener('input', () => {
+      clearCustomProviderFormError();
+      addFormModelCombobox?.invalidateCatalog();
+    });
+
+    apiKeyToggleButton?.addEventListener('click', () => {
+      const isRevealed = apiKeyToggleButton.getAttribute('aria-pressed') === 'true';
+      setApiKeyRevealedState(!isRevealed);
+    });
+
+    urlInput?.addEventListener('blur', () => {
+      if (!supportsScopedFrameRules()) {
+        return;
+      }
+      const raw = urlInput.value;
+      if (!raw || raw.trim().length === 0) {
+        return;
+      }
+      const isApi = getSelectedCustomProviderKind() === 'api';
+      const check = isApi
+        ? validateCustomApiEndpointUrl(raw)
+        : validateCustomProviderUrl(raw);
+      if (!check.ok) {
+        setCustomProviderFormError(getCustomProviderUrlErrorMessage(check.reason), urlInput);
+      }
+    });
+
+    form.addEventListener('submit', (event) => {
+      handleCustomProviderFormSubmit(event);
+    });
+  }
+
   syncCustomProviderFormAvailability();
   updateCustomProviderOriginPreview();
-
-  if (!form || form.dataset.customFormBound === 'true') {
-    return;
-  }
-  form.dataset.customFormBound = 'true';
-
-  nameInput?.addEventListener('input', () => {
-    clearCustomProviderFormError();
-  });
-
-  urlInput?.addEventListener('input', () => {
-    clearCustomProviderFormError();
-    updateCustomProviderOriginPreview();
-  });
-
-  urlInput?.addEventListener('blur', () => {
-    if (!supportsScopedFrameRules()) {
-      return;
-    }
-    const raw = urlInput.value;
-    if (!raw || raw.trim().length === 0) {
-      return;
-    }
-    const check = validateCustomProviderUrl(raw);
-    if (!check.ok) {
-      setCustomProviderFormError(getCustomProviderUrlErrorMessage(check.reason), urlInput);
-    }
-  });
-
-  form.addEventListener('submit', (event) => {
-    handleCustomProviderFormSubmit(event);
-  });
 }
 
 function fitSelectWidth(select) {
@@ -624,6 +2362,17 @@ function updateShortcutHelperVisibility(isEnabled) {
 
 // T050: Initialize settings page
 async function init() {
+  editingCustomProviderId = null;
+  if (activeInlineEditState) {
+    activeInlineEditState.destroy();
+    activeInlineEditState = null;
+  }
+  if (addFormModelCombobox) {
+    addFormModelCombobox.destroy();
+    addFormModelCombobox = null;
+  }
+  modelCatalogCache.clear();
+  transientProbedOrigins.clear();
   await loadCustomProviders();
   await applyTheme();  // Apply theme first
   await initializeLanguage();  // Initialize language from user settings
@@ -721,13 +2470,26 @@ function createCustomProviderDeleteControlElement(provider) {
     event.stopPropagation();
   });
 
+  const isRowEditing = editingCustomProviderId === provider.id;
+
+  const editButton = document.createElement('button');
+  editButton.type = 'button';
+  editButton.className = 'btn-provider-icon btn-provider-edit';
+  editButton.dataset.action = 'edit-custom-provider';
+  editButton.dataset.providerId = provider.id;
+  const editLabel = t('ariaEditCustomProvider', provider.name);
+  editButton.setAttribute('aria-label', editLabel);
+  editButton.setAttribute('aria-expanded', isRowEditing ? 'true' : 'false');
+  editButton.title = editLabel;
+
   const deleteButton = document.createElement('button');
   deleteButton.type = 'button';
-  deleteButton.className = 'btn-provider-delete';
+  deleteButton.className = 'btn-provider-icon btn-provider-delete';
   deleteButton.dataset.action = 'delete-custom-provider';
   deleteButton.dataset.providerId = provider.id;
-  deleteButton.textContent = t('btnDelete');
-  deleteButton.setAttribute('aria-label', t('ariaDeleteCustomProvider', provider.name));
+  const deleteLabel = t('ariaDeleteCustomProvider', provider.name);
+  deleteButton.setAttribute('aria-label', deleteLabel);
+  deleteButton.title = deleteLabel;
 
   const confirmBox = document.createElement('div');
   confirmBox.className = 'custom-provider-delete-confirm';
@@ -751,9 +2513,20 @@ function createCustomProviderDeleteControlElement(provider) {
   cancelButton.dataset.providerId = provider.id;
   cancelButton.textContent = t('btnCancel');
 
+  editButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (editingCustomProviderId === provider.id) {
+      cancelEditingCustomProvider({ restoreFocus: true });
+    } else {
+      startEditingCustomProvider(provider.id);
+    }
+  });
+
   deleteButton.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
+    editButton.hidden = true;
     deleteButton.hidden = true;
     confirmBox.hidden = false;
     confirmButton.focus?.();
@@ -763,6 +2536,7 @@ function createCustomProviderDeleteControlElement(provider) {
     event.preventDefault();
     event.stopPropagation();
     confirmBox.hidden = true;
+    editButton.hidden = false;
     deleteButton.hidden = false;
     deleteButton.focus?.();
   });
@@ -782,7 +2556,7 @@ function createCustomProviderDeleteControlElement(provider) {
   });
 
   confirmBox.append(promptSpan, confirmButton, cancelButton);
-  group.append(deleteButton, confirmBox);
+  group.append(editButton, deleteButton, confirmBox);
   return group;
 }
 
@@ -792,16 +2566,25 @@ function createProviderListItemElement(
 ) {
   const isCustom = descriptor?.access === 'custom';
   const isEnabled = isEnabledPreference && hasAccess;
+  const isRowEditing = Boolean(
+    isCustom &&
+    editingCustomProviderId === provider.id &&
+    activeInlineEditState?.providerId === provider.id
+  );
+  const canDragRow = isEnabled && !isRowEditing;
 
   const item = document.createElement('div');
-  item.className = isEnabled ? 'provider-item draggable' : 'provider-item';
+  item.className = canDragRow ? 'provider-item draggable' : 'provider-item';
   item.dataset.providerId = provider.id;
   item.dataset.enabledPreference = String(isEnabledPreference);
   item.dataset.hasAccess = String(hasAccess);
   if (isCustom) {
     item.dataset.customProvider = 'true';
+    if (isRowEditing) {
+      item.dataset.editing = 'true';
+    }
   }
-  item.setAttribute('draggable', String(isEnabled));
+  item.setAttribute('draggable', String(canDragRow));
 
   const info = document.createElement('div');
   info.className = 'provider-info';
@@ -829,8 +2612,8 @@ function createProviderListItemElement(
 
   info.append(iconWrapper, nameSpan);
 
-  if (isCustom && descriptor.frameOrigins?.[0]) {
-    const origin = descriptor.frameOrigins[0];
+  const customOrigin = isCustom ? getCustomProviderOrigin(descriptor) : null;
+  if (customOrigin) {
     const originBadge = document.createElement('span');
     originBadge.className = 'provider-origin-badge';
     const shadow = originBadge.attachShadow({ mode: 'open' });
@@ -840,9 +2623,18 @@ function createProviderListItemElement(
     bdiEl.style.unicodeBidi = 'isolate';
     bdiEl.appendChild(document.createElement('slot'));
     shadow.appendChild(bdiEl);
-    originBadge.textContent = origin;
-    originBadge.title = origin;
+    originBadge.textContent = customOrigin;
+    originBadge.title = customOrigin;
     info.appendChild(originBadge);
+  }
+
+  if (isCustom && descriptor.customKind === 'api' && descriptor.apiConfig?.model) {
+    const modelBadge = document.createElement('span');
+    modelBadge.className = 'provider-model-badge';
+    modelBadge.dir = 'ltr';
+    modelBadge.textContent = descriptor.apiConfig.model;
+    modelBadge.title = descriptor.apiConfig.model;
+    info.appendChild(modelBadge);
   }
 
   const controls = document.createElement('div');
@@ -860,6 +2652,9 @@ function createProviderListItemElement(
   controls.appendChild(toggle);
 
   item.append(info, controls);
+  if (isRowEditing && activeInlineEditState?.formEl) {
+    item.appendChild(activeInlineEditState.formEl);
+  }
   return item;
 }
 
@@ -883,6 +2678,29 @@ export async function renderProviderList() {
     return (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0);
   });
 
+  // Capture focus state BEFORE creating items (which re-parents activeInlineEditState.formEl).
+  const activeElement = document.activeElement;
+  const preservedInlineFocus =
+    activeInlineEditState?.formEl && activeInlineEditState.formEl.contains(activeElement)
+      ? activeElement
+      : null;
+  const inlineSelectionStart =
+    preservedInlineFocus && typeof preservedInlineFocus.selectionStart === 'number'
+      ? preservedInlineFocus.selectionStart
+      : null;
+  const inlineSelectionEnd =
+    preservedInlineFocus && typeof preservedInlineFocus.selectionEnd === 'number'
+      ? preservedInlineFocus.selectionEnd
+      : null;
+  const activeControlAction =
+    !preservedInlineFocus && listContainer?.contains(activeElement)
+      ? activeElement?.dataset?.action || null
+      : null;
+  const activeControlProviderId =
+    !preservedInlineFocus && listContainer?.contains(activeElement)
+      ? activeElement?.dataset?.providerId || null
+      : null;
+
   const providerItems = sortedProviders.map((provider) => {
     const descriptor = getProviderDescriptor(provider.id);
     const isCustom = descriptor?.access === 'custom';
@@ -894,7 +2712,36 @@ export async function renderProviderList() {
       descriptor
     });
   });
+
   listContainer.replaceChildren(...providerItems);
+
+  if (preservedInlineFocus && listContainer.contains(preservedInlineFocus)) {
+    preservedInlineFocus.focus?.({ preventScroll: true });
+    if (document.activeElement !== preservedInlineFocus) {
+      preservedInlineFocus.focus?.();
+    }
+    if (
+      inlineSelectionStart !== null &&
+      inlineSelectionEnd !== null &&
+      typeof preservedInlineFocus.setSelectionRange === 'function'
+    ) {
+      try {
+        preservedInlineFocus.setSelectionRange(inlineSelectionStart, inlineSelectionEnd);
+      } catch {
+        // Non-selectable input types throw on setSelectionRange; ignore safely.
+      }
+    }
+  } else if (activeControlAction && activeControlProviderId) {
+    const replacement = Array.from(
+      listContainer.querySelectorAll(`[data-action="${activeControlAction}"]`)
+    ).find(
+      (el) =>
+        el.dataset.providerId === activeControlProviderId &&
+        !el.hidden &&
+        !el.closest('[hidden]')
+    );
+    replacement?.focus?.();
+  }
 
   // Add click listeners to toggles
   listContainer.querySelectorAll('.toggle-switch').forEach(toggle => {
@@ -970,6 +2817,11 @@ function setupStorageChangeListener() {
   }
 
   subscribeCustomProvidersChanged(() => {
+    if (editingCustomProviderId && !getProviderDescriptor(editingCustomProviderId)) {
+      cancelEditingCustomProvider({ restoreFocus: false });
+    } else {
+      syncCustomProviderFormAvailability();
+    }
     updateCustomProviderOriginPreview();
     renderProviderList().catch((error) => {
       console.error('Error syncing custom providers:', error);
@@ -1006,6 +2858,13 @@ function setupProviderDragAndDrop(container) {
 
   container.querySelectorAll('.provider-item.draggable').forEach(item => {
     item.addEventListener('dragstart', (e) => {
+      if (
+        editingCustomProviderId === item.dataset.providerId ||
+        e.target?.closest?.('.custom-provider-inline-edit, button, input, label, select')
+      ) {
+        e.preventDefault();
+        return;
+      }
       draggedItem = item;
       item.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
@@ -1112,19 +2971,29 @@ export async function toggleProvider(providerId) {
 
 // T056: Load and display data statistics
 async function loadDataStats() {
+  const statPromptsEl = document.getElementById('stat-prompts');
+  const statStorageEl = document.getElementById('stat-storage');
   try {
     const prompts = await getAllPrompts();
 
-    document.getElementById('stat-prompts').textContent = prompts.length;
+    if (statPromptsEl) {
+      statPromptsEl.textContent = prompts.length;
+    }
 
     // Estimate storage size
     const promptsSize = JSON.stringify(prompts).length;
     const sizeKB = Math.round(promptsSize / 1024);
-    document.getElementById('stat-storage').textContent = `~${sizeKB} KB`;
+    if (statStorageEl) {
+      statStorageEl.textContent = `~${sizeKB} KB`;
+    }
   } catch (error) {
     // Silently handle data stats errors
-    document.getElementById('stat-prompts').textContent = '0';
-    document.getElementById('stat-storage').textContent = '0 KB';
+    if (statPromptsEl) {
+      statPromptsEl.textContent = '0';
+    }
+    if (statStorageEl) {
+      statStorageEl.textContent = '0 KB';
+    }
   }
 }
 
@@ -1203,6 +3072,8 @@ function setupEventListeners() {
     translatePage();
     syncCustomProviderFormAvailability();
     updateCustomProviderOriginPreview();
+    addFormModelCombobox?.refreshTranslations();
+    activeInlineEditState?.refreshTranslations();
     await renderProviderList();
 
     // Show success message (now in the new language)
@@ -1808,15 +3679,22 @@ async function saveCustomEnterSettings() {
 // T073: Version Check Functions
 async function loadVersionDisplay(shouldCheckForUpdates = true) {
   const versionInfo = await loadVersionInfo();
+  const versionEl = document.getElementById('version');
+  const commitHashEl = document.getElementById('commit-hash');
   if (!versionInfo) {
-    document.getElementById('version').textContent = t('msgVersionUnknown');
-    document.getElementById('commit-hash').textContent = '';
+    if (versionEl) {
+      versionEl.textContent = t('msgVersionUnknown');
+    }
+    if (commitHashEl) {
+      commitHashEl.textContent = '';
+    }
     return;
   }
 
-  document.getElementById('version').textContent = t('labelVersion', versionInfo.version);
+  if (versionEl) {
+    versionEl.textContent = t('labelVersion', versionInfo.version);
+  }
   // Hide commit-hash element since we no longer use it
-  const commitHashEl = document.getElementById('commit-hash');
   if (commitHashEl) {
     commitHashEl.style.display = 'none';
   }

@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "Для включения $PROVIDER$ требуется доступ к сайту.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "Не удалось запросить доступ к сайту для $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "Горячие клавиши включены"
@@ -813,7 +821,9 @@
   "switchToPopupModeTitle": {
     "message": "Переключиться в режим всплывающего окна"
   },
-  "openProviderTopLevelTitle": { "message": "Открыть в новой вкладке" },
+  "openProviderTopLevelTitle": {
+    "message": "Открыть в новой вкладке"
+  },
   "msgOpenModeUpdated": {
     "message": "Режим открытия обновлен"
   },
@@ -1034,5 +1044,89 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "Удалить $1"
+  },
+  "labelCustomProviderKind": {
+    "message": "Тип подключения"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "Веб-интерфейс (встроить сайт чата)"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "OpenAI-совместимый API"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "Базовый URL или URL Chat Completions"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1 или http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "ID модели"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini или qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "API-ключ (необязательно для локальных серверов)"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-... (хранится только на этом устройстве)"
+  },
+  "btnShowApiKey": {
+    "message": "Показать"
+  },
+  "btnHideApiKey": {
+    "message": "Скрыть"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize запросит доступ к $1 · Эндпоинт: $2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "API-ключи хранятся локально только на этом устройстве, никогда не синхронизируются и не экспортируются, и отправляются исключительно на указанный вами адрес."
+  },
+  "errCustomModelRequired": {
+    "message": "Введите ID модели (например, gpt-4o-mini или qwen2.5:14b)."
+  },
+  "errCustomModelTooLong": {
+    "message": "ID модели должен содержать не более 200 символов."
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "API-ключ превышает максимально допустимую длину."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Редактировать $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Редактировать пользовательский ИИ"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Сохранить изменения"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Оставьте пустым, чтобы сохранить текущий ключ, или введите новый"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Удалить сохранённый API-ключ"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "Пользовательский ИИ обновлён: $1"
+  },
+  "btnLoadModels": {
+    "message": "Загрузить модели"
+  },
+  "btnRefreshModels": {
+    "message": "Обновить"
+  },
+  "msgModelsLoading": {
+    "message": "Загрузка…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "Моделей: $1"
+  },
+  "msgModelsNoMatch": {
+    "message": "Совпадений нет — будет использован введённый ID модели"
+  },
+  "errModelsLoadFailed": {
+    "message": "Не удалось загрузить список моделей ($1). Вы можете ввести ID модели вручную."
   }
 }

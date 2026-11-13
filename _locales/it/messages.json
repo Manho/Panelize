@@ -292,11 +292,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "L’accesso al sito è necessario per abilitare $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "Impossibile richiedere l’accesso al sito per $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "Scorciatoia da tastiera attivata"
@@ -813,7 +821,9 @@
   "switchToPopupModeTitle": {
     "message": "Passa alla modalità finestra popup"
   },
-  "openProviderTopLevelTitle": { "message": "Apri in una nuova scheda" },
+  "openProviderTopLevelTitle": {
+    "message": "Apri in una nuova scheda"
+  },
   "msgOpenModeUpdated": {
     "message": "Modalità di apertura aggiornata"
   },
@@ -1034,5 +1044,89 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "Elimina $1"
+  },
+  "labelCustomProviderKind": {
+    "message": "Tipo di connessione"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "Interfaccia web (incorpora sito di chat)"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "API compatibile con OpenAI"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "URL di base o URL Chat Completions"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1 o http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "ID modello"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini o qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "Chiave API (facoltativa per endpoint locali)"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-... (salvata solo su questo dispositivo)"
+  },
+  "btnShowApiKey": {
+    "message": "Mostra"
+  },
+  "btnHideApiKey": {
+    "message": "Nascondi"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize richiederà l’accesso a $1 · Endpoint: $2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "Le chiavi API restano salvate localmente solo su questo dispositivo, non vengono mai sincronizzate né esportate e vengono inviate esclusivamente all’endpoint configurato."
+  },
+  "errCustomModelRequired": {
+    "message": "Inserisci un ID modello (ad esempio, gpt-4o-mini o qwen2.5:14b)."
+  },
+  "errCustomModelTooLong": {
+    "message": "L’ID modello deve contenere al massimo 200 caratteri."
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "La chiave API supera la lunghezza massima consentita."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Modifica $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Modifica IA personalizzata"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Salva modifiche"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Lascia vuoto per mantenere la chiave salvata o inseriscine una nuova"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Rimuovi chiave API salvata"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "IA personalizzata aggiornata: $1"
+  },
+  "btnLoadModels": {
+    "message": "Carica modelli"
+  },
+  "btnRefreshModels": {
+    "message": "Aggiorna"
+  },
+  "msgModelsLoading": {
+    "message": "Caricamento…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 modelli"
+  },
+  "msgModelsNoMatch": {
+    "message": "Nessun modello corrispondente — verrà usato l’ID digitato"
+  },
+  "errModelsLoadFailed": {
+    "message": "Impossibile caricare l’elenco dei modelli ($1). Puoi comunque inserire un ID modello manualmente."
   }
 }

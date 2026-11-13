@@ -153,7 +153,40 @@ function isManagedCustomScriptId(id) {
   return typeof id === 'string' && CUSTOM_PROVIDER_SCRIPT_ID_PATTERN.test(id);
 }
 
+function createCustomApiOriginRule(id, urlFilter) {
+  const extensionId = typeof chrome !== 'undefined' && typeof chrome?.runtime?.id === 'string'
+    ? chrome.runtime.id
+    : '';
+  return {
+    id,
+    priority: 1,
+    action: {
+      type: 'modifyHeaders',
+      requestHeaders: [
+        { header: 'Origin', operation: 'remove' }
+      ]
+    },
+    condition: {
+      urlFilter,
+      initiatorDomains: [extensionId],
+      resourceTypes: ['xmlhttprequest']
+    }
+  };
+}
+
 function createCustomProviderConfig(descriptor) {
+  if (descriptor.customKind === 'api') {
+    return {
+      origins: descriptor.permissionOrigins,
+      contentScript: null,
+      frameRule: null,
+      apiOriginRule: createCustomApiOriginRule(
+        descriptor.apiOriginRule.id,
+        descriptor.apiOriginRule.urlFilter
+      )
+    };
+  }
+
   return {
     origins: descriptor.permissionOrigins,
     contentScript: {
@@ -165,7 +198,8 @@ function createCustomProviderConfig(descriptor) {
       world: 'ISOLATED',
       runAt: 'document_start'
     },
-    frameRule: createFrameRule(descriptor.frameRule.id, descriptor.frameRule.urlFilter)
+    frameRule: createFrameRule(descriptor.frameRule.id, descriptor.frameRule.urlFilter),
+    apiOriginRule: null
   };
 }
 
@@ -280,8 +314,11 @@ async function syncContentScripts(
   );
 
   const desiredOptionalScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
+  const desiredCustomScripts = desiredCustomConfigs
+    .map(({ contentScript }) => contentScript)
+    .filter(Boolean);
   const desiredCustomById = new Map(
-    desiredCustomConfigs.map(({ contentScript }) => [contentScript.id, contentScript])
+    desiredCustomScripts.map((contentScript) => [contentScript.id, contentScript])
   );
 
   const registeredScripts = await chrome.scripting.getRegisteredContentScripts();
@@ -309,7 +346,7 @@ async function syncContentScripts(
 
   const scriptsToRegister = [
     ...desiredConfigs.map(({ contentScript }) => contentScript),
-    ...desiredCustomConfigs.map(({ contentScript }) => contentScript)
+    ...desiredCustomScripts
   ].filter(({ id }) => !unchangedIds.has(id));
 
   if (scriptsToRegister.length > 0) {
@@ -326,6 +363,7 @@ async function syncFrameRules(
     optionalRules: desiredConfigs.map(({ frameRule }) => frameRule).filter(Boolean),
     optionalRuleIds: allConfigs.map(({ frameRule }) => frameRule?.id).filter(Number.isInteger),
     customRules: customConfigs.map(({ frameRule }) => frameRule).filter(Boolean),
+    customApiOriginRules: customConfigs.map(({ apiOriginRule }) => apiOriginRule).filter(Boolean),
     isManagedCustomRuleId: reconcileCustom ? isManagedCustomRuleId : () => false
   });
 }

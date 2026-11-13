@@ -66,8 +66,25 @@ export function getProviderFrameOrigins(providerId) {
  * @param {unknown} origin - `MessageEvent.origin`.
  * @returns {boolean}
  */
+function isMatchingApiPanelUrl(descriptor, rawUrl) {
+  if (!descriptor || typeof rawUrl !== 'string') {
+    return false;
+  }
+  const match = /^(chrome-extension:\/\/[a-z0-9_-]+)\/api-panel\/api-panel\.html(?:\?[^#]*)?$/i.exec(
+    rawUrl
+  );
+  if (!match) {
+    return false;
+  }
+  return descriptor.frameOrigins.includes(match[1]);
+}
+
 export function isProviderFrameOrigin(providerId, origin) {
-  return typeof origin === 'string' && getProviderFrameOrigins(providerId).includes(origin);
+  return (
+    typeof origin === 'string' &&
+    origin !== 'null' &&
+    getProviderFrameOrigins(providerId).includes(origin)
+  );
 }
 
 /**
@@ -89,6 +106,9 @@ export function findMessageSourcePanel(panels, event) {
 export function isProviderAllowedUrl(providerId, rawUrl) {
   const descriptor = getProviderDescriptor(providerId);
   if (descriptor?.access === 'custom') {
+    if (descriptor.customKind === 'api') {
+      return isMatchingApiPanelUrl(descriptor, rawUrl);
+    }
     const url = parseCustomHttpOrHttpsUrl(rawUrl);
     return hasExactCustomProviderOrigin(descriptor, url);
   }
@@ -112,6 +132,9 @@ export function getProviderFallbackUrl(provider, providerMode = null) {
 
   const descriptor = getProviderDescriptor(provider.id);
   if (descriptor?.access === 'custom') {
+    if (descriptor.customKind === 'api') {
+      return '';
+    }
     const candidate =
       provider.topLevelUrl || provider.url || descriptor.topLevelUrl || descriptor.url || '';
     const parsed = parseCustomHttpOrHttpsUrl(candidate);
@@ -127,6 +150,9 @@ export function getProviderFallbackUrl(provider, providerMode = null) {
 export function isProviderCurrentUrl(providerId, rawUrl) {
   const descriptor = getProviderDescriptor(providerId);
   if (descriptor?.access === 'custom') {
+    if (descriptor.customKind === 'api') {
+      return false;
+    }
     const url = parseCustomHttpOrHttpsUrl(rawUrl);
     return hasExactCustomProviderOrigin(descriptor, url);
   }

@@ -346,11 +346,19 @@
   },
   "msgProviderPermissionRequired": {
     "message": "Site access is required to enable $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgProviderPermissionRequestFailed": {
     "message": "Could not request site access for $PROVIDER$.",
-    "placeholders": { "provider": { "content": "$1" } }
+    "placeholders": {
+      "provider": {
+        "content": "$1"
+      }
+    }
   },
   "msgShortcutEnabled": {
     "message": "Keyboard shortcut enabled"
@@ -1051,5 +1059,89 @@
   },
   "ariaDeleteCustomProvider": {
     "message": "Delete $1"
+  },
+  "labelCustomProviderKind": {
+    "message": "Connection type"
+  },
+  "optionCustomProviderKindWeb": {
+    "message": "Web UI (embed chat site)"
+  },
+  "optionCustomProviderKindApi": {
+    "message": "OpenAI-compatible API"
+  },
+  "labelCustomApiEndpointUrl": {
+    "message": "Base URL or Chat Completions URL"
+  },
+  "placeholderCustomApiEndpointUrl": {
+    "message": "https://api.openai.com/v1 or http://localhost:11434/v1"
+  },
+  "labelCustomProviderModel": {
+    "message": "Model ID"
+  },
+  "placeholderCustomProviderModel": {
+    "message": "gpt-4o-mini or qwen2.5:14b"
+  },
+  "labelCustomProviderApiKey": {
+    "message": "API Key (optional for local endpoints)"
+  },
+  "placeholderCustomProviderApiKey": {
+    "message": "sk-... (stored on this device only)"
+  },
+  "btnShowApiKey": {
+    "message": "Show"
+  },
+  "btnHideApiKey": {
+    "message": "Hide"
+  },
+  "msgCustomApiEndpointPreview": {
+    "message": "Panelize will request access to $1 · Endpoint: $2"
+  },
+  "noteCustomApiLocalOnly": {
+    "message": "API keys stay locally on this device only, are never synced or exported, and are sent solely to your configured endpoint."
+  },
+  "errCustomModelRequired": {
+    "message": "Enter a model ID (for example, gpt-4o-mini or qwen2.5:14b)."
+  },
+  "errCustomModelTooLong": {
+    "message": "Model ID must be 200 characters or fewer."
+  },
+  "errCustomApiKeyTooLong": {
+    "message": "API key exceeds the maximum allowed length."
+  },
+  "ariaEditCustomProvider": {
+    "message": "Edit $1"
+  },
+  "headingEditCustomProvider": {
+    "message": "Edit custom AI"
+  },
+  "btnSaveCustomProvider": {
+    "message": "Save changes"
+  },
+  "placeholderCustomProviderApiKeyKeepExisting": {
+    "message": "Leave blank to keep saved key, or enter a new key"
+  },
+  "labelClearSavedApiKey": {
+    "message": "Remove saved API key"
+  },
+  "msgCustomProviderUpdated": {
+    "message": "Updated custom AI: $1"
+  },
+  "btnLoadModels": {
+    "message": "Load models"
+  },
+  "btnRefreshModels": {
+    "message": "Refresh"
+  },
+  "msgModelsLoading": {
+    "message": "Loading…"
+  },
+  "msgModelsLoadedCount": {
+    "message": "$1 models"
+  },
+  "msgModelsNoMatch": {
+    "message": "No matching models — press Save/Add to use your typed Model ID"
+  },
+  "errModelsLoadFailed": {
+    "message": "Could not load model list ($1). You can still type a Model ID manually."
   }
 }

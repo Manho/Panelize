@@ -22,6 +22,7 @@ export const BUMP_COMMIT_FILES = [
 
 export const PACKAGE_INCLUDE_PATHS = [
   '_locales',
+  'api-panel',
   'background',
   'content-scripts',
   'data',
