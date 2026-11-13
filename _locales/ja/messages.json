@@ -3,7 +3,7 @@
     "message": "Panelize - 複数の AI チャットを並べて比較"
   },
   "extensionDescription": {
-    "message": "複数の AI チャットに一度に質問して、回答を並べて比較。自分のアカウントでそのまま使えて、無料・API キー不要。"
+    "message": "複数の AI チャットに一度に質問し回答を並べて比較。既存ログインで無料・API キー不要。任意の AI サイトや API も追加可能。"
   },
   "commandOpenSidebar": {
     "message": "デフォルトプロバイダーで Panelize を開く"
@@ -84,7 +84,7 @@
     "message": "有効なプロバイダー"
   },
   "descEnabledProviders": {
-    "message": "Panelize に表示する AI プロバイダーを選択してください"
+    "message": "内蔵プロバイダーの有効化・並び替え、または任意の AI サイト（Perplexity、Poe など）や OpenAI 互換 API を下から追加できます。"
   },
   "sectionKeyboardShortcuts": {
     "message": "キーボードショートカット"
@@ -1058,7 +1058,7 @@
     "message": "ベースURLまたはChat Completions URL"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 または http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 または http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "モデルID"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "モデル一覧を取得できませんでした（$1）。モデルIDは手動で直接入力できます。"
+  },
+  "descAddCustomProviderIntro": {
+    "message": "使いたい AI が上にありませんか？ほとんどの AI チャットサイトや OpenAI 互換 API をここから直接追加できます。"
+  },
+  "linkCustomProviderGuide": {
+    "message": "セットアップガイド ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "AI ウェブサイト"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "ローカル / セルフホスト Web"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "AI ウェブサイトの URL"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "ローカルまたはセルフホスト URL"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 または http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "任意の AI チャットサイトの URL（例: https://www.perplexity.ai、https://chat.mistral.ai、https://poe.com、https://muse.ai）を貼り付けて並べて比較できます。"
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "localhost、LAN、社内ドメインで動作するセルフホストのチャット UI（Open WebUI、LibreChat、LobeChat、Dify など）を埋め込めます。"
+  },
+  "hintCustomProviderModeApi": {
+    "message": "ローカルサーバー（CORS 設定不要の Ollama、LM Studio、vLLM）やクラウド API（OpenRouter、DeepSeek、OpenAI）に接続し、「モデルを読み込む」で一覧を取得できます。"
+  },
+  "labelCustomProviderExamples": {
+    "message": "クイック入力:"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama（ローカル）"
+  },
+  "menuAddCustomProvider": {
+    "message": "カスタム AI を追加 / その他のプロバイダー…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity、Poe、Ollama、API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "有効な AI はすべて開いています"
   }
 }

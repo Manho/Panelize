@@ -3,7 +3,7 @@
     "message": "Panelize - 多个 AI 并排对比"
   },
   "extensionDescription": {
-    "message": "一次提问，同时问多个 AI 聊天助手，回答并排对比。直接使用你自己的账号，免费，无需 API Key。"
+    "message": "一次提问，并排对比多个AI聊天助手。内置平台直连自有账号、免费免API Key，并支持添加自定义AI网站与API接口。"
   },
   "commandOpenSidebar": {
     "message": "打开 Panelize"
@@ -84,7 +84,7 @@
     "message": "已启用的提供商"
   },
   "descEnabledProviders": {
-    "message": "选择在 Panelize 中显示哪些 AI 提供商"
+    "message": "启用或拖拽排序内置平台，也可在下方添加任意AI网站（如Perplexity、秘塔、Poe）或OpenAI兼容API。"
   },
   "sectionKeyboardShortcuts": {
     "message": "键盘快捷键"
@@ -1052,7 +1052,7 @@
     "message": "基础URL或Chat Completions接口地址"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1或http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1或http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "模型ID"
@@ -1122,5 +1122,62 @@
   },
   "errModelsLoadFailed": {
     "message": "无法加载模型列表（$1），你仍可直接手动输入模型ID。"
+  },
+  "descAddCustomProviderIntro": {
+    "message": "上面没有你想用的AI？绝大多数AI网站和OpenAI兼容API都可以在这里直接添加。"
+  },
+  "linkCustomProviderGuide": {
+    "message": "查看接入指南 ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "AI网站"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "本地/自建网页端"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "AI网站地址"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "本地或自建地址"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000或http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "直接粘贴任意AI对话网站地址（如https://www.perplexity.ai、https://metaso.cn、https://poe.com、https://muse.ai），无需等待内置更新即可并排对比。"
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "嵌入运行在本机localhost、局域网或团队域名的自部署聊天界面（如Open WebUI、LibreChat、LobeChat、Dify）。"
+  },
+  "hintCustomProviderModeApi": {
+    "message": "连接本地模型服务（Ollama免配跨域直连、LM Studio、vLLM）或云端接口（OpenRouter、DeepSeek、硅基流动等），可点「加载模型」自动拉取列表。"
+  },
+  "labelCustomProviderExamples": {
+    "message": "快速填入："
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama（本地）"
+  },
+  "menuAddCustomProvider": {
+    "message": "添加自定义AI / 更多平台…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity、秘塔、Ollama、API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "已启用的AI均已打开"
   }
 }

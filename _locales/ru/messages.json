@@ -3,7 +3,7 @@
     "message": "Panelize - сравнивайте ИИ-чатботы рядом"
   },
   "extensionDescription": {
-    "message": "Задайте вопрос нескольким ИИ-чатботам сразу и сравните ответы рядом. Со своими аккаунтами. Бесплатно, без API-ключей."
+    "message": "Сравнивайте ответы ИИ-чатботов рядом через свои аккаунты — бесплатно и без API-ключей. Добавляйте свои ИИ-сайты и API."
   },
   "commandOpenSidebar": {
     "message": "Открыть Panelize с провайдером по умолчанию"
@@ -84,7 +84,7 @@
     "message": "Включённые провайдеры"
   },
   "descEnabledProviders": {
-    "message": "Выберите, какие провайдеры ИИ отображаются в Panelize"
+    "message": "Включайте и сортируйте встроенные провайдеры или добавьте ниже почти любой ИИ-сайт (например, Perplexity, Poe) либо OpenAI-совместимый API."
   },
   "sectionKeyboardShortcuts": {
     "message": "Горячие клавиши"
@@ -1058,7 +1058,7 @@
     "message": "Базовый URL или URL Chat Completions"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 или http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 или http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "ID модели"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "Не удалось загрузить список моделей ($1). Вы можете ввести ID модели вручную."
+  },
+  "descAddCustomProviderIntro": {
+    "message": "Не нашли нужный ИИ выше? Добавьте почти любой сайт ИИ-чата или OpenAI-совместимый API прямо здесь."
+  },
+  "linkCustomProviderGuide": {
+    "message": "Руководство по настройке ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "Сайт ИИ"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "Локальный / свой веб-интерфейс"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "URL сайта ИИ"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "Локальный или корпоративный URL"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 или http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "Вставьте адрес почти любого ИИ-чата (например, https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) для сравнения рядом."
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "Встраивайте собственные чат-приложения на localhost, в LAN или на домене команды (например, Open WebUI, LibreChat, LobeChat, Dify)."
+  },
+  "hintCustomProviderModeApi": {
+    "message": "Подключайте локальные серверы (Ollama работает без настройки CORS, LM Studio, vLLM) или облачные API (OpenRouter, DeepSeek, OpenAI) и нажмите «Загрузить модели»."
+  },
+  "labelCustomProviderExamples": {
+    "message": "Быстрое заполнение:"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama (локально)"
+  },
+  "menuAddCustomProvider": {
+    "message": "Добавить свой ИИ / Ещё провайдеры…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity, Poe, Ollama, API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "Все включённые ИИ уже открыты"
   }
 }

@@ -3,7 +3,7 @@
     "message": "Panelize - Compara chatbots de IA lado a lado"
   },
   "extensionDescription": {
-    "message": "Pregunta a varios chatbots de IA a la vez y compara sus respuestas lado a lado. Usa tus propias cuentas. Gratis y sin claves API."
+    "message": "Compara chatbots de IA lado a lado con tus cuentas: gratis y sin claves API. Añade también tus propios sitios web y APIs de IA."
   },
   "commandOpenSidebar": {
     "message": "Abrir Panelize con proveedor predeterminado"
@@ -84,7 +84,7 @@
     "message": "Proveedores Habilitados"
   },
   "descEnabledProviders": {
-    "message": "Selecciona qué proveedores de IA aparecen en Panelize"
+    "message": "Activa o reordena los proveedores integrados, o añade casi cualquier web de IA (p. ej., Perplexity, Poe) o API compatible con OpenAI abajo."
   },
   "sectionKeyboardShortcuts": {
     "message": "Atajos de Teclado"
@@ -1058,7 +1058,7 @@
     "message": "URL base o URL de Chat Completions"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 o http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 o http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "ID del modelo"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "No se pudo cargar la lista de modelos ($1). Puedes escribir el ID del modelo manualmente."
+  },
+  "descAddCustomProviderIntro": {
+    "message": "¿No ves tu IA favorita arriba? Añade casi cualquier sitio web de chat de IA o API compatible con OpenAI aquí mismo."
+  },
+  "linkCustomProviderGuide": {
+    "message": "Guía de configuración ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "Sitio web de IA"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "Web local / autoalojada"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "URL del sitio web de IA"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "URL local o autoalojada"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 o http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "Pega casi cualquier sitio de chat de IA (p. ej., https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) para compararlos lado a lado."
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "Incrusta apps de chat autoalojadas en localhost, LAN o el dominio de tu equipo (p. ej., Open WebUI, LibreChat, LobeChat, Dify)."
+  },
+  "hintCustomProviderModeApi": {
+    "message": "Conecta servidores locales (Ollama funciona sin configurar CORS, LM Studio, vLLM) o APIs en la nube (OpenRouter, DeepSeek, OpenAI) y haz clic en «Cargar modelos»."
+  },
+  "labelCustomProviderExamples": {
+    "message": "Relleno rápido:"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama (local)"
+  },
+  "menuAddCustomProvider": {
+    "message": "Añadir IA personalizada / Más proveedores…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity, Poe, Ollama, API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "Todas las IA activadas ya están abiertas"
   }
 }

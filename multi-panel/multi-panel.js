@@ -3694,11 +3694,161 @@ function closePromptModal() {
 }
 
 // ===== Provider Switcher =====
+const OPTIONS_PAGE_PATH = 'options/options.html';
+const CUSTOM_PROVIDER_SETTINGS_HASH = '#custom-provider-card';
+
+function isOptionsPageUrl(candidateUrl, optionsBaseUrl) {
+  return (
+    typeof candidateUrl === 'string' &&
+    (candidateUrl === optionsBaseUrl ||
+      candidateUrl.startsWith(`${optionsBaseUrl}#`) ||
+      candidateUrl.startsWith(`${optionsBaseUrl}?`))
+  );
+}
+
+export async function openCustomProviderSettings() {
+  const optionsBaseUrl = typeof chrome?.runtime?.getURL === 'function'
+    ? chrome.runtime.getURL(OPTIONS_PAGE_PATH)
+    : OPTIONS_PAGE_PATH;
+  const targetUrl = `${optionsBaseUrl}${CUSTOM_PROVIDER_SETTINGS_HASH}`;
+
+  if (typeof chrome?.tabs?.update === 'function') {
+    let existingTab = null;
+
+    if (typeof chrome?.runtime?.getContexts === 'function') {
+      try {
+        const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+        const match = Array.isArray(contexts)
+          ? contexts.find(
+              (ctx) =>
+                ctx &&
+                ctx.frameId === 0 &&
+                typeof ctx.tabId === 'number' &&
+                ctx.tabId >= 0 &&
+                isOptionsPageUrl(ctx.documentUrl, optionsBaseUrl)
+            )
+          : null;
+        if (match) {
+          existingTab = {
+            id: match.tabId,
+            windowId: typeof match.windowId === 'number' && match.windowId >= 0 ? match.windowId : null
+          };
+        }
+      } catch {
+        existingTab = null;
+      }
+    }
+
+    if (!existingTab && typeof chrome?.tabs?.query === 'function') {
+      try {
+        const queriedByUrl = await chrome.tabs.query({ url: `${optionsBaseUrl}*` });
+        const matchedTab = Array.isArray(queriedByUrl)
+          ? queriedByUrl.find(
+              (tab) =>
+                tab &&
+                tab.id != null &&
+                (typeof tab.url !== 'string' || isOptionsPageUrl(tab.url, optionsBaseUrl))
+            )
+          : null;
+        if (matchedTab) {
+          existingTab = { id: matchedTab.id, windowId: matchedTab.windowId ?? null };
+        }
+      } catch {
+        existingTab = null;
+      }
+    }
+
+    if (existingTab) {
+      try {
+        await chrome.tabs.update(existingTab.id, {
+          url: targetUrl,
+          active: true
+        });
+        if (existingTab.windowId != null && typeof chrome?.windows?.update === 'function') {
+          try {
+            await chrome.windows.update(existingTab.windowId, { focused: true });
+          } catch {
+            // Focusing the browser window is best-effort
+          }
+        }
+        return;
+      } catch {
+        // Fall back to tabs.create or openOptionsPage below
+      }
+    }
+  }
+
+  if (typeof chrome?.tabs?.create === 'function') {
+    await chrome.tabs.create({ url: targetUrl });
+    return;
+  }
+
+  if (typeof chrome?.runtime?.openOptionsPage === 'function') {
+    await chrome.runtime.openOptionsPage();
+  }
+}
+
+function appendCustomAiMenuFooter(menu, onDismiss) {
+  const divider = document.createElement('div');
+  divider.className = 'menu-custom-ai-divider';
+  divider.setAttribute('role', 'separator');
+
+  const actionBtn = document.createElement('button');
+  actionBtn.type = 'button';
+  actionBtn.className = 'menu-custom-ai-action';
+
+  const iconTemplate = document.createElement('template');
+  iconTemplate.innerHTML = '<span class="material-symbols-outlined menu-custom-ai-icon" aria-hidden="true">add</span>';
+  const iconEl = iconTemplate.content.firstElementChild;
+
+  const textWrap = document.createElement('span');
+  textWrap.className = 'menu-custom-ai-text';
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'menu-custom-ai-label';
+  labelSpan.textContent = getLocalizedText(
+    'menuAddCustomProvider',
+    'Add custom AI / More providers…'
+  );
+
+  const hintSpan = document.createElement('span');
+  hintSpan.className = 'menu-custom-ai-hint';
+  hintSpan.textContent = getLocalizedText(
+    'menuAddCustomProviderHint',
+    'Perplexity, Poe, Ollama, API…'
+  );
+
+  textWrap.append(labelSpan, hintSpan);
+  actionBtn.append(iconEl, textWrap);
+  actionBtn.addEventListener('click', () => {
+    onDismiss();
+    void openCustomProviderSettings();
+  });
+
+  menu.append(divider, actionBtn);
+}
+
+function clampMenuHorizontalPosition(menu, anchorLeft) {
+  if (typeof window === 'undefined' || !(window.innerWidth > 0)) {
+    return;
+  }
+  const menuRect = menu.getBoundingClientRect();
+  if (!(menuRect.width > 0)) {
+    return;
+  }
+  if (anchorLeft + menuRect.width > window.innerWidth - 8) {
+    const clampedLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+    menu.style.left = `${clampedLeft}px`;
+  }
+}
+
 async function showProviderSwitcher(panelId) {
   const enabledProviders = await getEnabledProviders();
   const panel = panels.find(p => p.id === panelId);
   if (!panel) return;
   const palette = getDropdownThemePalette();
+
+  document.querySelectorAll('.provider-switcher-menu').forEach((existing) => existing.remove());
 
   // Create a simple dropdown menu
   const menu = document.createElement('div');
@@ -3740,6 +3890,16 @@ async function showProviderSwitcher(panelId) {
     menu.appendChild(item);
   });
 
+  let closeMenu = null;
+  const dismissMenu = () => {
+    menu.remove();
+    if (closeMenu) {
+      document.removeEventListener('click', closeMenu);
+    }
+  };
+
+  appendCustomAiMenuFooter(menu, dismissMenu);
+
   // Position menu near the panel
   const panelEl = document.getElementById(panelId);
   const rect = panelEl.querySelector('.switch-provider-btn').getBoundingClientRect();
@@ -3747,12 +3907,13 @@ async function showProviderSwitcher(panelId) {
   menu.style.left = rect.left + 'px';
 
   document.body.appendChild(menu);
+  clampMenuHorizontalPosition(menu, rect.left);
 
   // Handle item clicks
   menu.querySelectorAll('.provider-switcher-item').forEach(item => {
     item.addEventListener('click', () => {
       switchPanelProvider(panelId, item.dataset.providerId);
-      menu.remove();
+      dismissMenu();
     });
 
     item.addEventListener('mouseenter', () => {
@@ -3777,10 +3938,9 @@ async function showProviderSwitcher(panelId) {
   });
 
   // Close on outside click
-  const closeMenu = (e) => {
+  closeMenu = (e) => {
     if (!menu.contains(e.target)) {
-      menu.remove();
-      document.removeEventListener('click', closeMenu);
+      dismissMenu();
     }
   };
   setTimeout(() => document.addEventListener('click', closeMenu), 0);
@@ -3796,10 +3956,7 @@ async function showAddPanelMenu() {
   const usedProviders = panels.map(p => p.providerId);
   const availableProviders = enabledProviders.filter(p => !usedProviders.includes(p.id));
 
-  if (availableProviders.length === 0) {
-    showToast('All providers are already in use');
-    return;
-  }
+  document.querySelectorAll('.add-panel-menu').forEach((existing) => existing.remove());
 
   const btn = document.getElementById('add-panel-btn');
   const rect = btn.getBoundingClientRect();
@@ -3820,36 +3977,58 @@ async function showAddPanelMenu() {
     padding: 8px 0;
   `;
 
-  availableProviders.forEach(provider => {
-    const item = document.createElement('div');
-    item.className = 'add-panel-item';
-    item.dataset.providerId = provider.id;
-    item.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 16px;
-      cursor: pointer;
-      font-size: 14px;
-      color: ${palette.menuText};
-    `;
+  if (availableProviders.length === 0) {
+    const emptyStatus = document.createElement('div');
+    emptyStatus.className = 'menu-all-providers-open';
+    emptyStatus.setAttribute('role', 'status');
+    emptyStatus.textContent = getLocalizedText(
+      'menuAllEnabledProvidersOpen',
+      'All enabled AIs are already open'
+    );
+    menu.appendChild(emptyStatus);
+  } else {
+    availableProviders.forEach(provider => {
+      const item = document.createElement('div');
+      item.className = 'add-panel-item';
+      item.dataset.providerId = provider.id;
+      item.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        cursor: pointer;
+        font-size: 14px;
+        color: ${palette.menuText};
+      `;
 
-    const icon = createProviderIconImage(provider);
-    icon.style.cssText = 'width: 20px; height: 20px;';
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = provider.name;
+      const icon = createProviderIconImage(provider);
+      icon.style.cssText = 'width: 20px; height: 20px;';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = provider.name;
 
-    item.append(icon, nameSpan);
-    appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
-    menu.appendChild(item);
-  });
+      item.append(icon, nameSpan);
+      appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
+      menu.appendChild(item);
+    });
+  }
+
+  let closeMenu = null;
+  const dismissMenu = () => {
+    menu.remove();
+    if (closeMenu) {
+      document.removeEventListener('click', closeMenu);
+    }
+  };
+
+  appendCustomAiMenuFooter(menu, dismissMenu);
 
   document.body.appendChild(menu);
+  clampMenuHorizontalPosition(menu, rect.left);
 
   menu.querySelectorAll('.add-panel-item').forEach(item => {
     item.addEventListener('click', () => {
       addPanel(item.dataset.providerId);
-      menu.remove();
+      dismissMenu();
     });
 
     item.addEventListener('mouseenter', () => {
@@ -3862,10 +4041,9 @@ async function showAddPanelMenu() {
     });
   });
 
-  const closeMenu = (e) => {
+  closeMenu = (e) => {
     if (!menu.contains(e.target)) {
-      menu.remove();
-      document.removeEventListener('click', closeMenu);
+      dismissMenu();
     }
   };
   setTimeout(() => document.addEventListener('click', closeMenu), 0);
