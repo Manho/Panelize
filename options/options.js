@@ -109,6 +109,32 @@ export const CUSTOM_PROVIDER_MODE_CONFIG = Object.freeze({
         name: 'HuggingChat',
         url: 'https://huggingface.co/chat'
       })
+    ]),
+    examplesZhCn: Object.freeze([
+      Object.freeze({
+        id: 'perplexity',
+        label: 'Perplexity',
+        name: 'Perplexity',
+        url: 'https://www.perplexity.ai'
+      }),
+      Object.freeze({
+        id: 'metaso',
+        label: '秘塔AI搜索',
+        name: '秘塔AI搜索',
+        url: 'https://metaso.cn'
+      }),
+      Object.freeze({
+        id: 'poe',
+        label: 'Poe',
+        name: 'Poe',
+        url: 'https://poe.com'
+      }),
+      Object.freeze({
+        id: 'mistral',
+        label: 'Mistral Le Chat',
+        name: 'Mistral',
+        url: 'https://chat.mistral.ai'
+      })
     ])
   }),
   'web-local': Object.freeze({
@@ -120,7 +146,7 @@ export const CUSTOM_PROVIDER_MODE_CONFIG = Object.freeze({
     urlPlaceholderFallback: 'http://localhost:3000 or http://127.0.0.1:8080',
     modeHintKey: 'hintCustomProviderModeWebLocal',
     modeHintFallback:
-      'Embed self-hosted chat apps running on localhost, LAN or your team domain (e.g. Open WebUI, LibreChat, LobeChat, Dify).',
+      'Embed self-hosted chat apps (Open WebUI, LibreChat, LobeChat, Dify): plain http:// works on localhost and private LAN IPs (192.168.x, 10.x, 172.16-31.x); use a LAN IP or https:// for .local, Tailscale, or team domains.',
     examples: Object.freeze([
       Object.freeze({
         id: 'open-webui',
@@ -172,6 +198,33 @@ export const CUSTOM_PROVIDER_MODE_CONFIG = Object.freeze({
         name: 'DeepSeek API',
         url: 'https://api.deepseek.com/v1'
       })
+    ]),
+    examplesZhCn: Object.freeze([
+      Object.freeze({
+        id: 'ollama',
+        labelKey: 'chipCustomExampleOllamaLocal',
+        label: 'Ollama (local)',
+        name: 'Ollama',
+        url: 'http://localhost:11434/v1'
+      }),
+      Object.freeze({
+        id: 'siliconflow',
+        label: '硅基流动',
+        name: '硅基流动',
+        url: 'https://api.siliconflow.cn/v1'
+      }),
+      Object.freeze({
+        id: 'deepseek-api',
+        label: 'DeepSeek API',
+        name: 'DeepSeek API',
+        url: 'https://api.deepseek.com/v1'
+      }),
+      Object.freeze({
+        id: 'openrouter',
+        label: 'OpenRouter',
+        name: 'OpenRouter',
+        url: 'https://openrouter.ai/api/v1'
+      })
     ])
   })
 });
@@ -194,6 +247,8 @@ let addFormModelCombobox = null;
 let sessionModelsRuleSeq = 0;
 let customProviderHighlightTimer = null;
 let boundCustomProviderHashListener = null;
+let lastAppliedChipName = null;
+let lastAppliedChipUrl = null;
 
 function tOrFallback(key, fallback) {
   const message = t(key);
@@ -898,20 +953,38 @@ export function syncCustomProviderGuideLink() {
   }
 }
 
+function isSimplifiedChineseLocale() {
+  const raw = String(
+    getTranslationLocale() ||
+      getCurrentLanguage() ||
+      document.documentElement?.lang ||
+      'en'
+  )
+    .trim()
+    .replace(/_/g, '-')
+    .toLowerCase();
+  return raw === 'zh-cn' || raw === 'zh-hans' || raw === 'zh';
+}
+
 function renderCustomProviderExampleChips(mode, disabled) {
   const { examplesContainer } = getCustomProviderFormElements();
   if (!examplesContainer) {
     return;
   }
   const config = CUSTOM_PROVIDER_MODE_CONFIG[mode] || CUSTOM_PROVIDER_MODE_CONFIG.web;
+  const examples =
+    isSimplifiedChineseLocale() && Array.isArray(config.examplesZhCn)
+      ? config.examplesZhCn
+      : config.examples;
   const fragment = document.createDocumentFragment();
 
   const labelEl = document.createElement('span');
+  labelEl.id = 'custom-provider-examples-label';
   labelEl.className = 'custom-provider-examples-label';
   labelEl.textContent = tOrFallback('labelCustomProviderExamples', 'Quick fill:');
   fragment.appendChild(labelEl);
 
-  for (const example of config.examples) {
+  for (const example of examples) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'custom-provider-example-chip';
@@ -928,13 +1001,16 @@ function renderCustomProviderExampleChips(mode, disabled) {
   examplesContainer.replaceChildren(fragment);
 }
 
-export function focusAndHighlightCustomProviderCard({ behavior = 'smooth' } = {}) {
+export function focusAndHighlightCustomProviderCard({ behavior } = {}) {
   const { card, nameInput } = getCustomProviderFormElements();
   if (!card) {
     return false;
   }
 
-  card.scrollIntoView?.({ block: 'nearest', behavior });
+  const scrollBehavior =
+    behavior ??
+    (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth');
+  card.scrollIntoView?.({ block: 'nearest', behavior: scrollBehavior });
   card.classList.add('custom-provider-card--highlight');
   if (customProviderHighlightTimer) {
     clearTimeout(customProviderHighlightTimer);
@@ -949,6 +1025,14 @@ export function focusAndHighlightCustomProviderCard({ behavior = 'smooth' } = {}
     if (document.activeElement !== nameInput) {
       nameInput.focus?.();
     }
+  }
+
+  if (window.location.hash === '#custom-provider-card') {
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}`
+    );
   }
   return true;
 }
@@ -2181,6 +2265,8 @@ export async function handleCustomProviderFormSubmit(event) {
       if (urlInput) urlInput.value = '';
       if (modelInput) modelInput.value = '';
       if (apiKeyInput) apiKeyInput.value = '';
+      lastAppliedChipName = null;
+      lastAppliedChipUrl = null;
       setApiKeyRevealedState(false);
       addFormModelCombobox?.reset();
       updateCustomProviderOriginPreview();
@@ -2312,15 +2398,19 @@ function setupCustomProviderForm() {
         return;
       }
 
+      const nextName = chip.dataset.exampleName || '';
+      const nextUrl = chip.dataset.exampleUrl || '';
       clearCustomProviderFormError();
       if (nameInput) {
-        nameInput.value = chip.dataset.exampleName || '';
+        nameInput.value = nextName;
         nameInput.dispatchEvent(new Event('input', { bubbles: true }));
       }
       if (urlInput) {
-        urlInput.value = chip.dataset.exampleUrl || '';
+        urlInput.value = nextUrl;
         urlInput.dispatchEvent(new Event('input', { bubbles: true }));
       }
+      lastAppliedChipName = nextName;
+      lastAppliedChipUrl = nextUrl;
 
       const isApi = getSelectedCustomProviderKind() === 'api';
       if (isApi && modelInput && modelInput.value.trim().length === 0) {
@@ -2335,6 +2425,8 @@ function setupCustomProviderForm() {
 
   if (form && form.dataset.customFormBound !== 'true') {
     form.dataset.customFormBound = 'true';
+    lastAppliedChipName = null;
+    lastAppliedChipUrl = null;
 
     addFormModelCombobox = createModelComboboxController({
       idPrefix: 'add-custom-models',
@@ -2363,11 +2455,21 @@ function setupCustomProviderForm() {
     });
 
     const onKindChange = () => {
+      if (lastAppliedChipName !== null && nameInput && nameInput.value === lastAppliedChipName) {
+        nameInput.value = '';
+      }
+      if (lastAppliedChipUrl !== null && urlInput && urlInput.value === lastAppliedChipUrl) {
+        urlInput.value = '';
+      }
+      lastAppliedChipName = null;
+      lastAppliedChipUrl = null;
       clearCustomProviderFormError();
       syncCustomProviderKindFields();
       updateCustomProviderOriginPreview();
       if (getSelectedCustomProviderKind() !== 'api') {
         addFormModelCombobox?.invalidateCatalog();
+      } else {
+        addFormModelCombobox?.syncEndpointContext();
       }
     };
     kindWebRadio?.addEventListener('change', onKindChange);

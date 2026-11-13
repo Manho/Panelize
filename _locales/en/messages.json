@@ -3,7 +3,7 @@
     "message": "Panelize - Compare AI Chatbots Side by Side"
   },
   "extensionDescription": {
-    "message": "Compare AI chatbots side by side with your own logins—free, no API keys needed. Plus add custom AI sites and APIs."
+    "message": "Compare AI chatbots side by side with your existing logins. Free, no API keys needed. You can also add custom AI sites and APIs."
   },
   "commandOpenSidebar": {
     "message": "Open Panelize"
@@ -1031,7 +1031,7 @@
     "message": "Remove the username and password from the URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "Plain http:// is only allowed for localhost and private network IPs. Use https:// instead."
+    "message": "Plain http:// is only allowed for localhost and private LAN IPs (192.168.x, 10.x, 172.16-31.x). For .local, Tailscale, or custom domains, use the LAN IP or https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "This site is already available as a built-in provider."
@@ -1181,7 +1181,7 @@
     "message": "Paste almost any AI chat site (e.g. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) to compare side by side."
   },
   "hintCustomProviderModeWebLocal": {
-    "message": "Embed self-hosted chat apps running on localhost, LAN or your team domain (e.g. Open WebUI, LibreChat, LobeChat, Dify)."
+    "message": "Embed self-hosted chat apps (Open WebUI, LibreChat, LobeChat, Dify): plain http:// works on localhost and private LAN IPs (192.168.x, 10.x, 172.16-31.x); use a LAN IP or https:// for .local, Tailscale, or team domains."
   },
   "hintCustomProviderModeApi": {
     "message": "Connect local servers (Ollama works with no CORS setup, LM Studio, vLLM) or cloud APIs (OpenRouter, DeepSeek, OpenAI), then click \"Load models\"."

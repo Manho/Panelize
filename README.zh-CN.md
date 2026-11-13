@@ -69,7 +69,7 @@ Panelize是一个免费、开源的Chrome / Edge扩展：一次输入，同时�
 ### 🧩 自定义AI网站与OpenAI兼容API
 
 无需等待扩展更新，随时接入你想用的AI服务：
-- **任意AI网站与本地/自建网页端：** 直接粘贴`Perplexity`、`Mistral Le Chat`、`Poe`、`HuggingChat`、`muse.ai`、秘塔、`Open WebUI`、`LibreChat`、`LobeChat`等地址，按域名最小权限授权并支持通用输入框发送。
+- **绝大多数AI网站与本地/自建网页端：** 直接粘贴`Perplexity`、`Mistral Le Chat`、`Poe`、`HuggingChat`、`muse.ai`、秘塔、`Open WebUI`、`LibreChat`、`LobeChat`等地址，按域名最小权限授权并支持通用输入框发送。
 - **OpenAI兼容API：** 直连本地模型服务（`Ollama`免配CORS开箱即连、`LM Studio`、`vLLM`）或云端接口（`OpenRouter`、`DeepSeek API`、硅基流动等），支持一键拉取模型列表、流式Markdown/代码渲染、图片附件与仅存本地的API Key。
 - 详细配置步骤请查看[自定义AI与API接入指南](https://panelize.dev/zh/guides/add-custom-ai-and-api/)。
 

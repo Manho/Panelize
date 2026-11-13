@@ -66,6 +66,6 @@ body:
     id: environment
     attributes:
       label: Panelize & Browser Version
-      placeholder: e.g. Panelize 2.2.0, Chrome 136 on macOS
+      placeholder: e.g. Panelize 2.2.1, Chrome 146 on macOS
     validations:
       required: false

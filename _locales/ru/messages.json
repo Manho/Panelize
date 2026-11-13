@@ -1016,7 +1016,7 @@
     "message": "Удалите имя пользователя и пароль из URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "Открытый http:// разрешён только для localhost и частных IP-адресов. Используйте https://."
+    "message": "Открытый http:// разрешён только для localhost и частных IP в LAN (192.168.x, 10.x, 172.16-31.x). Для .local, Tailscale или собственных доменов укажите LAN IP или https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "Этот сайт уже доступен как встроенный провайдер."
@@ -1166,7 +1166,7 @@
     "message": "Вставьте адрес почти любого ИИ-чата (например, https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) для сравнения рядом."
   },
   "hintCustomProviderModeWebLocal": {
-    "message": "Встраивайте собственные чат-приложения на localhost, в LAN или на домене команды (например, Open WebUI, LibreChat, LobeChat, Dify)."
+    "message": "Встраивайте собственные чат-приложения (Open WebUI, LibreChat, LobeChat, Dify): открытый http:// работает для localhost и частных IP в LAN (192.168.x, 10.x, 172.16-31.x); для .local, Tailscale или домена команды укажите LAN IP или https://."
   },
   "hintCustomProviderModeApi": {
     "message": "Подключайте локальные серверы (Ollama работает без настройки CORS, LM Studio, vLLM) или облачные API (OpenRouter, DeepSeek, OpenAI) и нажмите «Загрузить модели»."

@@ -320,8 +320,19 @@ function focusUnifiedInput({ force = false } = {}) {
     ) {
       return;
     }
-    // The user moved on to a dialog, e.g. to edit a snapshot title.
-    if (isFocusInOpenModal()) {
+    const currentActive = document.activeElement;
+    if (
+      !force &&
+      currentActive &&
+      currentActive.tagName !== 'IFRAME' &&
+      currentActive !== document.body &&
+      currentActive !== document.documentElement &&
+      currentActive !== inputTextarea
+    ) {
+      return;
+    }
+    // The user moved on to a dialog or dropdown menu, e.g. to edit a snapshot title or pick a provider.
+    if (isFocusInOpenModal() || isFocusInOpenDropdownMenu()) {
       return;
     }
     try {
@@ -335,6 +346,12 @@ function focusUnifiedInput({ force = false } = {}) {
 function isFocusInOpenModal() {
   const modal = document.activeElement?.closest?.('.modal');
   return Boolean(modal) && modal.style.display !== 'none';
+}
+
+function isFocusInOpenDropdownMenu() {
+  return Boolean(
+    document.activeElement?.closest?.('.add-panel-menu, .provider-switcher-menu, [role="menu"]')
+  );
 }
 
 function shouldPreserveUnifiedInputFocus() {
@@ -650,8 +667,16 @@ function bindPanelHeaderActions(panelId) {
 
   const switchBtn = panelEl.querySelector('.switch-provider-btn');
   if (switchBtn) {
+    switchBtn.setAttribute('aria-haspopup', 'menu');
+    switchBtn.setAttribute('aria-expanded', 'false');
     switchBtn.addEventListener('click', () => {
       showProviderSwitcher(panelId);
+    });
+    switchBtn.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' && !document.querySelector('.provider-switcher-menu')) {
+        event.preventDefault();
+        showProviderSwitcher(panelId);
+      }
     });
   }
 
@@ -738,13 +763,13 @@ function registerStorageChangeListener() {
     refreshThemeAwareProviderIcons();
 
     if (document.querySelector('.add-panel-menu')) {
-      document.querySelectorAll('.add-panel-menu').forEach((menu) => menu.remove());
+      dismissExistingDropdownMenus('.add-panel-menu');
       showAddPanelMenu().catch((error) => {
         console.error('Error refreshing add-panel menu:', error);
       });
     }
     if (document.querySelector('.provider-switcher-menu')) {
-      document.querySelectorAll('.provider-switcher-menu').forEach((menu) => menu.remove());
+      dismissExistingDropdownMenus('.provider-switcher-menu');
     }
   });
 
@@ -3385,7 +3410,18 @@ function setupEventListeners() {
   });
 
   // Add panel button
-  document.getElementById('add-panel-btn').addEventListener('click', showAddPanelMenu);
+  const addPanelBtn = document.getElementById('add-panel-btn');
+  if (addPanelBtn) {
+    addPanelBtn.setAttribute('aria-haspopup', 'menu');
+    addPanelBtn.setAttribute('aria-expanded', 'false');
+    addPanelBtn.addEventListener('click', showAddPanelMenu);
+    addPanelBtn.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' && !document.querySelector('.add-panel-menu')) {
+        event.preventDefault();
+        showAddPanelMenu();
+      }
+    });
+  }
 
   // Toggle toolbar button and expand bar
   document.getElementById('toggle-toolbar-btn').addEventListener('click', toggleToolbar);
@@ -3779,7 +3815,10 @@ export async function openCustomProviderSettings() {
   }
 
   if (typeof chrome?.tabs?.create === 'function') {
-    await chrome.tabs.create({ url: targetUrl });
+    const createdTab = await chrome.tabs.create({ url: targetUrl });
+    if (createdTab?.windowId != null) {
+      await chrome.windows?.update?.(createdTab.windowId, { focused: true }).catch(() => {});
+    }
     return;
   }
 
@@ -3796,6 +3835,8 @@ function appendCustomAiMenuFooter(menu, onDismiss) {
   const actionBtn = document.createElement('button');
   actionBtn.type = 'button';
   actionBtn.className = 'menu-custom-ai-action';
+  actionBtn.setAttribute('role', 'menuitem');
+  actionBtn.setAttribute('tabindex', '-1');
 
   const iconTemplate = document.createElement('template');
   iconTemplate.innerHTML = '<span class="material-symbols-outlined menu-custom-ai-icon" aria-hidden="true">add</span>';
@@ -3842,13 +3883,105 @@ function clampMenuHorizontalPosition(menu, anchorLeft) {
   }
 }
 
+function dismissExistingDropdownMenus(selector) {
+  document.querySelectorAll(selector).forEach((existing) => {
+    if (typeof existing._dismissMenu === 'function') {
+      existing._dismissMenu({ restoreFocus: false });
+    } else {
+      existing.remove();
+    }
+  });
+}
+
+function bindDropdownMenuKeyboardNavigation(menu, triggerBtn, dismissMenu) {
+  menu.setAttribute('role', 'menu');
+  if (triggerBtn) {
+    triggerBtn.setAttribute('aria-haspopup', 'menu');
+    triggerBtn.setAttribute('aria-expanded', 'true');
+  }
+
+  const getEnabledMenuItems = () =>
+    Array.from(menu.querySelectorAll('[role="menuitem"]')).filter(
+      (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true'
+    );
+
+  const focusMenuItem = (target) => {
+    if (!target) return;
+    target.focus?.({ preventScroll: true });
+    target.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  menu.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissMenu({ restoreFocus: true });
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      dismissMenu({ restoreFocus: false });
+      return;
+    }
+
+    const items = getEnabledMenuItems();
+    if (items.length === 0) {
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      const currentIdx = items.indexOf(document.activeElement);
+      const nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % items.length;
+      focusMenuItem(items[nextIdx]);
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      const currentIdx = items.indexOf(document.activeElement);
+      const prevIdx = currentIdx <= 0 ? items.length - 1 : currentIdx - 1;
+      focusMenuItem(items[prevIdx]);
+      return;
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault();
+      focusMenuItem(items[0]);
+      return;
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault();
+      focusMenuItem(items[items.length - 1]);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      const activeItem = document.activeElement?.closest?.('[role="menuitem"]');
+      if (activeItem && menu.contains(activeItem) && items.includes(activeItem)) {
+        event.preventDefault();
+        event.stopPropagation();
+        activeItem.click();
+      }
+    }
+  });
+
+  const initialItems = getEnabledMenuItems();
+  focusMenuItem(initialItems[0]);
+}
+
 async function showProviderSwitcher(panelId) {
   const enabledProviders = await getEnabledProviders();
   const panel = panels.find(p => p.id === panelId);
   if (!panel) return;
   const palette = getDropdownThemePalette();
 
-  document.querySelectorAll('.provider-switcher-menu').forEach((existing) => existing.remove());
+  dismissExistingDropdownMenus('.provider-switcher-menu, .add-panel-menu');
+
+  const panelEl = document.getElementById(panelId);
+  const triggerBtn = panelEl?.querySelector('.switch-provider-btn') || null;
+  if (!triggerBtn) return;
 
   // Create a simple dropdown menu
   const menu = document.createElement('div');
@@ -3868,6 +4001,8 @@ async function showProviderSwitcher(panelId) {
     const isSelected = provider.id === panel.providerId;
     const item = document.createElement('div');
     item.className = 'provider-switcher-item';
+    item.setAttribute('role', 'menuitem');
+    item.setAttribute('tabindex', '-1');
     item.dataset.providerId = provider.id;
     item.style.cssText = `
       display: flex;
@@ -3891,42 +4026,45 @@ async function showProviderSwitcher(panelId) {
   });
 
   let closeMenu = null;
-  const dismissMenu = () => {
-    menu.remove();
+  let closeMenuTimer = null;
+  let dismissed = false;
+  const dismissMenu = ({ restoreFocus = false } = {}) => {
+    if (dismissed) return;
+    dismissed = true;
+    if (closeMenuTimer !== null) {
+      clearTimeout(closeMenuTimer);
+      closeMenuTimer = null;
+    }
     if (closeMenu) {
       document.removeEventListener('click', closeMenu);
     }
+    triggerBtn.setAttribute('aria-expanded', 'false');
+    menu.remove();
+    if (restoreFocus && triggerBtn.isConnected) {
+      triggerBtn.focus?.({ preventScroll: true });
+    }
   };
+  menu._dismissMenu = dismissMenu;
 
   appendCustomAiMenuFooter(menu, dismissMenu);
 
   // Position menu near the panel
-  const panelEl = document.getElementById(panelId);
-  const rect = panelEl.querySelector('.switch-provider-btn').getBoundingClientRect();
+  const rect = triggerBtn.getBoundingClientRect();
   menu.style.top = rect.bottom + 4 + 'px';
   menu.style.left = rect.left + 'px';
 
-  document.body.appendChild(menu);
-  clampMenuHorizontalPosition(menu, rect.left);
-
-  // Handle item clicks
+  // Handle item clicks and hover/focus states before initial focus
   menu.querySelectorAll('.provider-switcher-item').forEach(item => {
-    item.addEventListener('click', () => {
-      switchPanelProvider(panelId, item.dataset.providerId);
-      dismissMenu();
-    });
-
-    item.addEventListener('mouseenter', () => {
+    const applyItemActiveStyle = () => {
       if (item.dataset.providerId === panel.providerId) {
         item.style.background = palette.selectedBackground;
         item.style.color = palette.selectedText;
         return;
       }
-
       item.style.background = palette.itemHoverBackground;
       item.style.color = palette.menuText;
-    });
-    item.addEventListener('mouseleave', () => {
+    };
+    const resetItemStyle = () => {
       if (item.dataset.providerId === panel.providerId) {
         item.style.background = palette.selectedBackground;
         item.style.color = palette.selectedText;
@@ -3934,16 +4072,36 @@ async function showProviderSwitcher(panelId) {
         item.style.background = '';
         item.style.color = palette.menuText;
       }
+    };
+
+    item.addEventListener('click', () => {
+      switchPanelProvider(panelId, item.dataset.providerId);
+      dismissMenu({ restoreFocus: false });
     });
+    item.addEventListener('mouseenter', applyItemActiveStyle);
+    item.addEventListener('focus', applyItemActiveStyle);
+    item.addEventListener('mouseleave', () => {
+      if (document.activeElement !== item) {
+        resetItemStyle();
+      }
+    });
+    item.addEventListener('blur', resetItemStyle);
   });
+
+  document.body.appendChild(menu);
+  clampMenuHorizontalPosition(menu, rect.left);
+  bindDropdownMenuKeyboardNavigation(menu, triggerBtn, dismissMenu);
 
   // Close on outside click
   closeMenu = (e) => {
     if (!menu.contains(e.target)) {
-      dismissMenu();
+      dismissMenu({ restoreFocus: false });
     }
   };
-  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  closeMenuTimer = setTimeout(() => {
+    closeMenuTimer = null;
+    document.addEventListener('click', closeMenu);
+  }, 0);
 }
 
 async function showAddPanelMenu() {
@@ -3956,7 +4114,7 @@ async function showAddPanelMenu() {
   const usedProviders = panels.map(p => p.providerId);
   const availableProviders = enabledProviders.filter(p => !usedProviders.includes(p.id));
 
-  document.querySelectorAll('.add-panel-menu').forEach((existing) => existing.remove());
+  dismissExistingDropdownMenus('.add-panel-menu, .provider-switcher-menu');
 
   const btn = document.getElementById('add-panel-btn');
   const rect = btn.getBoundingClientRect();
@@ -3980,7 +4138,7 @@ async function showAddPanelMenu() {
   if (availableProviders.length === 0) {
     const emptyStatus = document.createElement('div');
     emptyStatus.className = 'menu-all-providers-open';
-    emptyStatus.setAttribute('role', 'status');
+    emptyStatus.setAttribute('aria-disabled', 'true');
     emptyStatus.textContent = getLocalizedText(
       'menuAllEnabledProvidersOpen',
       'All enabled AIs are already open'
@@ -3990,6 +4148,8 @@ async function showAddPanelMenu() {
     availableProviders.forEach(provider => {
       const item = document.createElement('div');
       item.className = 'add-panel-item';
+      item.setAttribute('role', 'menuitem');
+      item.setAttribute('tabindex', '-1');
       item.dataset.providerId = provider.id;
       item.style.cssText = `
         display: flex;
@@ -4013,40 +4173,65 @@ async function showAddPanelMenu() {
   }
 
   let closeMenu = null;
-  const dismissMenu = () => {
-    menu.remove();
+  let closeMenuTimer = null;
+  let dismissed = false;
+  const dismissMenu = ({ restoreFocus = false } = {}) => {
+    if (dismissed) return;
+    dismissed = true;
+    if (closeMenuTimer !== null) {
+      clearTimeout(closeMenuTimer);
+      closeMenuTimer = null;
+    }
     if (closeMenu) {
       document.removeEventListener('click', closeMenu);
     }
+    btn.setAttribute('aria-expanded', 'false');
+    menu.remove();
+    if (restoreFocus && btn.isConnected) {
+      btn.focus?.({ preventScroll: true });
+    }
   };
+  menu._dismissMenu = dismissMenu;
 
   appendCustomAiMenuFooter(menu, dismissMenu);
 
-  document.body.appendChild(menu);
-  clampMenuHorizontalPosition(menu, rect.left);
-
   menu.querySelectorAll('.add-panel-item').forEach(item => {
-    item.addEventListener('click', () => {
-      addPanel(item.dataset.providerId);
-      dismissMenu();
-    });
-
-    item.addEventListener('mouseenter', () => {
+    const applyItemActiveStyle = () => {
       item.style.background = palette.itemHoverBackground;
       item.style.color = palette.menuText;
-    });
-    item.addEventListener('mouseleave', () => {
+    };
+    const resetItemStyle = () => {
       item.style.background = '';
       item.style.color = palette.menuText;
+    };
+
+    item.addEventListener('click', () => {
+      addPanel(item.dataset.providerId);
+      dismissMenu({ restoreFocus: false });
     });
+    item.addEventListener('mouseenter', applyItemActiveStyle);
+    item.addEventListener('focus', applyItemActiveStyle);
+    item.addEventListener('mouseleave', () => {
+      if (document.activeElement !== item) {
+        resetItemStyle();
+      }
+    });
+    item.addEventListener('blur', resetItemStyle);
   });
+
+  document.body.appendChild(menu);
+  clampMenuHorizontalPosition(menu, rect.left);
+  bindDropdownMenuKeyboardNavigation(menu, btn, dismissMenu);
 
   closeMenu = (e) => {
     if (!menu.contains(e.target)) {
-      dismissMenu();
+      dismissMenu({ restoreFocus: false });
     }
   };
-  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  closeMenuTimer = setTimeout(() => {
+    closeMenuTimer = null;
+    document.addEventListener('click', closeMenu);
+  }, 0);
 }
 
 // ===== Utility Functions =====

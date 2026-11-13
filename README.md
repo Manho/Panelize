@@ -130,7 +130,7 @@ Save your best prompts and reuse them across all providers. Supports variables l
   </tr>
 </table>
 
-### + Custom AI Websites & OpenAI-Compatible APIs
+### 🔌 Custom AI Websites & OpenAI-Compatible APIs
 
 Add in **Settings → Add custom AI** (or click **Add custom AI / More providers…** inside any `+` or `⇄` panel menu):
 - **AI Websites:** `Perplexity`, `Mistral Le Chat`, `Poe`, `HuggingChat`, `muse.ai`, and other web chat apps

@@ -1016,7 +1016,7 @@
     "message": "URLからユーザー名とパスワードを削除してください。"
   },
   "errCustomUrlInsecureHttp": {
-    "message": "暗号化されていない http:// は localhost とプライベートIPにのみ許可されています。https:// を使用してください。"
+    "message": "平文の http:// は localhost とプライベートLAN IP（192.168.x、10.x、172.16-31.x）にのみ許可されています。.local、Tailscale、独自ドメインには LAN IP または https:// を使用してください。"
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "このサイトは組み込みプロバイダーとして既に利用可能です。"
@@ -1166,7 +1166,7 @@
     "message": "任意の AI チャットサイトの URL（例: https://www.perplexity.ai、https://chat.mistral.ai、https://poe.com、https://muse.ai）を貼り付けて並べて比較できます。"
   },
   "hintCustomProviderModeWebLocal": {
-    "message": "localhost、LAN、社内ドメインで動作するセルフホストのチャット UI（Open WebUI、LibreChat、LobeChat、Dify など）を埋め込めます。"
+    "message": "セルフホストのチャットUI（Open WebUI、LibreChat、LobeChat、Dify）を埋め込みます。平文の http:// は localhost とプライベートLAN IP（192.168.x / 10.x / 172.16-31.x）に対応し、.local・Tailscale・社内ドメインは LAN IP または https:// を使用してください。"
   },
   "hintCustomProviderModeApi": {
     "message": "ローカルサーバー（CORS 設定不要の Ollama、LM Studio、vLLM）やクラウド API（OpenRouter、DeepSeek、OpenAI）に接続し、「モデルを読み込む」で一覧を取得できます。"

@@ -54,17 +54,27 @@ test.describe('Custom AI onboarding flow from Multi-Panel menus to Settings', ()
       await mpPage.locator('#add-panel-btn').click();
       const addMenu = mpPage.locator('.add-panel-menu');
       await expect(addMenu).toBeVisible();
+      await expect(addMenu).toHaveAttribute('role', 'menu');
       await expect(addMenu.locator('.menu-all-providers-open')).toHaveText(
         'All enabled AIs are already open'
       );
       const addCustomAction = addMenu.locator('.menu-custom-ai-action');
       await expect(addCustomAction).toBeVisible();
+      await expect(addCustomAction).toBeFocused();
       await expect(addCustomAction.locator('.menu-custom-ai-label')).toHaveText(
         'Add custom AI / More providers…'
       );
       await expect(addCustomAction.locator('.menu-custom-ai-hint')).toHaveText(
         'Perplexity, Poe, Ollama, API…'
       );
+
+      // Escape closes the menu and restores focus to #add-panel-btn; ArrowDown re-opens it
+      await mpPage.keyboard.press('Escape');
+      await expect(addMenu).toHaveCount(0);
+      await expect(mpPage.locator('#add-panel-btn')).toBeFocused();
+      await mpPage.keyboard.press('ArrowDown');
+      await expect(addMenu).toBeVisible();
+      await expect(addCustomAction).toBeFocused();
 
       // 2. Click `Add custom AI / More providers…` -> opens Options tab at #custom-provider-card
       const [optionsPage] = await Promise.all([
@@ -75,12 +85,12 @@ test.describe('Custom AI onboarding flow from Multi-Panel menus to Settings', ()
       optionsPage.on('pageerror', (err) => optionsPageErrors.push(String(err)));
       await optionsPage.waitForLoadState('domcontentloaded');
 
-      await expect(optionsPage).toHaveURL(/\/options\/options\.html#custom-provider-card$/);
       const customCard = optionsPage.locator('#custom-provider-card');
       await expect(customCard).toBeVisible();
       await expect(customCard).toHaveClass(/custom-provider-card--highlight/);
       await expect(optionsPage.locator('#custom-provider-name')).toBeFocused();
       await expect(customCard).toBeInViewport();
+      await expect(optionsPage).toHaveURL(/\/options\/options\.html$/);
 
       // Verify guide link
       const guideLink = optionsPage.locator('#custom-provider-guide-link');
@@ -155,11 +165,12 @@ test.describe('Custom AI onboarding flow from Multi-Panel menus to Settings', ()
         'https://www.perplexity.ai'
       );
 
-      // 5. Return to Multi-Panel, clear hash on Options tab first, then open `⇄` (.switch-provider-btn)
-      // and click footer action -> reuses the existing Options tab without opening a duplicate tab!
-      await optionsPage.evaluate(() => {
-        window.history.replaceState(null, '', window.location.pathname);
-      });
+      // 5. Wait for initial highlight to expire while focus is off #custom-provider-name,
+      // then return to Multi-Panel WITHOUT touching Options URL/history and click the
+      // Custom AI footer action from `⇄` (.switch-provider-btn) -> reuses the existing Options tab,
+      // re-adds custom-provider-card--highlight, focuses #custom-provider-name, and strips the hash again!
+      await expect(customCard).not.toHaveClass(/custom-provider-card--highlight/);
+      await expect(nameInput).not.toBeFocused();
       await mpPage.bringToFront();
       await mpPage.locator('.panel-item .switch-provider-btn').click();
       const switcherMenu = mpPage.locator('.provider-switcher-menu');
@@ -183,10 +194,11 @@ test.describe('Custom AI onboarding flow from Multi-Panel menus to Settings', ()
         })
         .toEqual({
           count: 1,
-          url: extension.extensionUrl('options/options.html#custom-provider-card'),
+          url: extension.extensionUrl('options/options.html'),
           visibility: 'visible',
         });
       await expect(customCard).toHaveClass(/custom-provider-card--highlight/);
+      await expect(nameInput).toBeFocused();
 
       expect(pageErrors).toEqual([]);
       expect(optionsPageErrors).toEqual([]);

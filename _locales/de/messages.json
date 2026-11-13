@@ -1016,7 +1016,7 @@
     "message": "Entferne Benutzername und Passwort aus der URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "Unverschlüsseltes http:// ist nur für localhost und private Netzwerk-IPs erlaubt. Verwende stattdessen https://."
+    "message": "Unverschlüsseltes http:// ist nur für localhost und private LAN-IPs (192.168.x, 10.x, 172.16-31.x) erlaubt. Verwende für .local, Tailscale oder eigene Domains die LAN-IP oder https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "Diese Website ist bereits als integrierter Anbieter verfügbar."
@@ -1166,7 +1166,7 @@
     "message": "Fügen Sie fast jede KI-Chat-Website ein (z. B. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai), um sie nebeneinander zu vergleichen."
   },
   "hintCustomProviderModeWebLocal": {
-    "message": "Selbst gehostete Chat-Apps auf localhost, im LAN oder auf Ihrer Team-Domain einbetten (z. B. Open WebUI, LibreChat, LobeChat, Dify)."
+    "message": "Selbst gehostete Chat-Apps einbetten (Open WebUI, LibreChat, LobeChat, Dify): Unverschlüsseltes http:// funktioniert für localhost und private LAN-IPs (192.168.x, 10.x, 172.16-31.x); für .local-Hostnamen, Tailscale oder Team-Domains die LAN-IP oder https:// verwenden."
   },
   "hintCustomProviderModeApi": {
     "message": "Lokale Server (Ollama funktioniert ohne CORS-Setup, LM Studio, vLLM) oder Cloud-APIs (OpenRouter, DeepSeek, OpenAI) verbinden und auf „Modelle laden“ klicken."

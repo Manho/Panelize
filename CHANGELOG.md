@@ -2,7 +2,7 @@
 
 ## 2.2.0 - 2026-11-13
 - Added Custom Web UI providers: embed any online or self-hosted chat web app with per-origin runtime permissions, origin badges and generic composer support.
-- Added Custom API providers: connect OpenAI-compatible Chat Completions endpoints with streaming Markdown/code rendering, image attachments, model loading and local-only API key storage.
+- Added Custom API providers: connect OpenAI-compatible Chat Completions endpoints with streaming Markdown/code rendering, image attachments, model loading and local-only encrypted API key storage.
 - Added inline editing for custom providers in Settings.
 - Fixed New Chat skipping hidden controls and improved composer detection in narrow ChatGPT panels.
 

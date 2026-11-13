@@ -1016,7 +1016,7 @@
     "message": "Elimina el usuario y la contraseña de la URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "http:// sin cifrar solo se permite en localhost e IP de red privada. Usa https:// en su lugar."
+    "message": "http:// sin cifrar solo se permite en localhost e IP privadas de LAN (192.168.x, 10.x, 172.16-31.x). Para .local, Tailscale o dominios personalizados, usa la IP de LAN o https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "Este sitio ya está disponible como proveedor integrado."
@@ -1166,7 +1166,7 @@
     "message": "Pega casi cualquier sitio de chat de IA (p. ej., https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) para compararlos lado a lado."
   },
   "hintCustomProviderModeWebLocal": {
-    "message": "Incrusta apps de chat autoalojadas en localhost, LAN o el dominio de tu equipo (p. ej., Open WebUI, LibreChat, LobeChat, Dify)."
+    "message": "Incrusta apps de chat autoalojadas (Open WebUI, LibreChat, LobeChat, Dify): http:// sin cifrar funciona en localhost e IP privadas de LAN (192.168.x, 10.x, 172.16-31.x); para nombres .local, Tailscale o dominios de equipo, usa la IP de LAN o https://."
   },
   "hintCustomProviderModeApi": {
     "message": "Conecta servidores locales (Ollama funciona sin configurar CORS, LM Studio, vLLM) o APIs en la nube (OpenRouter, DeepSeek, OpenAI) y haz clic en «Cargar modelos»."

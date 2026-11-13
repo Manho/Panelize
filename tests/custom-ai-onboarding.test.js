@@ -246,18 +246,35 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       }
     });
 
-    it('keeps zh_CN, zh_TW, and README.zh-CN.md free of spaces between CJK and Latin/numbers/code', () => {
+    it('keeps zh_CN, zh_TW, and README.zh-CN.md free of spaces between CJK and Latin/numbers/code and softens absolute custom website wording', () => {
       const cjkSpaceRe = /([\u4e00-\u9fff][ \t]+[A-Za-z0-9`]|[A-Za-z0-9`][ \t]+[\u4e00-\u9fff])/;
       for (const locale of ['zh_CN', 'zh_TW']) {
         const messages = readMessages(locale);
         expect(messages.extensionDescription.message, `${locale}.extensionDescription`).not.toMatch(cjkSpaceRe);
+        expect(messages.errCustomUrlInsecureHttp.message, `${locale}.errCustomUrlInsecureHttp`).not.toMatch(
+          cjkSpaceRe
+        );
         for (const key of ONBOARDING_LOCALE_KEYS) {
           expect(messages[key].message, `${locale}.${key}`).not.toMatch(cjkSpaceRe);
         }
+        expect(messages.descEnabledProviders.message).toMatch(/几乎任意|幾乎任意|绝大多数|絕大多數/);
+        expect(messages.hintCustomProviderModeWebSite.message).toMatch(/几乎任意|幾乎任意|绝大多数|絕大多數/);
+      }
+
+      for (const locale of LOCALES) {
+        const messages = readMessages(locale);
+        expect(messages.hintCustomProviderModeWebLocal.message, `${locale}.hintCustomProviderModeWebLocal`).toContain(
+          '192.168'
+        );
+        expect(messages.hintCustomProviderModeWebLocal.message, `${locale}.hintCustomProviderModeWebLocal`).toContain(
+          'https://'
+        );
+        expect(messages.errCustomUrlInsecureHttp.message, `${locale}.errCustomUrlInsecureHttp`).toContain('192.168');
       }
 
       const zhReadme = readFileSync(resolve(ROOT, 'README.zh-CN.md'), 'utf8');
       expect(zhReadme).not.toMatch(cjkSpaceRe);
+      expect(zhReadme).not.toContain('**任意AI网站');
     });
   });
 
@@ -399,7 +416,7 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       expect(document.activeElement).toBe(document.getElementById('custom-provider-model'));
     });
 
-    it('uses the Chinese setup guide URL when UI language starts with zh', async () => {
+    it('uses the Chinese setup guide URL and localized zh_CN quick-fill presets when UI language is zh_CN', async () => {
       installOptionsChromeEnv({
         syncInitial: { language: 'zh_CN' },
         uiLanguage: 'zh_CN',
@@ -412,6 +429,66 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
           'https://panelize.dev/zh/guides/add-custom-ai-and-api/'
         );
       });
+
+      const webChips = Array.from(
+        document.querySelectorAll('#custom-provider-examples .custom-provider-example-chip')
+      );
+      expect(webChips.map((el) => el.textContent)).toEqual([
+        'Perplexity',
+        '秘塔AI搜索',
+        'Poe',
+        'Mistral Le Chat',
+      ]);
+      webChips[1].click();
+      expect(document.getElementById('custom-provider-name').value).toBe('秘塔AI搜索');
+      expect(document.getElementById('custom-provider-url').value).toBe('https://metaso.cn');
+
+      // Switching connection mode clears chip-applied name/url so previous mode's URL doesn't stick
+      const apiRadio = document.getElementById('custom-provider-kind-api');
+      apiRadio.checked = true;
+      apiRadio.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(document.getElementById('custom-provider-name').value).toBe('');
+      expect(document.getElementById('custom-provider-url').value).toBe('');
+
+      const apiChips = Array.from(
+        document.querySelectorAll('#custom-provider-examples .custom-provider-example-chip')
+      );
+      expect(apiChips.map((el) => el.textContent)).toEqual([
+        'Ollama（本地）',
+        '硅基流动',
+        'DeepSeek API',
+        'OpenRouter',
+      ]);
+      apiChips[1].click();
+      expect(document.getElementById('custom-provider-name').value).toBe('硅基流动');
+      expect(document.getElementById('custom-provider-url').value).toBe('https://api.siliconflow.cn/v1');
+
+      // User-typed custom values are preserved when switching connection modes
+      document.getElementById('custom-provider-name').value = 'My Custom Gateway';
+      document.getElementById('custom-provider-url').value = 'https://gateway.example.com/v1';
+      const webLocalRadio = document.getElementById('custom-provider-kind-web-local');
+      webLocalRadio.checked = true;
+      webLocalRadio.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(document.getElementById('custom-provider-name').value).toBe('My Custom Gateway');
+      expect(document.getElementById('custom-provider-url').value).toBe('https://gateway.example.com/v1');
+    });
+
+    it('wires accessible group label on #custom-provider-examples and mode-hint description on #custom-provider-url', async () => {
+      installOptionsChromeEnv();
+      await import('../options/options.js');
+      await vi.waitFor(() => {
+        expect(document.getElementById('version')?.textContent).toContain('2.2.0');
+      });
+
+      const examplesGroup = document.getElementById('custom-provider-examples');
+      expect(examplesGroup.getAttribute('role')).toBe('group');
+      expect(examplesGroup.getAttribute('aria-labelledby')).toBe('custom-provider-examples-label');
+      expect(document.getElementById('custom-provider-examples-label')?.textContent).toBe('Quick fill:');
+
+      const urlInput = document.getElementById('custom-provider-url');
+      expect(urlInput.getAttribute('aria-describedby')?.split(/\s+/)).toContain(
+        'custom-provider-mode-hint'
+      );
     });
 
     it('disables quick-fill chips when scoped frame rules are unsupported', async () => {
@@ -428,8 +505,9 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       });
     });
 
-    it('scrolls, focuses #custom-provider-name, and highlights #custom-provider-card on hash deep-link and jump button', async () => {
-      window.history.replaceState(null, '', '/options/options.html#custom-provider-card');
+    it('scrolls, focuses #custom-provider-name, highlights #custom-provider-card, strips #custom-provider-card via history.replaceState, and respects prefers-reduced-motion', async () => {
+      window.history.replaceState(null, '', '/options/options.html?tab=providers#custom-provider-card');
+      const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
       installOptionsChromeEnv();
 
       const card = document.getElementById('custom-provider-card');
@@ -439,14 +517,16 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       await vi.waitFor(() => {
         expect(document.getElementById('version')?.textContent).toContain('2.2.0');
         expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
-        expect(card.scrollIntoView).toHaveBeenCalled();
+        expect(card.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
       });
 
       expect(card.classList.contains('custom-provider-card--highlight')).toBe(true);
       expect(document.activeElement).toBe(document.getElementById('custom-provider-name'));
+      expect(replaceStateSpy).toHaveBeenCalledWith(null, '', '/options/options.html?tab=providers');
+      expect(window.location.hash).toBe('');
 
       vi.useFakeTimers();
-      // Clicking jump button re-applies highlight, scrolls, Focuses name input, and clears highlight after timer
+      // Clicking jump button re-applies highlight, scrolls, focuses name input, and clears highlight after timer
       document.getElementById('jump-add-custom-provider-btn').focus();
       document.getElementById('jump-add-custom-provider-btn').click();
       expect(card.classList.contains('custom-provider-card--highlight')).toBe(true);
@@ -455,11 +535,29 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       vi.advanceTimersByTime(2500);
       expect(card.classList.contains('custom-provider-card--highlight')).toBe(false);
 
-      // Firing hashchange also highlights and focuses
-      document.getElementById('jump-add-custom-provider-btn').focus();
-      window.dispatchEvent(new Event('hashchange'));
-      expect(card.classList.contains('custom-provider-card--highlight')).toBe(true);
-      expect(document.activeElement).toBe(document.getElementById('custom-provider-name'));
+      // Re-navigating to #custom-provider-card (simulating chrome.tabs.update reusing Options tab)
+      // fires hashchange, respects prefers-reduced-motion, and strips #custom-provider-card again
+      const originalMatchMedia = window.matchMedia;
+      window.matchMedia = vi.fn((query) => ({
+        matches: query === '(prefers-reduced-motion: reduce)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+      try {
+        replaceStateSpy.mockClear();
+        card.scrollIntoView.mockClear();
+        document.getElementById('jump-add-custom-provider-btn').focus();
+        window.location.hash = '#custom-provider-card';
+        window.dispatchEvent(new Event('hashchange'));
+        expect(card.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', behavior: 'auto' });
+        expect(card.classList.contains('custom-provider-card--highlight')).toBe(true);
+        expect(document.activeElement).toBe(document.getElementById('custom-provider-name'));
+        expect(replaceStateSpy).toHaveBeenCalledWith(null, '', '/options/options.html?tab=providers');
+        expect(window.location.hash).toBe('');
+      } finally {
+        window.matchMedia = originalMatchMedia;
+      }
     });
   });
 
@@ -568,13 +666,18 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       expect(document.querySelector('.panelize-toast')).toBeNull();
 
       const addMenu = document.querySelector('.add-panel-menu');
+      expect(addMenu.getAttribute('role')).toBe('menu');
       expect(addMenu.querySelectorAll('.add-panel-item')).toHaveLength(0);
-      expect(addMenu.querySelector('.menu-all-providers-open')?.textContent).toBe(
-        'All enabled AIs are already open'
-      );
+      const emptyNote = addMenu.querySelector('.menu-all-providers-open');
+      expect(emptyNote?.textContent).toBe('All enabled AIs are already open');
+      expect(emptyNote?.getAttribute('role')).toBeNull();
+      expect(emptyNote?.getAttribute('aria-disabled')).toBe('true');
 
       const actionBtn = addMenu.querySelector('.menu-custom-ai-action');
       expect(actionBtn).not.toBeNull();
+      expect(actionBtn.getAttribute('role')).toBe('menuitem');
+      expect(actionBtn.getAttribute('tabindex')).toBe('-1');
+      expect(document.activeElement).toBe(actionBtn);
       expect(actionBtn.classList.contains('add-panel-item')).toBe(false);
       expect(actionBtn.querySelector('.menu-custom-ai-label')?.textContent).toBe(
         'Add custom AI / More providers…'
@@ -583,8 +686,99 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
         'Perplexity, Poe, Ollama, API…'
       );
 
+      chrome.tabs.create.mockResolvedValueOnce({ id: 99, windowId: 5 });
       actionBtn.click();
       expect(document.querySelector('.add-panel-menu')).toBeNull();
+      await vi.waitFor(() => {
+        expect(chrome.tabs.create).toHaveBeenCalledWith({
+          url: 'chrome-extension://panelize-test-extension-id/options/options.html#custom-provider-card',
+        });
+        expect(chrome.windows.update).toHaveBeenCalledWith(5, { focused: true });
+      });
+    });
+
+    it('supports full keyboard navigation (ArrowDown, ArrowUp, Home, End, Escape, Enter) on + and ⇄ menus', async () => {
+      installMultiPanelChrome({
+        syncInitial: {
+          enabledProviders: ['chatgpt', 'claude', 'gemini'],
+          multiPanelLayout: '1x1',
+        },
+        localInitial: {
+          multiPanelProviders: ['chatgpt'],
+          currentLayout: '1x1',
+        },
+        tabsQueryResult: [],
+      });
+
+      await import('../multi-panel/multi-panel.js');
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.panel-item')).toHaveLength(1);
+      });
+
+      // 1. Add-panel menu (+) keyboard navigation + Escape restores focus to #add-panel-btn
+      const addBtn = document.getElementById('add-panel-btn');
+      addBtn.focus();
+      addBtn.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.add-panel-menu')).not.toBeNull();
+      });
+
+      const addMenu = document.querySelector('.add-panel-menu');
+      expect(addMenu.getAttribute('role')).toBe('menu');
+      const addItems = Array.from(addMenu.querySelectorAll('[role="menuitem"]'));
+      // Available providers ('claude', 'gemini') + footer Custom AI button = 3 menuitems
+      expect(addItems).toHaveLength(3);
+      expect(addItems.every((el) => el.getAttribute('tabindex') === '-1')).toBe(true);
+      expect(document.activeElement).toBe(addItems[0]);
+
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(document.activeElement).toBe(addItems[1]);
+
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(document.activeElement).toBe(addItems[2]);
+      expect(document.activeElement.classList.contains('menu-custom-ai-action')).toBe(true);
+
+      // Wrap around from last to first
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(document.activeElement).toBe(addItems[0]);
+
+      // Wrap around backwards from first to last
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      expect(document.activeElement).toBe(addItems[2]);
+
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+      expect(document.activeElement).toBe(addItems[0]);
+
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      expect(document.activeElement).toBe(addItems[2]);
+
+      addMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(document.querySelector('.add-panel-menu')).toBeNull();
+      expect(document.activeElement).toBe(addBtn);
+      expect(addBtn.getAttribute('aria-expanded')).toBe('false');
+
+      // 2. Provider switcher menu (⇄) keyboard navigation + Enter activates footer Custom AI item
+      const switchBtn = document.querySelector('.panel-item .switch-provider-btn');
+      switchBtn.focus();
+      switchBtn.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.provider-switcher-menu')).not.toBeNull();
+      });
+
+      const switchMenu = document.querySelector('.provider-switcher-menu');
+      expect(switchMenu.getAttribute('role')).toBe('menu');
+      const switchItems = Array.from(switchMenu.querySelectorAll('[role="menuitem"]'));
+      // 3 enabled providers + footer Custom AI button = 4 menuitems
+      expect(switchItems).toHaveLength(4);
+      expect(document.activeElement).toBe(switchItems[0]);
+
+      switchMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      expect(document.activeElement).toBe(switchItems[3]);
+      expect(document.activeElement.classList.contains('menu-custom-ai-action')).toBe(true);
+
+      chrome.tabs.create.mockClear();
+      switchItems[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(document.querySelector('.provider-switcher-menu')).toBeNull();
       await vi.waitFor(() => {
         expect(chrome.tabs.create).toHaveBeenCalledWith({
           url: 'chrome-extension://panelize-test-extension-id/options/options.html#custom-provider-card',

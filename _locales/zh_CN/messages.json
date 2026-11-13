@@ -84,7 +84,7 @@
     "message": "已启用的提供商"
   },
   "descEnabledProviders": {
-    "message": "启用或拖拽排序内置平台，也可在下方添加任意AI网站（如Perplexity、秘塔、Poe）或OpenAI兼容API。"
+    "message": "启用或拖拽排序内置平台，也可在下方添加几乎任意AI网站（如Perplexity、秘塔、Poe）或OpenAI兼容API。"
   },
   "sectionKeyboardShortcuts": {
     "message": "键盘快捷键"
@@ -1010,7 +1010,7 @@
     "message": "请移除网址中的用户名和密码。"
   },
   "errCustomUrlInsecureHttp": {
-    "message": "明文http://仅允许用于localhost和局域网私有IP，请改用https://。"
+    "message": "明文http://仅支持localhost和局域网私有IP（192.168.x、10.x、172.16-31.x）；.local、Tailscale或自定义域名请改填局域网IP或使用https://。"
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "该网站已作为内置服务商提供。"
@@ -1157,10 +1157,10 @@
     "message": "http://localhost:3000或http://127.0.0.1:8080"
   },
   "hintCustomProviderModeWebSite": {
-    "message": "直接粘贴任意AI对话网站地址（如https://www.perplexity.ai、https://metaso.cn、https://poe.com、https://muse.ai），无需等待内置更新即可并排对比。"
+    "message": "直接粘贴几乎任意AI对话网站地址（如https://www.perplexity.ai、https://metaso.cn、https://poe.com、https://muse.ai），无需等待内置更新即可并排对比。"
   },
   "hintCustomProviderModeWebLocal": {
-    "message": "嵌入运行在本机localhost、局域网或团队域名的自部署聊天界面（如Open WebUI、LibreChat、LobeChat、Dify）。"
+    "message": "嵌入自部署聊天界面（Open WebUI、LibreChat、LobeChat、Dify）：明文http://支持localhost与局域网私有IP（192.168.x、10.x、172.16-31.x）；.local主机名、Tailscale或团队域名请改填局域网IP或使用https://。"
   },
   "hintCustomProviderModeApi": {
     "message": "连接本地模型服务（Ollama免配跨域直连、LM Studio、vLLM）或云端接口（OpenRouter、DeepSeek、硅基流动等），可点「加载模型」自动拉取列表。"

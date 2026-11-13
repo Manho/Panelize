@@ -189,7 +189,9 @@
             <p class="custom-provider-mode-hint" id="custom-provider-mode-hint" data-i18n="hintCustomProviderModeWebSite">
               Paste almost any AI chat site (e.g. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) to compare side by side.
             </p>
-            <div class="custom-provider-examples" id="custom-provider-examples"></div>
+            <div class="custom-provider-examples" id="custom-provider-examples" role="group" aria-labelledby="custom-provider-examples-label">
+              <span class="custom-provider-examples-label" id="custom-provider-examples-label" data-i18n="labelCustomProviderExamples">Quick fill:</span>
+            </div>
             <div class="custom-provider-fields">
               <div class="custom-provider-field custom-provider-field-name">
                 <label for="custom-provider-name" data-i18n="labelCustomProviderName">Name (max 40 chars)</label>
@@ -219,7 +221,7 @@
                   spellcheck="false"
                   data-i18n-placeholder="placeholderCustomProviderUrlWebSite"
                   placeholder="https://www.perplexity.ai"
-                  aria-describedby="custom-provider-origin-preview custom-provider-error"
+                  aria-describedby="custom-provider-mode-hint custom-provider-origin-preview custom-provider-error"
                 />
               </div>
               <div class="custom-provider-api-fields" id="custom-provider-api-fields" hidden>
