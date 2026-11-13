@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Custom AI & API Setup Guide (Perplexity, Mistral, Poe, Ollama, OpenRouter…)
+    url: https://panelize.dev/guides/add-custom-ai-and-api/
+    about: Add almost any AI chat website, self-hosted web UI, or OpenAI-compatible API right now in Settings → Add custom AI.

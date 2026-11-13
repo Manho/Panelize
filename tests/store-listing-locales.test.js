@@ -14,7 +14,7 @@ const MAX_DESCRIPTION_LENGTH = 132;
 // The store listing must not name AI providers or competing extensions; the
 // Chrome Web Store rejects listings that do.
 const THIRD_PARTY_NAMES =
-  /chatgpt|openai|claude|anthropic|gemini|grok|deepseek|kimi|qwen|doubao|zhipu|z\.ai|yuanbao|ai studio|aistudio|通义|千问|豆包|智谱|元宝|chathub|chatall|merlin|sider|monica/i;
+  /chatgpt|openai|claude|anthropic|gemini|grok|deepseek|kimi|qwen|doubao|zhipu|z\.ai|yuanbao|ai studio|aistudio|perplexity|ollama|openrouter|mistral|\bpoe\b|huggingchat|通义|千问|豆包|智谱|元宝|秘塔|chathub|chatall|merlin|sider|monica/i;
 
 function readMessages(locale) {
   return JSON.parse(readFileSync(resolve(LOCALES_DIR, locale, 'messages.json'), 'utf8'));

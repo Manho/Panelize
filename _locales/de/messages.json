@@ -3,7 +3,7 @@
     "message": "Panelize - KI-Chatbots nebeneinander vergleichen"
   },
   "extensionDescription": {
-    "message": "Frage mehrere KI-Chatbots zugleich und vergleiche die Antworten nebeneinander. Mit eigenen Konten. Gratis, ohne API-Schlüssel."
+    "message": "Mehrere KI-Chatbots nebeneinander vergleichen – mit eigenen Logins, gratis & ohne API-Key. Eigene KI-Websites & APIs ergänzen."
   },
   "commandOpenSidebar": {
     "message": "Panelize mit Standard-Anbieter öffnen"
@@ -84,7 +84,7 @@
     "message": "Aktivierte Anbieter"
   },
   "descEnabledProviders": {
-    "message": "Wählen Sie aus, welche KI-Anbieter in Panelize angezeigt werden"
+    "message": "Integrierte Anbieter aktivieren/sortieren oder unten beliebige KI-Websites (z. B. Perplexity, Poe) und OpenAI-kompatible APIs hinzufügen."
   },
   "sectionKeyboardShortcuts": {
     "message": "Tastaturkürzel"
@@ -1016,7 +1016,7 @@
     "message": "Entferne Benutzername und Passwort aus der URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "Unverschlüsseltes http:// ist nur für localhost und private Netzwerk-IPs erlaubt. Verwende stattdessen https://."
+    "message": "Unverschlüsseltes http:// ist nur für localhost und private LAN-IPs (192.168.x, 10.x, 172.16-31.x) erlaubt. Verwende für .local, Tailscale oder eigene Domains die LAN-IP oder https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "Diese Website ist bereits als integrierter Anbieter verfügbar."
@@ -1058,7 +1058,7 @@
     "message": "Basis-URL oder Chat-Completions-URL"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 oder http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 oder http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "Modell-ID"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "Modellliste konnte nicht geladen werden ($1). Sie können die Modell-ID weiterhin manuell eingeben."
+  },
+  "descAddCustomProviderIntro": {
+    "message": "Ihre Lieblings-KI fehlt oben? Fügen Sie hier fast jede KI-Chat-Website oder OpenAI-kompatible API direkt hinzu."
+  },
+  "linkCustomProviderGuide": {
+    "message": "Einrichtungsanleitung ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "KI-Website"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "Lokales / selbst gehostetes Web"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "KI-Website-URL"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "Lokale oder selbst gehostete URL"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 oder http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "Fügen Sie fast jede KI-Chat-Website ein (z. B. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai), um sie nebeneinander zu vergleichen."
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "Selbst gehostete Chat-Apps einbetten (Open WebUI, LibreChat, LobeChat, Dify): Unverschlüsseltes http:// funktioniert für localhost und private LAN-IPs (192.168.x, 10.x, 172.16-31.x); für .local-Hostnamen, Tailscale oder Team-Domains die LAN-IP oder https:// verwenden."
+  },
+  "hintCustomProviderModeApi": {
+    "message": "Lokale Server (Ollama funktioniert ohne CORS-Setup, LM Studio, vLLM) oder Cloud-APIs (OpenRouter, DeepSeek, OpenAI) verbinden und auf „Modelle laden“ klicken."
+  },
+  "labelCustomProviderExamples": {
+    "message": "Schnellauswahl:"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama (lokal)"
+  },
+  "menuAddCustomProvider": {
+    "message": "Eigene KI hinzufügen / Weitere Anbieter…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity, Poe, Ollama, API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "Alle aktivierten KIs sind bereits geöffnet"
   }
 }

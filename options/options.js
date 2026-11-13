@@ -36,6 +36,7 @@ import {
   preserveForeignCustomIds
 } from '../modules/provider-order.js';
 import {
+  OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION,
   hasOptionalProviderPermission,
   requestOptionalProviderPermission,
   supportsScopedFrameRules
@@ -59,8 +60,187 @@ import {
   loadVersionInfo,
   checkForUpdates
 } from '../modules/version-checker.js';
-import { t, translatePage, getCurrentLanguage, initializeLanguage } from '../modules/i18n.js';
+import {
+  t,
+  translatePage,
+  getCurrentLanguage,
+  getTranslationLocale,
+  initializeLanguage
+} from '../modules/i18n.js';
 const DEFAULT_ENABLED_PROVIDERS = DEFAULT_PROVIDER_IDS;
+
+export const CUSTOM_PROVIDER_GUIDE_URL =
+  'https://panelize.dev/guides/add-custom-ai-and-api/';
+export const CUSTOM_PROVIDER_GUIDE_URL_ZH =
+  'https://panelize.dev/zh/guides/add-custom-ai-and-api/';
+
+export const CUSTOM_PROVIDER_MODE_CONFIG = Object.freeze({
+  web: Object.freeze({
+    namePlaceholderKey: 'placeholderCustomProviderNameWebSite',
+    namePlaceholderFallback: 'Perplexity',
+    urlLabelKey: 'labelCustomProviderUrlWebSite',
+    urlLabelFallback: 'AI Website URL',
+    urlPlaceholderKey: 'placeholderCustomProviderUrlWebSite',
+    urlPlaceholderFallback: 'https://www.perplexity.ai',
+    modeHintKey: 'hintCustomProviderModeWebSite',
+    modeHintFallback:
+      'Paste almost any AI chat site (e.g. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) to compare side by side.',
+    examples: Object.freeze([
+      Object.freeze({
+        id: 'perplexity',
+        label: 'Perplexity',
+        name: 'Perplexity',
+        url: 'https://www.perplexity.ai'
+      }),
+      Object.freeze({
+        id: 'mistral',
+        label: 'Mistral Le Chat',
+        name: 'Mistral',
+        url: 'https://chat.mistral.ai'
+      }),
+      Object.freeze({
+        id: 'poe',
+        label: 'Poe',
+        name: 'Poe',
+        url: 'https://poe.com'
+      }),
+      Object.freeze({
+        id: 'huggingchat',
+        label: 'HuggingChat',
+        name: 'HuggingChat',
+        url: 'https://huggingface.co/chat'
+      })
+    ]),
+    examplesZhCn: Object.freeze([
+      Object.freeze({
+        id: 'perplexity',
+        label: 'Perplexity',
+        name: 'Perplexity',
+        url: 'https://www.perplexity.ai'
+      }),
+      Object.freeze({
+        id: 'metaso',
+        label: '秘塔AI搜索',
+        name: '秘塔AI搜索',
+        url: 'https://metaso.cn'
+      }),
+      Object.freeze({
+        id: 'poe',
+        label: 'Poe',
+        name: 'Poe',
+        url: 'https://poe.com'
+      }),
+      Object.freeze({
+        id: 'mistral',
+        label: 'Mistral Le Chat',
+        name: 'Mistral',
+        url: 'https://chat.mistral.ai'
+      })
+    ])
+  }),
+  'web-local': Object.freeze({
+    namePlaceholderKey: 'placeholderCustomProviderNameWebLocal',
+    namePlaceholderFallback: 'Open WebUI',
+    urlLabelKey: 'labelCustomProviderUrlWebLocal',
+    urlLabelFallback: 'Local or Self-hosted URL',
+    urlPlaceholderKey: 'placeholderCustomProviderUrlWebLocal',
+    urlPlaceholderFallback: 'http://localhost:3000 or http://127.0.0.1:8080',
+    modeHintKey: 'hintCustomProviderModeWebLocal',
+    modeHintFallback:
+      'Embed self-hosted chat apps (Open WebUI, LibreChat, LobeChat, Dify): plain http:// works on localhost and private LAN IPs (192.168.x, 10.x, 172.16-31.x); use a LAN IP or https:// for .local, Tailscale, or team domains.',
+    examples: Object.freeze([
+      Object.freeze({
+        id: 'open-webui',
+        label: 'Open WebUI',
+        name: 'Open WebUI',
+        url: 'http://localhost:3000'
+      }),
+      Object.freeze({
+        id: 'lobechat',
+        label: 'LobeChat',
+        name: 'LobeChat',
+        url: 'http://localhost:3210'
+      })
+    ])
+  }),
+  api: Object.freeze({
+    namePlaceholderKey: 'placeholderCustomProviderNameApi',
+    namePlaceholderFallback: 'Ollama / OpenRouter',
+    urlLabelKey: 'labelCustomApiEndpointUrl',
+    urlLabelFallback: 'Base URL or Chat Completions URL',
+    urlPlaceholderKey: 'placeholderCustomApiEndpointUrl',
+    urlPlaceholderFallback: 'https://openrouter.ai/api/v1 or http://localhost:11434/v1',
+    modeHintKey: 'hintCustomProviderModeApi',
+    modeHintFallback:
+      'Connect local servers (Ollama works with no CORS setup, LM Studio, vLLM) or cloud APIs (OpenRouter, DeepSeek, OpenAI), then click "Load models".',
+    examples: Object.freeze([
+      Object.freeze({
+        id: 'magpie',
+        label: 'Magpie',
+        name: 'Magpie',
+        url: 'http://127.0.0.1:3425/v1'
+      }),
+      Object.freeze({
+        id: 'ollama',
+        labelKey: 'chipCustomExampleOllamaLocal',
+        label: 'Ollama (local)',
+        name: 'Ollama',
+        url: 'http://localhost:11434/v1'
+      }),
+      Object.freeze({
+        id: 'lm-studio',
+        label: 'LM Studio',
+        name: 'LM Studio',
+        url: 'http://localhost:1234/v1'
+      }),
+      Object.freeze({
+        id: 'openrouter',
+        label: 'OpenRouter',
+        name: 'OpenRouter',
+        url: 'https://openrouter.ai/api/v1'
+      }),
+      Object.freeze({
+        id: 'deepseek-api',
+        label: 'DeepSeek API',
+        name: 'DeepSeek API',
+        url: 'https://api.deepseek.com/v1'
+      })
+    ]),
+    examplesZhCn: Object.freeze([
+      Object.freeze({
+        id: 'magpie',
+        label: 'Magpie',
+        name: 'Magpie',
+        url: 'http://127.0.0.1:3425/v1'
+      }),
+      Object.freeze({
+        id: 'ollama',
+        labelKey: 'chipCustomExampleOllamaLocal',
+        label: 'Ollama (local)',
+        name: 'Ollama',
+        url: 'http://localhost:11434/v1'
+      }),
+      Object.freeze({
+        id: 'siliconflow',
+        label: '硅基流动',
+        name: '硅基流动',
+        url: 'https://api.siliconflow.cn/v1'
+      }),
+      Object.freeze({
+        id: 'deepseek-api',
+        label: 'DeepSeek API',
+        name: 'DeepSeek API',
+        url: 'https://api.deepseek.com/v1'
+      }),
+      Object.freeze({
+        id: 'openrouter',
+        label: 'OpenRouter',
+        name: 'OpenRouter',
+        url: 'https://openrouter.ai/api/v1'
+      })
+    ])
+  })
+});
 
 export const CUSTOM_URL_REASON_MESSAGE_KEYS = Object.freeze({
   invalid_url: 'errCustomUrlInvalid',
@@ -78,6 +258,15 @@ let editingCustomProviderId = null;
 let activeInlineEditState = null;
 let addFormModelCombobox = null;
 let sessionModelsRuleSeq = 0;
+let customProviderHighlightTimer = null;
+let boundCustomProviderHashListener = null;
+let lastAppliedChipName = null;
+let lastAppliedChipUrl = null;
+
+function tOrFallback(key, fallback) {
+  const message = t(key);
+  return message && message !== key ? message : fallback;
+}
 
 const modelCatalogCache = new Map();
 const transientProbedOrigins = new Set();
@@ -167,6 +356,17 @@ async function withTemporaryOriginStripSessionRule(origin, fn) {
     if (installed) {
       await dnr.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
     }
+  }
+}
+
+async function requestOptionalProviderAccessSync() {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    await chrome.runtime.sendMessage({ action: OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION });
+  } catch {
+    // Ignore when service worker message listener is unavailable in unit tests
   }
 }
 
@@ -708,10 +908,16 @@ function createModelComboboxController({
 
 function getCustomProviderFormElements() {
   return {
+    card: document.getElementById('custom-provider-card'),
     form: document.getElementById('custom-provider-form'),
     formTitle: document.getElementById('custom-provider-form-title'),
+    subtitleText: document.getElementById('custom-provider-subtitle-text'),
+    guideLink: document.getElementById('custom-provider-guide-link'),
     kindWebRadio: document.getElementById('custom-provider-kind-web'),
+    kindWebLocalRadio: document.getElementById('custom-provider-kind-web-local'),
     kindApiRadio: document.getElementById('custom-provider-kind-api'),
+    modeHint: document.getElementById('custom-provider-mode-hint'),
+    examplesContainer: document.getElementById('custom-provider-examples'),
     nameInput: document.getElementById('custom-provider-name'),
     urlLabel: document.getElementById('custom-provider-url-label'),
     urlInput: document.getElementById('custom-provider-url'),
@@ -734,9 +940,125 @@ function getCustomProviderFormElements() {
   };
 }
 
-function getSelectedCustomProviderKind() {
-  const checked = document.querySelector('input[name="customProviderKind"]:checked');
-  return checked?.value === 'api' ? 'api' : 'web';
+export function getSelectedCustomProviderMode() {
+  const radios = document.querySelectorAll('input[name="customProviderKind"]');
+  for (const radio of radios) {
+    if (radio.checked) {
+      if (radio.value === 'api') return 'api';
+      if (radio.value === 'web-local') return 'web-local';
+      return 'web';
+    }
+  }
+  return 'web';
+}
+
+export function getSelectedCustomProviderKind() {
+  return getSelectedCustomProviderMode() === 'api' ? 'api' : 'web';
+}
+
+export function syncCustomProviderGuideLink() {
+  const { subtitleText, guideLink } = getCustomProviderFormElements();
+  if (subtitleText) {
+    subtitleText.dataset.i18n = 'descAddCustomProviderIntro';
+    subtitleText.textContent = tOrFallback(
+      'descAddCustomProviderIntro',
+      "Don't see your favorite AI above? Add almost any AI chat website or OpenAI-compatible API right here."
+    );
+  }
+  if (guideLink) {
+    guideLink.dataset.i18n = 'linkCustomProviderGuide';
+    guideLink.textContent = tOrFallback('linkCustomProviderGuide', 'Setup guide ↗');
+    const activeLocale = String(getTranslationLocale() || getCurrentLanguage() || 'en')
+      .trim()
+      .toLowerCase();
+    guideLink.href = activeLocale.startsWith('zh')
+      ? CUSTOM_PROVIDER_GUIDE_URL_ZH
+      : CUSTOM_PROVIDER_GUIDE_URL;
+  }
+}
+
+function isSimplifiedChineseLocale() {
+  const raw = String(
+    getTranslationLocale() ||
+      getCurrentLanguage() ||
+      document.documentElement?.lang ||
+      'en'
+  )
+    .trim()
+    .replace(/_/g, '-')
+    .toLowerCase();
+  return raw === 'zh-cn' || raw === 'zh-hans' || raw === 'zh';
+}
+
+function renderCustomProviderExampleChips(mode, disabled) {
+  const { examplesContainer } = getCustomProviderFormElements();
+  if (!examplesContainer) {
+    return;
+  }
+  const config = CUSTOM_PROVIDER_MODE_CONFIG[mode] || CUSTOM_PROVIDER_MODE_CONFIG.web;
+  const examples =
+    isSimplifiedChineseLocale() && Array.isArray(config.examplesZhCn)
+      ? config.examplesZhCn
+      : config.examples;
+  const fragment = document.createDocumentFragment();
+
+  const labelEl = document.createElement('span');
+  labelEl.id = 'custom-provider-examples-label';
+  labelEl.className = 'custom-provider-examples-label';
+  labelEl.textContent = tOrFallback('labelCustomProviderExamples', 'Quick fill:');
+  fragment.appendChild(labelEl);
+
+  for (const example of examples) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'custom-provider-example-chip';
+    chip.dataset.exampleId = example.id;
+    chip.dataset.exampleName = example.name;
+    chip.dataset.exampleUrl = example.url;
+    chip.textContent = example.labelKey
+      ? tOrFallback(example.labelKey, example.label)
+      : example.label;
+    chip.disabled = Boolean(disabled);
+    fragment.appendChild(chip);
+  }
+
+  examplesContainer.replaceChildren(fragment);
+}
+
+export function focusAndHighlightCustomProviderCard({ behavior } = {}) {
+  const { card, nameInput } = getCustomProviderFormElements();
+  if (!card) {
+    return false;
+  }
+
+  const scrollBehavior =
+    behavior ??
+    (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth');
+  card.scrollIntoView?.({ block: 'nearest', behavior: scrollBehavior });
+  card.classList.add('custom-provider-card--highlight');
+  if (customProviderHighlightTimer) {
+    clearTimeout(customProviderHighlightTimer);
+  }
+  customProviderHighlightTimer = setTimeout(() => {
+    card.classList.remove('custom-provider-card--highlight');
+    customProviderHighlightTimer = null;
+  }, 1800);
+
+  if (nameInput && !nameInput.disabled) {
+    nameInput.focus?.({ preventScroll: true });
+    if (document.activeElement !== nameInput) {
+      nameInput.focus?.();
+    }
+  }
+
+  if (window.location.hash === '#custom-provider-card') {
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}`
+    );
+  }
+  return true;
 }
 
 function setPasswordFieldRevealedState(inputEl, toggleButtonEl, revealed) {
@@ -758,6 +1080,8 @@ function setApiKeyRevealedState(revealed) {
 export function syncCustomProviderKindFields() {
   const {
     formTitle,
+    modeHint,
+    nameInput,
     urlLabel,
     urlInput,
     apiFieldsWrapper,
@@ -766,7 +1090,12 @@ export function syncCustomProviderKindFields() {
     apiNote,
     addButton
   } = getCustomProviderFormElements();
+  const mode = getSelectedCustomProviderMode();
   const isApi = getSelectedCustomProviderKind() === 'api';
+  const modeConfig = CUSTOM_PROVIDER_MODE_CONFIG[mode] || CUSTOM_PROVIDER_MODE_CONFIG.web;
+  const disabled = !supportsScopedFrameRules() || isSubmittingCustomProvider;
+
+  syncCustomProviderGuideLink();
 
   if (formTitle) {
     formTitle.dataset.i18n = 'headingAddCustomProvider';
@@ -776,6 +1105,12 @@ export function syncCustomProviderKindFields() {
     addButton.dataset.i18n = 'btnAddCustomProvider';
     addButton.textContent = t('btnAddCustomProvider');
   }
+
+  if (modeHint) {
+    modeHint.dataset.i18n = modeConfig.modeHintKey;
+    modeHint.textContent = tOrFallback(modeConfig.modeHintKey, modeConfig.modeHintFallback);
+  }
+  renderCustomProviderExampleChips(mode, disabled);
 
   if (apiFieldsWrapper) {
     apiFieldsWrapper.hidden = !isApi;
@@ -789,17 +1124,23 @@ export function syncCustomProviderKindFields() {
   if (!isApi) {
     addFormModelCombobox?.closeListbox();
   }
+  if (nameInput) {
+    nameInput.dataset.i18nPlaceholder = modeConfig.namePlaceholderKey;
+    nameInput.placeholder = tOrFallback(
+      modeConfig.namePlaceholderKey,
+      modeConfig.namePlaceholderFallback
+    );
+  }
   if (urlLabel) {
-    const labelKey = isApi ? 'labelCustomApiEndpointUrl' : 'labelCustomProviderUrl';
-    urlLabel.dataset.i18n = labelKey;
-    urlLabel.textContent = t(labelKey);
+    urlLabel.dataset.i18n = modeConfig.urlLabelKey;
+    urlLabel.textContent = tOrFallback(modeConfig.urlLabelKey, modeConfig.urlLabelFallback);
   }
   if (urlInput) {
-    const placeholderKey = isApi
-      ? 'placeholderCustomApiEndpointUrl'
-      : 'placeholderCustomProviderUrl';
-    urlInput.dataset.i18nPlaceholder = placeholderKey;
-    urlInput.placeholder = t(placeholderKey);
+    urlInput.dataset.i18nPlaceholder = modeConfig.urlPlaceholderKey;
+    urlInput.placeholder = tOrFallback(
+      modeConfig.urlPlaceholderKey,
+      modeConfig.urlPlaceholderFallback
+    );
   }
   if (apiKeyInput) {
     apiKeyInput.dataset.i18nPlaceholder = 'placeholderCustomProviderApiKey';
@@ -810,7 +1151,9 @@ export function syncCustomProviderKindFields() {
 export function syncCustomProviderFormAvailability() {
   const {
     kindWebRadio,
+    kindWebLocalRadio,
     kindApiRadio,
+    examplesContainer,
     nameInput,
     urlInput,
     modelInput,
@@ -831,9 +1174,17 @@ export function syncCustomProviderFormAvailability() {
   if (kindWebRadio) {
     kindWebRadio.disabled = disabled;
   }
+  if (kindWebLocalRadio) {
+    kindWebLocalRadio.disabled = disabled;
+  }
   if (kindApiRadio) {
     kindApiRadio.disabled = disabled;
   }
+  examplesContainer
+    ?.querySelectorAll('.custom-provider-example-chip')
+    .forEach((chip) => {
+      chip.disabled = disabled;
+    });
   if (nameInput) {
     nameInput.disabled = disabled;
   }
@@ -1633,6 +1984,7 @@ async function handleInlineEditSubmit(event, inlineState) {
       }
 
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
+      await requestOptionalProviderAccessSync();
 
       editingCustomProviderId = null;
       if (activeInlineEditState === inlineState) {
@@ -1933,11 +2285,14 @@ export async function handleCustomProviderFormSubmit(event) {
 
       await chrome.storage.sync.set({ enabledProviders, providerOrder });
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
+      await requestOptionalProviderAccessSync();
 
       if (nameInput) nameInput.value = '';
       if (urlInput) urlInput.value = '';
       if (modelInput) modelInput.value = '';
       if (apiKeyInput) apiKeyInput.value = '';
+      lastAppliedChipName = null;
+      lastAppliedChipUrl = null;
       setApiKeyRevealedState(false);
       addFormModelCombobox?.reset();
       updateCustomProviderOriginPreview();
@@ -2006,6 +2361,7 @@ export async function deleteCustomProviderEntry(providerId) {
     syncUpdates.multiPanelProviders = syncState.multiPanelProviders.filter((id) => id !== providerId);
   }
   await chrome.storage.sync.set(syncUpdates);
+  await requestOptionalProviderAccessSync();
 
   if (origin && !isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
     await chrome.permissions.remove({ origins: [`${origin}/*`] }).catch((error) => {
@@ -2022,7 +2378,9 @@ function setupCustomProviderForm() {
   const {
     form,
     kindWebRadio,
+    kindWebLocalRadio,
     kindApiRadio,
+    examplesContainer,
     nameInput,
     urlInput,
     modelFieldContainer,
@@ -2032,22 +2390,70 @@ function setupCustomProviderForm() {
     modelListbox,
     modelHint,
     apiKeyInput,
-    apiKeyToggleButton
+    apiKeyToggleButton,
+    addButton
   } = getCustomProviderFormElements();
 
   const jumpButton = document.getElementById('jump-add-custom-provider-btn');
   if (jumpButton && jumpButton.dataset.jumpBound !== 'true') {
     jumpButton.dataset.jumpBound = 'true';
     jumpButton.addEventListener('click', () => {
-      document
-        .getElementById('custom-provider-card')
-        ?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
-      nameInput?.focus?.();
+      focusAndHighlightCustomProviderCard();
+    });
+  }
+
+  if (boundCustomProviderHashListener) {
+    window.removeEventListener('hashchange', boundCustomProviderHashListener);
+  }
+  boundCustomProviderHashListener = () => {
+    if (window.location.hash === '#custom-provider-card') {
+      focusAndHighlightCustomProviderCard();
+    }
+  };
+  window.addEventListener('hashchange', boundCustomProviderHashListener);
+
+  if (examplesContainer && examplesContainer.dataset.examplesBound !== 'true') {
+    examplesContainer.dataset.examplesBound = 'true';
+    examplesContainer.addEventListener('click', (event) => {
+      const chip = event.target?.closest?.('.custom-provider-example-chip');
+      if (
+        !chip ||
+        chip.disabled ||
+        !supportsScopedFrameRules() ||
+        isSubmittingCustomProvider
+      ) {
+        return;
+      }
+
+      const nextName = chip.dataset.exampleName || '';
+      const nextUrl = chip.dataset.exampleUrl || '';
+      clearCustomProviderFormError();
+      if (nameInput) {
+        nameInput.value = nextName;
+        nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (urlInput) {
+        urlInput.value = nextUrl;
+        urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      lastAppliedChipName = nextName;
+      lastAppliedChipUrl = nextUrl;
+
+      const isApi = getSelectedCustomProviderKind() === 'api';
+      if (isApi && modelInput && modelInput.value.trim().length === 0) {
+        modelInput.focus?.();
+      } else if (urlInput && urlInput.value.trim().length === 0) {
+        urlInput.focus?.();
+      } else {
+        addButton?.focus?.();
+      }
     });
   }
 
   if (form && form.dataset.customFormBound !== 'true') {
     form.dataset.customFormBound = 'true';
+    lastAppliedChipName = null;
+    lastAppliedChipUrl = null;
 
     addFormModelCombobox = createModelComboboxController({
       idPrefix: 'add-custom-models',
@@ -2076,14 +2482,25 @@ function setupCustomProviderForm() {
     });
 
     const onKindChange = () => {
+      if (lastAppliedChipName !== null && nameInput && nameInput.value === lastAppliedChipName) {
+        nameInput.value = '';
+      }
+      if (lastAppliedChipUrl !== null && urlInput && urlInput.value === lastAppliedChipUrl) {
+        urlInput.value = '';
+      }
+      lastAppliedChipName = null;
+      lastAppliedChipUrl = null;
       clearCustomProviderFormError();
       syncCustomProviderKindFields();
       updateCustomProviderOriginPreview();
       if (getSelectedCustomProviderKind() !== 'api') {
         addFormModelCombobox?.invalidateCatalog();
+      } else {
+        addFormModelCombobox?.syncEndpointContext();
       }
     };
     kindWebRadio?.addEventListener('change', onKindChange);
+    kindWebLocalRadio?.addEventListener('change', onKindChange);
     kindApiRadio?.addEventListener('change', onKindChange);
 
     nameInput?.addEventListener('input', () => {
@@ -2363,6 +2780,10 @@ function updateShortcutHelperVisibility(isEnabled) {
 // T050: Initialize settings page
 async function init() {
   editingCustomProviderId = null;
+  if (customProviderHighlightTimer) {
+    clearTimeout(customProviderHighlightTimer);
+    customProviderHighlightTimer = null;
+  }
   if (activeInlineEditState) {
     activeInlineEditState.destroy();
     activeInlineEditState = null;
@@ -2389,6 +2810,9 @@ async function init() {
   setupPermissionChangeListeners();
   setupShortcutHelpers();
   refreshAutoSizedSelects();
+  if (window.location.hash === '#custom-provider-card') {
+    focusAndHighlightCustomProviderCard();
+  }
 }
 
 // T051: Load and display current settings
@@ -2665,6 +3089,9 @@ export async function renderProviderList() {
   const googleProviderMode = getGoogleProviderModeOrDefault(settings);
   const displayOrder = getProviderDisplayOrder(settings);
   const listContainer = document.getElementById('provider-list');
+  if (!listContainer) {
+    return;
+  }
   const providers = listProviders();
   const scopedRulesSupported = supportsScopedFrameRules();
   const providerAccessEntries = await Promise.all(providers.map(async (provider) => [
@@ -2713,6 +3140,9 @@ export async function renderProviderList() {
     });
   });
 
+  if (!listContainer.isConnected) {
+    return;
+  }
   listContainer.replaceChildren(...providerItems);
 
   if (preservedInlineFocus && listContainer.contains(preservedInlineFocus)) {

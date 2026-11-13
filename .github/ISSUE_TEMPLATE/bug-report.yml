@@ -1,0 +1,56 @@
+name: Bug Report
+description: Report a bug or broken behavior in Panelize
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! If a built-in or custom AI website shows a login screen inside a panel, try signing into that site in a regular browser tab first and reloading the panel.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: Describe what went wrong vs what you expected...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the issue.
+      value: |
+        1. Open Panelize with layout ...
+        2. Select provider(s) ...
+        3. Click '...'
+        4. Observe error ...
+    validations:
+      required: true
+
+  - type: input
+    id: providers
+    attributes:
+      label: Affected Provider(s)
+      description: Built-in provider name(s), Custom AI Website URL, or Custom API endpoint.
+      placeholder: e.g. ChatGPT, Claude, Custom Web (https://www.perplexity.ai), Custom API (Ollama)
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Panelize Version, Browser & OS
+      placeholder: e.g. Panelize 2.2.1, Chrome 146 / Edge 146, Windows 11 / macOS 15
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Screenshots or Console Logs (Optional)
+      description: Paste any DevTools console errors or drag-and-drop screenshots here (redact any personal prompts or API keys).
+    validations:
+      required: false

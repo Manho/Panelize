@@ -26,9 +26,11 @@ import {
   subscribeCustomProvidersChanged
 } from '../modules/custom-providers.js';
 import { createCustomApiHostBridge } from '../modules/custom-api-bridge.js';
+import { createCustomSwRecoveryController } from '../modules/custom-sw-recovery.js';
 import { preserveForeignCustomIds } from '../modules/provider-order.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
+import { OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION } from '../modules/optional-provider-access.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
   GOOGLE_PROVIDER_MODE_AI,
@@ -157,6 +159,7 @@ let tempChatPendingPanelIds = new Set();
 let tempChatButtonRestoreTimerId = null;
 let isTemporaryChatModeEnabled = false;
 let customApiHostBridge = null;
+let customSwRecoveryController = null;
 
 function getResolvedHostTheme() {
   return isDarkThemeActive() ? 'dark' : 'light';
@@ -260,6 +263,14 @@ async function init() {
     getPanels: () => panels,
     getTheme: getResolvedHostTheme
   });
+  customSwRecoveryController?.dispose();
+  customSwRecoveryController = createCustomSwRecoveryController({
+    getPanels: () => panels,
+    isCustomWebProvider,
+    getProviderOrigin: (providerId) => getCustomProviderOrigin(providerId),
+    syncAccess: requestOptionalProviderAccessSync,
+    reloadPanel: (panel, targetUrl, options) => reloadPanelIframe(panel, targetUrl, options)
+  });
   await initializeLanguage();
   translatePage();
   registerRuntimeMessageListener();
@@ -320,8 +331,19 @@ function focusUnifiedInput({ force = false } = {}) {
     ) {
       return;
     }
-    // The user moved on to a dialog, e.g. to edit a snapshot title.
-    if (isFocusInOpenModal()) {
+    const currentActive = document.activeElement;
+    if (
+      !force &&
+      currentActive &&
+      currentActive.tagName !== 'IFRAME' &&
+      currentActive !== document.body &&
+      currentActive !== document.documentElement &&
+      currentActive !== inputTextarea
+    ) {
+      return;
+    }
+    // The user moved on to a dialog or dropdown menu, e.g. to edit a snapshot title or pick a provider.
+    if (isFocusInOpenModal() || isFocusInOpenDropdownMenu()) {
       return;
     }
     try {
@@ -337,6 +359,12 @@ function isFocusInOpenModal() {
   return Boolean(modal) && modal.style.display !== 'none';
 }
 
+function isFocusInOpenDropdownMenu() {
+  return Boolean(
+    document.activeElement?.closest?.('.add-panel-menu, .provider-switcher-menu, [role="menu"]')
+  );
+}
+
 function shouldPreserveUnifiedInputFocus() {
   return loadingPanelIds.size > 0 || isRestoringFocusAfterNewChat || isRestoringFocusAfterSend;
 }
@@ -347,6 +375,32 @@ function isGoogleProvider(providerId) {
 
 export function isSendFocusTrackedProvider(providerId) {
   return providerId === 'chatgpt' || providerId === 'aistudio';
+}
+
+function isCustomWebProvider(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  return Boolean(descriptor?.access === 'custom' && descriptor.customKind !== 'api');
+}
+
+function requiresOptionalProviderAccessSync(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  return descriptor?.access === 'optional' || descriptor?.access === 'custom';
+}
+
+async function requestOptionalProviderAccessSync() {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION
+    });
+    if (response && response.success === false) {
+      console.warn('[Multi-Panel] Optional provider access sync failed:', response.error);
+    }
+  } catch (error) {
+    console.warn('[Multi-Panel] Optional provider access sync failed:', error);
+  }
 }
 
 // The service worker owns the forwarding rule and serializes updates to it;
@@ -587,7 +641,7 @@ function showPanelLoadingState(panelEl, provider) {
   renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
 }
 
-function reloadPanelIframe(panel, overrideUrl = null) {
+function reloadPanelIframe(panel, overrideUrl = null, { isRecoveryReload = false } = {}) {
   customApiHostBridge?.abortPanelStream(panel.id);
   const panelEl = document.getElementById(panel.id);
   const provider = getProviderById(panel.providerId);
@@ -600,11 +654,13 @@ function reloadPanelIframe(panel, overrideUrl = null) {
     return;
   }
 
+  const nextUrl = overrideUrl || getProviderFrameUrl(panel.providerId);
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
   panel.currentUrl = null;
-  iframe.src = overrideUrl || getProviderFrameUrl(panel.providerId);
   panel.iframe = iframe;
+  customSwRecoveryController?.notifyNavigationStart(panel, nextUrl, { isRecoveryReload });
+  iframe.src = nextUrl;
 }
 
 async function openProviderTopLevel(panel) {
@@ -650,8 +706,16 @@ function bindPanelHeaderActions(panelId) {
 
   const switchBtn = panelEl.querySelector('.switch-provider-btn');
   if (switchBtn) {
+    switchBtn.setAttribute('aria-haspopup', 'menu');
+    switchBtn.setAttribute('aria-expanded', 'false');
     switchBtn.addEventListener('click', () => {
       showProviderSwitcher(panelId);
+    });
+    switchBtn.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' && !document.querySelector('.provider-switcher-menu')) {
+        event.preventDefault();
+        showProviderSwitcher(panelId);
+      }
     });
   }
 
@@ -738,13 +802,13 @@ function registerStorageChangeListener() {
     refreshThemeAwareProviderIcons();
 
     if (document.querySelector('.add-panel-menu')) {
-      document.querySelectorAll('.add-panel-menu').forEach((menu) => menu.remove());
+      dismissExistingDropdownMenus('.add-panel-menu');
       showAddPanelMenu().catch((error) => {
         console.error('Error refreshing add-panel menu:', error);
       });
     }
     if (document.querySelector('.provider-switcher-menu')) {
-      document.querySelectorAll('.provider-switcher-menu').forEach((menu) => menu.remove());
+      dismissExistingDropdownMenus('.provider-switcher-menu');
     }
   });
 
@@ -1425,6 +1489,11 @@ async function initializePanels() {
 
     const panelCount = LAYOUT_PANEL_COUNTS[currentLayout] || 4;
     const count = Math.min(providerIds.length, panelCount);
+    const initialProviderIds = providerIds.slice(0, count);
+
+    if (initialProviderIds.some(requiresOptionalProviderAccessSync)) {
+      await requestOptionalProviderAccessSync();
+    }
 
     // Create all panels and load in parallel for fastest total time
     for (let i = 0; i < count; i++) {
@@ -1497,6 +1566,9 @@ function appendMenuOriginBadgeIfCustom(itemEl, nameSpan, providerId) {
 async function addPanel(providerId, { saveConfig = true } = {}) {
   // Sync before the capacity check so no await separates the check from the
   // panel being added.
+  if (saveConfig && requiresOptionalProviderAccessSync(providerId)) {
+    await requestOptionalProviderAccessSync();
+  }
   if (providerId === 'grok') {
     await requestGrokWebSocketCookieSync();
   }
@@ -1565,41 +1637,14 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
 
   const iframe = document.createElement('iframe');
-  iframe.setAttribute('src', getProviderFrameUrl(providerId));
+  const initialFrameUrl = getProviderFrameUrl(providerId);
   iframe.setAttribute(
     'sandbox',
     'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
   );
   iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
 
-  iframeContainerEl.append(loadingEl, iframe);
-  panelEl.append(headerEl, iframeContainerEl);
-
-  panelGrid.appendChild(panelEl);
-
-  // Handle iframe load
-  // Grace period after load to catch AI pages that auto-focus after JS init
-  const LOAD_GRACE_PERIOD = 3000;
-  loadingPanelIds.add(panelId);
-  iframe.addEventListener('load', () => {
-    loadingEl.classList.add('hidden');
-    const panel = panels.find(p => p.id === panelId);
-    if (isTemporaryChatModeEnabled && panel && requiresTemporaryChatActivationRetry(panel.providerId)) {
-      startTemporaryChatActivationForPanel(panel);
-    }
-    setTimeout(() => {
-      loadingPanelIds.delete(panelId);
-    }, LOAD_GRACE_PERIOD);
-  });
-
-  iframe.addEventListener('error', () => {
-    const currentPanel = panels.find(p => p.id === panelId);
-    const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
-    renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
-    loadingPanelIds.delete(panelId);
-  });
-
-  // Add to panels array
+  // Add to panels array before setting src / mounting so load handlers always see panel state
   const panel = {
     id: panelId,
     providerId,
@@ -1610,6 +1655,43 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
     fit: createPanelFitState()
   };
   panels.push(panel);
+  customSwRecoveryController?.notifyNavigationStart(panel, initialFrameUrl);
+
+  // Handle iframe load
+  // Grace period after load to catch AI pages that auto-focus after JS init
+  const LOAD_GRACE_PERIOD = 3000;
+  loadingPanelIds.add(panelId);
+  iframe.addEventListener('load', () => {
+    const currentPanel = panels.find(p => p.id === panelId);
+    const finishLoad = () => {
+      loadingEl.classList.add('hidden');
+      const livePanel = panels.find(p => p.id === panelId);
+      if (isTemporaryChatModeEnabled && livePanel && requiresTemporaryChatActivationRetry(livePanel.providerId)) {
+        startTemporaryChatActivationForPanel(livePanel);
+      }
+      setTimeout(() => {
+        loadingPanelIds.delete(panelId);
+      }, LOAD_GRACE_PERIOD);
+    };
+    if (currentPanel && customSwRecoveryController && isCustomWebProvider(currentPanel.providerId)) {
+      void customSwRecoveryController.handleFrameLoad(currentPanel, { onSettled: finishLoad });
+      return;
+    }
+    finishLoad();
+  });
+
+  iframe.addEventListener('error', () => {
+    const currentPanel = panels.find(p => p.id === panelId);
+    const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
+    renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
+    loadingPanelIds.delete(panelId);
+  });
+
+  iframe.setAttribute('src', initialFrameUrl);
+  iframeContainerEl.append(loadingEl, iframe);
+  panelEl.append(headerEl, iframeContainerEl);
+
+  panelGrid.appendChild(panelEl);
   panelFitObserver?.observe(iframe.parentElement);
   resetFillRetryState();
 
@@ -1629,6 +1711,7 @@ function removePanel(panelId, { saveConfig = true } = {}) {
   if (panelIndex === -1) return;
 
   customApiHostBridge?.abortPanelStream(panelId);
+  customSwRecoveryController?.notifyPanelRemoved(panelId);
   clearTemporaryChatRetriesForPanel(panelId);
 
   const fitContainer = panels[panelIndex].iframe?.parentElement;
@@ -1689,6 +1772,10 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();
+  }
+
+  if (requiresOptionalProviderAccessSync(newProviderId)) {
+    await requestOptionalProviderAccessSync();
   }
 
   if (newProviderId === 'grok') {
@@ -3385,7 +3472,18 @@ function setupEventListeners() {
   });
 
   // Add panel button
-  document.getElementById('add-panel-btn').addEventListener('click', showAddPanelMenu);
+  const addPanelBtn = document.getElementById('add-panel-btn');
+  if (addPanelBtn) {
+    addPanelBtn.setAttribute('aria-haspopup', 'menu');
+    addPanelBtn.setAttribute('aria-expanded', 'false');
+    addPanelBtn.addEventListener('click', showAddPanelMenu);
+    addPanelBtn.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' && !document.querySelector('.add-panel-menu')) {
+        event.preventDefault();
+        showAddPanelMenu();
+      }
+    });
+  }
 
   // Toggle toolbar button and expand bar
   document.getElementById('toggle-toolbar-btn').addEventListener('click', toggleToolbar);
@@ -3694,11 +3792,258 @@ function closePromptModal() {
 }
 
 // ===== Provider Switcher =====
+const OPTIONS_PAGE_PATH = 'options/options.html';
+const CUSTOM_PROVIDER_SETTINGS_HASH = '#custom-provider-card';
+
+function isOptionsPageUrl(candidateUrl, optionsBaseUrl) {
+  return (
+    typeof candidateUrl === 'string' &&
+    (candidateUrl === optionsBaseUrl ||
+      candidateUrl.startsWith(`${optionsBaseUrl}#`) ||
+      candidateUrl.startsWith(`${optionsBaseUrl}?`))
+  );
+}
+
+export async function openCustomProviderSettings() {
+  const optionsBaseUrl = typeof chrome?.runtime?.getURL === 'function'
+    ? chrome.runtime.getURL(OPTIONS_PAGE_PATH)
+    : OPTIONS_PAGE_PATH;
+  const targetUrl = `${optionsBaseUrl}${CUSTOM_PROVIDER_SETTINGS_HASH}`;
+
+  if (typeof chrome?.tabs?.update === 'function') {
+    let existingTab = null;
+
+    if (typeof chrome?.runtime?.getContexts === 'function') {
+      try {
+        const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+        const match = Array.isArray(contexts)
+          ? contexts.find(
+              (ctx) =>
+                ctx &&
+                ctx.frameId === 0 &&
+                typeof ctx.tabId === 'number' &&
+                ctx.tabId >= 0 &&
+                isOptionsPageUrl(ctx.documentUrl, optionsBaseUrl)
+            )
+          : null;
+        if (match) {
+          existingTab = {
+            id: match.tabId,
+            windowId: typeof match.windowId === 'number' && match.windowId >= 0 ? match.windowId : null
+          };
+        }
+      } catch {
+        existingTab = null;
+      }
+    }
+
+    if (!existingTab && typeof chrome?.tabs?.query === 'function') {
+      try {
+        const queriedByUrl = await chrome.tabs.query({ url: `${optionsBaseUrl}*` });
+        const matchedTab = Array.isArray(queriedByUrl)
+          ? queriedByUrl.find(
+              (tab) =>
+                tab &&
+                tab.id != null &&
+                (typeof tab.url !== 'string' || isOptionsPageUrl(tab.url, optionsBaseUrl))
+            )
+          : null;
+        if (matchedTab) {
+          existingTab = { id: matchedTab.id, windowId: matchedTab.windowId ?? null };
+        }
+      } catch {
+        existingTab = null;
+      }
+    }
+
+    if (existingTab) {
+      try {
+        await chrome.tabs.update(existingTab.id, {
+          url: targetUrl,
+          active: true
+        });
+        if (existingTab.windowId != null && typeof chrome?.windows?.update === 'function') {
+          try {
+            await chrome.windows.update(existingTab.windowId, { focused: true });
+          } catch {
+            // Focusing the browser window is best-effort
+          }
+        }
+        return;
+      } catch {
+        // Fall back to tabs.create or openOptionsPage below
+      }
+    }
+  }
+
+  if (typeof chrome?.tabs?.create === 'function') {
+    const createdTab = await chrome.tabs.create({ url: targetUrl });
+    if (createdTab?.windowId != null) {
+      await chrome.windows?.update?.(createdTab.windowId, { focused: true }).catch(() => {});
+    }
+    return;
+  }
+
+  if (typeof chrome?.runtime?.openOptionsPage === 'function') {
+    await chrome.runtime.openOptionsPage();
+  }
+}
+
+function appendCustomAiMenuFooter(menu, onDismiss) {
+  const divider = document.createElement('div');
+  divider.className = 'menu-custom-ai-divider';
+  divider.setAttribute('role', 'separator');
+
+  const actionBtn = document.createElement('button');
+  actionBtn.type = 'button';
+  actionBtn.className = 'menu-custom-ai-action';
+  actionBtn.setAttribute('role', 'menuitem');
+  actionBtn.setAttribute('tabindex', '-1');
+
+  const iconTemplate = document.createElement('template');
+  iconTemplate.innerHTML = '<span class="material-symbols-outlined menu-custom-ai-icon" aria-hidden="true">add</span>';
+  const iconEl = iconTemplate.content.firstElementChild;
+
+  const textWrap = document.createElement('span');
+  textWrap.className = 'menu-custom-ai-text';
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'menu-custom-ai-label';
+  labelSpan.textContent = getLocalizedText(
+    'menuAddCustomProvider',
+    'Add custom AI / More providers…'
+  );
+
+  const hintSpan = document.createElement('span');
+  hintSpan.className = 'menu-custom-ai-hint';
+  hintSpan.textContent = getLocalizedText(
+    'menuAddCustomProviderHint',
+    'Perplexity, Poe, Ollama, API…'
+  );
+
+  textWrap.append(labelSpan, hintSpan);
+  actionBtn.append(iconEl, textWrap);
+  actionBtn.addEventListener('click', () => {
+    onDismiss();
+    void openCustomProviderSettings();
+  });
+
+  menu.append(divider, actionBtn);
+}
+
+function clampMenuHorizontalPosition(menu, anchorLeft) {
+  if (typeof window === 'undefined' || !(window.innerWidth > 0)) {
+    return;
+  }
+  const menuRect = menu.getBoundingClientRect();
+  if (!(menuRect.width > 0)) {
+    return;
+  }
+  if (anchorLeft + menuRect.width > window.innerWidth - 8) {
+    const clampedLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+    menu.style.left = `${clampedLeft}px`;
+  }
+}
+
+function dismissExistingDropdownMenus(selector) {
+  document.querySelectorAll(selector).forEach((existing) => {
+    if (typeof existing._dismissMenu === 'function') {
+      existing._dismissMenu({ restoreFocus: false });
+    } else {
+      existing.remove();
+    }
+  });
+}
+
+function bindDropdownMenuKeyboardNavigation(menu, triggerBtn, dismissMenu) {
+  menu.setAttribute('role', 'menu');
+  if (triggerBtn) {
+    triggerBtn.setAttribute('aria-haspopup', 'menu');
+    triggerBtn.setAttribute('aria-expanded', 'true');
+  }
+
+  const getEnabledMenuItems = () =>
+    Array.from(menu.querySelectorAll('[role="menuitem"]')).filter(
+      (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true'
+    );
+
+  const focusMenuItem = (target) => {
+    if (!target) return;
+    target.focus?.({ preventScroll: true });
+    target.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  menu.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissMenu({ restoreFocus: true });
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      dismissMenu({ restoreFocus: false });
+      return;
+    }
+
+    const items = getEnabledMenuItems();
+    if (items.length === 0) {
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      const currentIdx = items.indexOf(document.activeElement);
+      const nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % items.length;
+      focusMenuItem(items[nextIdx]);
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      const currentIdx = items.indexOf(document.activeElement);
+      const prevIdx = currentIdx <= 0 ? items.length - 1 : currentIdx - 1;
+      focusMenuItem(items[prevIdx]);
+      return;
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault();
+      focusMenuItem(items[0]);
+      return;
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault();
+      focusMenuItem(items[items.length - 1]);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      const activeItem = document.activeElement?.closest?.('[role="menuitem"]');
+      if (activeItem && menu.contains(activeItem) && items.includes(activeItem)) {
+        event.preventDefault();
+        event.stopPropagation();
+        activeItem.click();
+      }
+    }
+  });
+
+  const initialItems = getEnabledMenuItems();
+  focusMenuItem(initialItems[0]);
+}
+
 async function showProviderSwitcher(panelId) {
   const enabledProviders = await getEnabledProviders();
   const panel = panels.find(p => p.id === panelId);
   if (!panel) return;
   const palette = getDropdownThemePalette();
+
+  dismissExistingDropdownMenus('.provider-switcher-menu, .add-panel-menu');
+
+  const panelEl = document.getElementById(panelId);
+  const triggerBtn = panelEl?.querySelector('.switch-provider-btn') || null;
+  if (!triggerBtn) return;
 
   // Create a simple dropdown menu
   const menu = document.createElement('div');
@@ -3718,6 +4063,8 @@ async function showProviderSwitcher(panelId) {
     const isSelected = provider.id === panel.providerId;
     const item = document.createElement('div');
     item.className = 'provider-switcher-item';
+    item.setAttribute('role', 'menuitem');
+    item.setAttribute('tabindex', '-1');
     item.dataset.providerId = provider.id;
     item.style.cssText = `
       display: flex;
@@ -3740,32 +4087,46 @@ async function showProviderSwitcher(panelId) {
     menu.appendChild(item);
   });
 
+  let closeMenu = null;
+  let closeMenuTimer = null;
+  let dismissed = false;
+  const dismissMenu = ({ restoreFocus = false } = {}) => {
+    if (dismissed) return;
+    dismissed = true;
+    if (closeMenuTimer !== null) {
+      clearTimeout(closeMenuTimer);
+      closeMenuTimer = null;
+    }
+    if (closeMenu) {
+      document.removeEventListener('click', closeMenu);
+    }
+    triggerBtn.setAttribute('aria-expanded', 'false');
+    menu.remove();
+    if (restoreFocus && triggerBtn.isConnected) {
+      triggerBtn.focus?.({ preventScroll: true });
+    }
+  };
+  menu._dismissMenu = dismissMenu;
+
+  appendCustomAiMenuFooter(menu, dismissMenu);
+
   // Position menu near the panel
-  const panelEl = document.getElementById(panelId);
-  const rect = panelEl.querySelector('.switch-provider-btn').getBoundingClientRect();
+  const rect = triggerBtn.getBoundingClientRect();
   menu.style.top = rect.bottom + 4 + 'px';
   menu.style.left = rect.left + 'px';
 
-  document.body.appendChild(menu);
-
-  // Handle item clicks
+  // Handle item clicks and hover/focus states before initial focus
   menu.querySelectorAll('.provider-switcher-item').forEach(item => {
-    item.addEventListener('click', () => {
-      switchPanelProvider(panelId, item.dataset.providerId);
-      menu.remove();
-    });
-
-    item.addEventListener('mouseenter', () => {
+    const applyItemActiveStyle = () => {
       if (item.dataset.providerId === panel.providerId) {
         item.style.background = palette.selectedBackground;
         item.style.color = palette.selectedText;
         return;
       }
-
       item.style.background = palette.itemHoverBackground;
       item.style.color = palette.menuText;
-    });
-    item.addEventListener('mouseleave', () => {
+    };
+    const resetItemStyle = () => {
       if (item.dataset.providerId === panel.providerId) {
         item.style.background = palette.selectedBackground;
         item.style.color = palette.selectedText;
@@ -3773,17 +4134,36 @@ async function showProviderSwitcher(panelId) {
         item.style.background = '';
         item.style.color = palette.menuText;
       }
+    };
+
+    item.addEventListener('click', () => {
+      switchPanelProvider(panelId, item.dataset.providerId);
+      dismissMenu({ restoreFocus: false });
     });
+    item.addEventListener('mouseenter', applyItemActiveStyle);
+    item.addEventListener('focus', applyItemActiveStyle);
+    item.addEventListener('mouseleave', () => {
+      if (document.activeElement !== item) {
+        resetItemStyle();
+      }
+    });
+    item.addEventListener('blur', resetItemStyle);
   });
 
+  document.body.appendChild(menu);
+  clampMenuHorizontalPosition(menu, rect.left);
+  bindDropdownMenuKeyboardNavigation(menu, triggerBtn, dismissMenu);
+
   // Close on outside click
-  const closeMenu = (e) => {
+  closeMenu = (e) => {
     if (!menu.contains(e.target)) {
-      menu.remove();
-      document.removeEventListener('click', closeMenu);
+      dismissMenu({ restoreFocus: false });
     }
   };
-  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  closeMenuTimer = setTimeout(() => {
+    closeMenuTimer = null;
+    document.addEventListener('click', closeMenu);
+  }, 0);
 }
 
 async function showAddPanelMenu() {
@@ -3796,10 +4176,7 @@ async function showAddPanelMenu() {
   const usedProviders = panels.map(p => p.providerId);
   const availableProviders = enabledProviders.filter(p => !usedProviders.includes(p.id));
 
-  if (availableProviders.length === 0) {
-    showToast('All providers are already in use');
-    return;
-  }
+  dismissExistingDropdownMenus('.add-panel-menu, .provider-switcher-menu');
 
   const btn = document.getElementById('add-panel-btn');
   const rect = btn.getBoundingClientRect();
@@ -3820,55 +4197,103 @@ async function showAddPanelMenu() {
     padding: 8px 0;
   `;
 
-  availableProviders.forEach(provider => {
-    const item = document.createElement('div');
-    item.className = 'add-panel-item';
-    item.dataset.providerId = provider.id;
-    item.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 16px;
-      cursor: pointer;
-      font-size: 14px;
-      color: ${palette.menuText};
-    `;
+  if (availableProviders.length === 0) {
+    const emptyStatus = document.createElement('div');
+    emptyStatus.className = 'menu-all-providers-open';
+    emptyStatus.setAttribute('aria-disabled', 'true');
+    emptyStatus.textContent = getLocalizedText(
+      'menuAllEnabledProvidersOpen',
+      'All enabled AIs are already open'
+    );
+    menu.appendChild(emptyStatus);
+  } else {
+    availableProviders.forEach(provider => {
+      const item = document.createElement('div');
+      item.className = 'add-panel-item';
+      item.setAttribute('role', 'menuitem');
+      item.setAttribute('tabindex', '-1');
+      item.dataset.providerId = provider.id;
+      item.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        cursor: pointer;
+        font-size: 14px;
+        color: ${palette.menuText};
+      `;
 
-    const icon = createProviderIconImage(provider);
-    icon.style.cssText = 'width: 20px; height: 20px;';
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = provider.name;
+      const icon = createProviderIconImage(provider);
+      icon.style.cssText = 'width: 20px; height: 20px;';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = provider.name;
 
-    item.append(icon, nameSpan);
-    appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
-    menu.appendChild(item);
+      item.append(icon, nameSpan);
+      appendMenuOriginBadgeIfCustom(item, nameSpan, provider.id);
+      menu.appendChild(item);
+    });
+  }
+
+  let closeMenu = null;
+  let closeMenuTimer = null;
+  let dismissed = false;
+  const dismissMenu = ({ restoreFocus = false } = {}) => {
+    if (dismissed) return;
+    dismissed = true;
+    if (closeMenuTimer !== null) {
+      clearTimeout(closeMenuTimer);
+      closeMenuTimer = null;
+    }
+    if (closeMenu) {
+      document.removeEventListener('click', closeMenu);
+    }
+    btn.setAttribute('aria-expanded', 'false');
+    menu.remove();
+    if (restoreFocus && btn.isConnected) {
+      btn.focus?.({ preventScroll: true });
+    }
+  };
+  menu._dismissMenu = dismissMenu;
+
+  appendCustomAiMenuFooter(menu, dismissMenu);
+
+  menu.querySelectorAll('.add-panel-item').forEach(item => {
+    const applyItemActiveStyle = () => {
+      item.style.background = palette.itemHoverBackground;
+      item.style.color = palette.menuText;
+    };
+    const resetItemStyle = () => {
+      item.style.background = '';
+      item.style.color = palette.menuText;
+    };
+
+    item.addEventListener('click', () => {
+      addPanel(item.dataset.providerId);
+      dismissMenu({ restoreFocus: false });
+    });
+    item.addEventListener('mouseenter', applyItemActiveStyle);
+    item.addEventListener('focus', applyItemActiveStyle);
+    item.addEventListener('mouseleave', () => {
+      if (document.activeElement !== item) {
+        resetItemStyle();
+      }
+    });
+    item.addEventListener('blur', resetItemStyle);
   });
 
   document.body.appendChild(menu);
+  clampMenuHorizontalPosition(menu, rect.left);
+  bindDropdownMenuKeyboardNavigation(menu, btn, dismissMenu);
 
-  menu.querySelectorAll('.add-panel-item').forEach(item => {
-    item.addEventListener('click', () => {
-      addPanel(item.dataset.providerId);
-      menu.remove();
-    });
-
-    item.addEventListener('mouseenter', () => {
-      item.style.background = palette.itemHoverBackground;
-      item.style.color = palette.menuText;
-    });
-    item.addEventListener('mouseleave', () => {
-      item.style.background = '';
-      item.style.color = palette.menuText;
-    });
-  });
-
-  const closeMenu = (e) => {
+  closeMenu = (e) => {
     if (!menu.contains(e.target)) {
-      menu.remove();
-      document.removeEventListener('click', closeMenu);
+      dismissMenu({ restoreFocus: false });
     }
   };
-  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  closeMenuTimer = setTimeout(() => {
+    closeMenuTimer = null;
+    document.addEventListener('click', closeMenu);
+  }, 0);
 }
 
 // ===== Utility Functions =====

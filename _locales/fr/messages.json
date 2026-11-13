@@ -3,7 +3,7 @@
     "message": "Panelize - Comparez les chatbots IA côte à côte"
   },
   "extensionDescription": {
-    "message": "Interrogez plusieurs chatbots IA à la fois et comparez leurs réponses côte à côte. Avec vos propres comptes. Gratuit, sans clé API."
+    "message": "Comparez plusieurs chatbots IA côte à côte avec vos comptes : gratuit, sans clé API. Ajoutez aussi vos sites et API IA."
   },
   "commandOpenSidebar": {
     "message": "Ouvrir Panelize avec le fournisseur par défaut"
@@ -84,7 +84,7 @@
     "message": "Fournisseurs activés"
   },
   "descEnabledProviders": {
-    "message": "Sélectionnez les fournisseurs IA qui apparaissent dans Panelize"
+    "message": "Activez ou réorganisez les fournisseurs intégrés, ou ajoutez presque tout site IA (ex. Perplexity, Poe) ou API compatible OpenAI ci-dessous."
   },
   "sectionKeyboardShortcuts": {
     "message": "Raccourcis clavier"
@@ -1016,7 +1016,7 @@
     "message": "Supprimez le nom d’utilisateur et le mot de passe de l’URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "Le protocole http:// en clair n’est autorisé que pour localhost et les IP privées. Utilisez https:// à la place."
+    "message": "Le protocole http:// en clair n’est autorisé que pour localhost et les IP LAN privées (192.168.x, 10.x, 172.16-31.x). Pour .local, Tailscale ou un domaine personnalisé, utilisez l’IP LAN ou https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "Ce site est déjà disponible comme fournisseur intégré."
@@ -1058,7 +1058,7 @@
     "message": "URL de base ou URL Chat Completions"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 ou http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 ou http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "ID du modèle"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "Impossible de charger la liste des modèles ($1). Vous pouvez toujours saisir un ID manuellement."
+  },
+  "descAddCustomProviderIntro": {
+    "message": "Votre IA préférée ne figure pas ci-dessus ? Ajoutez presque tout site de chat IA ou toute API compatible OpenAI ici."
+  },
+  "linkCustomProviderGuide": {
+    "message": "Guide de configuration ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "Site web IA"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "Web local / auto-hébergé"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "URL du site web IA"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "URL locale ou auto-hébergée"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 ou http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "Collez presque n’importe quel site de chat IA (ex. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) pour comparer côte à côte."
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "Intégrez des applications de chat auto-hébergées (Open WebUI, LibreChat, LobeChat, Dify) : http:// en clair fonctionne sur localhost et les IP LAN privées (192.168.x, 10.x, 172.16-31.x) ; pour .local, Tailscale ou un domaine d’équipe, utilisez l’IP LAN ou https://."
+  },
+  "hintCustomProviderModeApi": {
+    "message": "Connectez des serveurs locaux (Ollama fonctionne sans config CORS, LM Studio, vLLM) ou des API cloud (OpenRouter, DeepSeek, OpenAI), puis cliquez sur « Charger les modèles »."
+  },
+  "labelCustomProviderExamples": {
+    "message": "Remplissage rapide :"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama (local)"
+  },
+  "menuAddCustomProvider": {
+    "message": "Ajouter une IA personnalisée / Plus…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity, Poe, Ollama, API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "Toutes les IA activées sont déjà ouvertes"
   }
 }

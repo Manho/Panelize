@@ -3,7 +3,7 @@
     "message": "Panelize - 여러 AI 챗봇을 나란히 비교"
   },
   "extensionDescription": {
-    "message": "여러 AI 챗봇에 한 번에 질문하고 답변을 나란히 비교하세요. 내 계정 그대로 사용, 무료, API 키 불필요."
+    "message": "여러 AI 챗봇에 한 번에 질문하고 답변을 나란히 비교하세요. 기존 로그인으로 무료·API 키 불필요, 맞춤 AI 사이트·API 추가 지원."
   },
   "commandOpenSidebar": {
     "message": "기본 제공자로 Panelize 열기"
@@ -84,7 +84,7 @@
     "message": "활성화된 제공자"
   },
   "descEnabledProviders": {
-    "message": "Panelize에 표시할 AI 제공자를 선택하세요"
+    "message": "기본 AI 제공자를 켜고 순서를 바꾸거나, 아래에서 원하는 AI 웹사이트(Perplexity, Poe 등)와 OpenAI 호환 API를 추가하세요."
   },
   "sectionKeyboardShortcuts": {
     "message": "키보드 단축키"
@@ -1016,7 +1016,7 @@
     "message": "URL에서 사용자 이름과 비밀번호를 제거하세요."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "일반 http:// 는 localhost 및 사설 네트워크 IP에만 허용됩니다. https:// 를 사용하세요."
+    "message": "일반 http://는 localhost 및 사설 LAN IP(192.168.x, 10.x, 172.16-31.x)에만 허용됩니다. .local, Tailscale 또는 사용자 지정 도메인은 LAN IP나 https://를 사용하세요."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "이 사이트는 이미 기본 제공자 목록에 있습니다."
@@ -1058,7 +1058,7 @@
     "message": "기본 URL 또는 Chat Completions URL"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 또는 http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 또는 http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "모델 ID"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "모델 목록을 불러오지 못했습니다($1). 모델 ID를 직접 입력할 수 있습니다."
+  },
+  "descAddCustomProviderIntro": {
+    "message": "원하는 AI가 목록에 없나요? 거의 모든 AI 채팅 웹사이트나 OpenAI 호환 API를 여기에서 바로 추가할 수 있습니다."
+  },
+  "linkCustomProviderGuide": {
+    "message": "설정 가이드 ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "AI 웹사이트"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "로컬 / 자체 호스팅 웹"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "AI 웹사이트 URL"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "로컬 또는 자체 호스팅 URL"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 또는 http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "거의 모든 AI 채팅 사이트(예: https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) 주소를 붙여넣어 나란히 비교하세요."
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "자체 호스팅 채팅 앱(Open WebUI, LibreChat, LobeChat, Dify)을 임베드합니다. 일반 http://는 localhost 및 사설 LAN IP(192.168.x, 10.x, 172.16-31.x)에서 작동하며, .local 호스트명·Tailscale·팀 도메인은 LAN IP 또는 https://를 사용하세요."
+  },
+  "hintCustomProviderModeApi": {
+    "message": "로컬 서버(CORS 설정 없이 바로 되는 Ollama, LM Studio, vLLM) 또는 클라우드 API(OpenRouter, DeepSeek, OpenAI)를 연결한 뒤 \"모델 불러오기\"를 클릭하세요."
+  },
+  "labelCustomProviderExamples": {
+    "message": "빠른 입력:"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama (로컬)"
+  },
+  "menuAddCustomProvider": {
+    "message": "맞춤 AI 추가 / 더 많은 제공자…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity, Poe, Ollama, API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "활성화된 모든 AI가 이미 열려 있습니다"
   }
 }

@@ -3,7 +3,7 @@
     "message": "Panelize - Confronta i chatbot IA fianco a fianco"
   },
   "extensionDescription": {
-    "message": "Chiedi a più chatbot IA in una volta e confronta le risposte fianco a fianco. Usa i tuoi account. Gratis, senza chiavi API."
+    "message": "Confronta più chatbot IA fianco a fianco coi tuoi account: gratis, senza chiavi API. Aggiungi anche siti web e API IA."
   },
   "commandOpenSidebar": {
     "message": "Apri Panelize con provider predefinito"
@@ -84,7 +84,7 @@
     "message": "Provider abilitati"
   },
   "descEnabledProviders": {
-    "message": "Seleziona quali provider IA appaiono in Panelize"
+    "message": "Attiva o riordina i provider integrati, oppure aggiungi quasi qualsiasi sito IA (es. Perplexity, Poe) o API compatibile con OpenAI qui sotto."
   },
   "sectionKeyboardShortcuts": {
     "message": "Scorciatoie da tastiera"
@@ -1016,7 +1016,7 @@
     "message": "Rimuovi nome utente e password dall’URL."
   },
   "errCustomUrlInsecureHttp": {
-    "message": "http:// in chiaro è consentito solo per localhost e IP di rete privata. Usa https://."
+    "message": "http:// in chiaro è consentito solo per localhost e IP LAN privati (192.168.x, 10.x, 172.16-31.x). Per .local, Tailscale o domini personalizzati, usa l'IP LAN o https://."
   },
   "errCustomUrlBuiltinOrigin": {
     "message": "Questo sito è già disponibile come provider integrato."
@@ -1058,7 +1058,7 @@
     "message": "URL di base o URL Chat Completions"
   },
   "placeholderCustomApiEndpointUrl": {
-    "message": "https://api.openai.com/v1 o http://localhost:11434/v1"
+    "message": "https://openrouter.ai/api/v1 o http://localhost:11434/v1"
   },
   "labelCustomProviderModel": {
     "message": "ID modello"
@@ -1128,5 +1128,62 @@
   },
   "errModelsLoadFailed": {
     "message": "Impossibile caricare l’elenco dei modelli ($1). Puoi comunque inserire un ID modello manualmente."
+  },
+  "descAddCustomProviderIntro": {
+    "message": "Non vedi la tua IA preferita qui sopra? Aggiungi quasi qualsiasi sito di chat IA o API compatibile con OpenAI direttamente qui."
+  },
+  "linkCustomProviderGuide": {
+    "message": "Guida alla configurazione ↗"
+  },
+  "optionCustomProviderKindWebSite": {
+    "message": "Sito web IA"
+  },
+  "optionCustomProviderKindWebLocal": {
+    "message": "Web locale / self-hosted"
+  },
+  "placeholderCustomProviderNameWebSite": {
+    "message": "Perplexity"
+  },
+  "placeholderCustomProviderNameWebLocal": {
+    "message": "Open WebUI"
+  },
+  "placeholderCustomProviderNameApi": {
+    "message": "Ollama / OpenRouter"
+  },
+  "labelCustomProviderUrlWebSite": {
+    "message": "URL del sito web IA"
+  },
+  "labelCustomProviderUrlWebLocal": {
+    "message": "URL locale o self-hosted"
+  },
+  "placeholderCustomProviderUrlWebSite": {
+    "message": "https://www.perplexity.ai"
+  },
+  "placeholderCustomProviderUrlWebLocal": {
+    "message": "http://localhost:3000 o http://127.0.0.1:8080"
+  },
+  "hintCustomProviderModeWebSite": {
+    "message": "Incolla quasi qualsiasi sito di chat IA (es. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) per confrontarli fianco a fianco."
+  },
+  "hintCustomProviderModeWebLocal": {
+    "message": "Incorpora app di chat self-hosted (Open WebUI, LibreChat, LobeChat, Dify): http:// in chiaro funziona su localhost e IP LAN privati (192.168.x, 10.x, 172.16-31.x); per hostname .local, Tailscale o domini del team usa l'IP LAN o https://."
+  },
+  "hintCustomProviderModeApi": {
+    "message": "Collega server locali (Ollama funziona senza configurare CORS, LM Studio, vLLM) o API cloud (OpenRouter, DeepSeek, OpenAI), poi fai clic su \"Carica modelli\"."
+  },
+  "labelCustomProviderExamples": {
+    "message": "Compilazione rapida:"
+  },
+  "chipCustomExampleOllamaLocal": {
+    "message": "Ollama (locale)"
+  },
+  "menuAddCustomProvider": {
+    "message": "Aggiungi IA personalizzata / Altri provider…"
+  },
+  "menuAddCustomProviderHint": {
+    "message": "Perplexity, Poe, Ollama, API…"
+  },
+  "menuAllEnabledProvidersOpen": {
+    "message": "Tutte le IA attivate sono già aperte"
   }
 }

@@ -138,7 +138,7 @@
         <div class="setting-item">
           <div class="setting-info">
             <div class="setting-label" data-i18n="labelEnabledProviders">Enabled Providers</div>
-            <div class="setting-description" data-i18n="descEnabledProviders">Select which AI providers appear in Panelize</div>
+            <div class="setting-description" data-i18n="descEnabledProviders">Enable or drag to reorder built-in providers, or add almost any AI website (e.g. Perplexity, Poe) or OpenAI-compatible API below.</div>
           </div>
           <div class="setting-control">
             <button type="button" class="btn btn-secondary btn-jump-add-custom" id="jump-add-custom-provider-btn">
@@ -154,6 +154,17 @@
 
         <div class="custom-provider-card" id="custom-provider-card">
           <h3 class="custom-provider-title" id="custom-provider-form-title" data-i18n="headingAddCustomProvider">Add custom AI</h3>
+          <p class="custom-provider-subtitle" id="custom-provider-subtitle">
+            <span id="custom-provider-subtitle-text" data-i18n="descAddCustomProviderIntro">Don't see your favorite AI above? Add almost any AI chat website or OpenAI-compatible API right here.</span>
+            <a
+              class="custom-provider-guide-link"
+              id="custom-provider-guide-link"
+              href="https://panelize.dev/guides/add-custom-ai-and-api/"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-i18n="linkCustomProviderGuide"
+            >Setup guide ↗</a>
+          </p>
           <p class="custom-provider-unsupported" id="custom-provider-unsupported" hidden data-i18n="msgCustomProviderUnsupportedChrome">
             Adding or activating custom AI sites requires Chrome 145 or newer.
           </p>
@@ -163,7 +174,11 @@
               <div class="custom-provider-kind-options">
                 <label class="custom-provider-kind-option">
                   <input type="radio" name="customProviderKind" id="custom-provider-kind-web" value="web" checked />
-                  <span data-i18n="optionCustomProviderKindWeb">Web UI (embed chat site)</span>
+                  <span data-i18n="optionCustomProviderKindWebSite">AI Website</span>
+                </label>
+                <label class="custom-provider-kind-option">
+                  <input type="radio" name="customProviderKind" id="custom-provider-kind-web-local" value="web-local" />
+                  <span data-i18n="optionCustomProviderKindWebLocal">Local / Self-hosted Web</span>
                 </label>
                 <label class="custom-provider-kind-option">
                   <input type="radio" name="customProviderKind" id="custom-provider-kind-api" value="api" />
@@ -171,6 +186,12 @@
                 </label>
               </div>
             </fieldset>
+            <p class="custom-provider-mode-hint" id="custom-provider-mode-hint" data-i18n="hintCustomProviderModeWebSite">
+              Paste almost any AI chat site (e.g. https://www.perplexity.ai, https://chat.mistral.ai, https://poe.com, https://muse.ai) to compare side by side.
+            </p>
+            <div class="custom-provider-examples" id="custom-provider-examples" role="group" aria-labelledby="custom-provider-examples-label">
+              <span class="custom-provider-examples-label" id="custom-provider-examples-label" data-i18n="labelCustomProviderExamples">Quick fill:</span>
+            </div>
             <div class="custom-provider-fields">
               <div class="custom-provider-field custom-provider-field-name">
                 <label for="custom-provider-name" data-i18n="labelCustomProviderName">Name (max 40 chars)</label>
@@ -181,13 +202,13 @@
                   maxlength="40"
                   required
                   autocomplete="off"
-                  data-i18n-placeholder="placeholderCustomProviderName"
-                  placeholder="My AI Assistant"
+                  data-i18n-placeholder="placeholderCustomProviderNameWebSite"
+                  placeholder="Perplexity"
                   aria-describedby="custom-provider-error"
                 />
               </div>
               <div class="custom-provider-field custom-provider-field-url">
-                <label for="custom-provider-url" id="custom-provider-url-label" data-i18n="labelCustomProviderUrl">URL</label>
+                <label for="custom-provider-url" id="custom-provider-url-label" data-i18n="labelCustomProviderUrlWebSite">AI Website URL</label>
                 <input
                   type="text"
                   inputmode="url"
@@ -198,9 +219,9 @@
                   autocorrect="off"
                   autocapitalize="none"
                   spellcheck="false"
-                  data-i18n-placeholder="placeholderCustomProviderUrl"
-                  placeholder="https://chat.example.com or http://localhost:3000"
-                  aria-describedby="custom-provider-origin-preview custom-provider-error"
+                  data-i18n-placeholder="placeholderCustomProviderUrlWebSite"
+                  placeholder="https://www.perplexity.ai"
+                  aria-describedby="custom-provider-mode-hint custom-provider-origin-preview custom-provider-error"
                 />
               </div>
               <div class="custom-provider-api-fields" id="custom-provider-api-fields" hidden>

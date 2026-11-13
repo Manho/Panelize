@@ -75,6 +75,18 @@ function expectedCustomContentScript(providerId, origin) {
   };
 }
 
+function expectedCustomCookieConsentScript(providerId, origin) {
+  return {
+    id: `${providerId}-cookie-scripts`,
+    matches: [`${origin}/*`],
+    js: ['content-scripts/custom-provider-cookie-consent.js'],
+    allFrames: true,
+    persistAcrossSessions: true,
+    world: 'MAIN',
+    runAt: 'document_start',
+  };
+}
+
 /**
  * Evaluates Chrome declarativeNetRequest `urlFilter` matching for left-anchored
  * `|<prefix>` filters (where `|` anchors to the start of the URL and literal
@@ -324,6 +336,7 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
     expect(state.registeredScripts).toEqual([
       expectedCustomContentScript(CUSTOM_RECORD_A.id, 'http://127.0.0.1:3000'),
       expectedCustomContentScript(CUSTOM_RECORD_B.id, 'https://chat.example.com'),
+      expectedCustomCookieConsentScript(CUSTOM_RECORD_B.id, 'https://chat.example.com'),
     ]);
     expect(state.dynamicRules).toContainEqual(
       expectedScopedCustomRule(10000, 'http://127.0.0.1:3000')

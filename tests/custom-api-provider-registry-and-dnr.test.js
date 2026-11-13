@@ -437,8 +437,11 @@ describe('Custom API provider descriptors, validation, storage, and DNR Origin-s
       },
     ]);
 
-    // Only the Web UI custom provider gets a content script; API providers register zero scripts!
-    expect(state.registeredScripts.map((s) => s.id)).toEqual([`${WEB_RECORD_C.id}-scripts`]);
+    // Only the Web UI custom provider gets content scripts; API providers register zero scripts!
+    expect(state.registeredScripts.map((s) => s.id)).toEqual([
+      `${WEB_RECORD_C.id}-scripts`,
+      `${WEB_RECORD_C.id}-cookie-scripts`,
+    ]);
 
     // Revoking localhost permission removes both API DNR rules while keeping Web UI rule
     state.grantedOrigins.delete('http://localhost:11434/*');
