@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1 - 2026-11-13
+- Added `+ Add custom AI / More providers…` action and empty-state guidance to Multi-Panel `+` and `⇄` dropdown menus, plus full keyboard navigation (`ArrowUp`/`ArrowDown`/`Home`/`End`/`Escape`).
+- Added guided 3-mode Custom AI setup (`AI Website`, `Local / Self-hosted Web`, `OpenAI-compatible API`) in Settings with quick-fill presets, localized Chinese presets, setup guide link, and repeatable `#custom-provider-card` deep-link focus/highlighting.
+- Updated 10-locale store descriptions, READMEs, and GitHub provider-request issue template.
+- Clarified documentation: optional custom API keys are stored locally in browser IndexedDB on your device (not encrypted, never synced).
+
 ## 2.2.0 - 2026-11-13
 - Added Custom Web UI providers: embed any online or self-hosted chat web app with per-origin runtime permissions, origin badges and generic composer support.
 - Added Custom API providers: connect OpenAI-compatible Chat Completions endpoints with streaming Markdown/code rendering, image attachments, model loading and local-only encrypted API key storage.
