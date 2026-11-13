@@ -1,16 +1,17 @@
 import { syncFrameHeaderRules } from './frame-header-rules.js';
+import {
+  BUILTIN_PROVIDER_DESCRIPTORS,
+  getProviderDescriptor,
+  listProviderDescriptors
+} from './provider-registry.js';
 
-function createContentScript(id, matches, enterBehaviorScript) {
+const optionalConfigCache = new WeakMap();
+
+function createContentScriptFromSpec(id, contentScriptSpec) {
   return {
     id,
-    matches,
-    js: [
-      'content-scripts/button-finder-utils.js',
-      'content-scripts/enter-behavior-utils.js',
-      enterBehaviorScript,
-      'content-scripts/text-injection-all-providers.js',
-      'content-scripts/focus-toggle.js'
-    ],
+    matches: [...contentScriptSpec.matches],
+    js: [...contentScriptSpec.js],
     runAt: 'document_start',
     allFrames: true,
     persistAcrossSessions: true
@@ -37,69 +38,44 @@ function createFrameRule(id, urlFilter) {
   };
 }
 
-export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze({
-  'qwen-cn': Object.freeze({
-    origins: Object.freeze(['https://www.qianwen.com/*']),
-    contentScript: Object.freeze(createContentScript(
-      'qwen-cn-scripts',
-      ['https://www.qianwen.com/*'],
-      'content-scripts/enter-behavior-qwen-cn.js'
-    )),
-    frameRule: Object.freeze(createFrameRule(1001, 'https://www.qianwen.com/*'))
-  }),
-  'qwen-global': Object.freeze({
-    // Qwen refreshes its session on a separate origin. Host access lets its
-    // embedded requests carry the same-site authentication cookies there.
-    origins: Object.freeze(['https://chat.qwen.ai/*', 'https://auth.qwen.ai/*']),
-    contentScript: Object.freeze(createContentScript(
-      'qwen-global-scripts',
-      ['https://chat.qwen.ai/*'],
-      'content-scripts/enter-behavior-qwen-global.js'
-    )),
-    frameRule: Object.freeze(createFrameRule(1002, 'https://chat.qwen.ai/*'))
-  }),
-  chatglm: Object.freeze({
-    origins: Object.freeze(['https://chatglm.cn/*']),
-    contentScript: Object.freeze(createContentScript(
-      'chatglm-scripts',
-      ['https://chatglm.cn/*'],
-      'content-scripts/enter-behavior-chatglm.js'
-    )),
-    frameRule: Object.freeze(createFrameRule(1003, 'https://chatglm.cn/*'))
-  }),
-  'zai-global': Object.freeze({
-    origins: Object.freeze(['https://chat.z.ai/*']),
-    contentScript: Object.freeze(createContentScript(
-      'zai-global-scripts',
-      ['https://chat.z.ai/*'],
-      'content-scripts/enter-behavior-zai-global.js'
-    )),
-    frameRule: Object.freeze(createFrameRule(1004, 'https://chat.z.ai/*'))
-  }),
-  yuanbao: Object.freeze({
-    origins: Object.freeze(['https://yuanbao.tencent.com/*']),
-    contentScript: Object.freeze(createContentScript(
-      'yuanbao-scripts',
-      ['https://yuanbao.tencent.com/*'],
-      'content-scripts/enter-behavior-yuanbao.js'
-    ))
-  }),
-  aistudio: Object.freeze({
-    origins: Object.freeze([
-      'https://aistudio.google.com/*',
-      'https://alkalimakersuite-pa.clients6.google.com/*'
-    ]),
-    contentScript: Object.freeze(createContentScript(
-      'aistudio-scripts',
-      ['https://aistudio.google.com/*'],
-      'content-scripts/enter-behavior-aistudio.js'
-    )),
-    frameRule: Object.freeze(createFrameRule(1005, 'https://aistudio.google.com/*'))
-  })
-});
+function toOptionalProviderConfig(descriptor) {
+  const cached = optionalConfigCache.get(descriptor);
+  if (cached) {
+    return cached;
+  }
+
+  const config = {
+    origins: descriptor.permissionOrigins,
+    contentScript: Object.freeze(
+      createContentScriptFromSpec(`${descriptor.id}-scripts`, descriptor.contentScript)
+    )
+  };
+
+  if (descriptor.frameRule) {
+    config.frameRule = Object.freeze(
+      createFrameRule(descriptor.frameRule.id, descriptor.frameRule.urlFilter)
+    );
+  }
+
+  const frozen = Object.freeze(config);
+  optionalConfigCache.set(descriptor, frozen);
+  return frozen;
+}
+
+export const OPTIONAL_PROVIDER_CONFIGS = Object.freeze(
+  Object.fromEntries(
+    BUILTIN_PROVIDER_DESCRIPTORS
+      .filter((descriptor) => descriptor.access === 'optional')
+      .map((descriptor) => [descriptor.id, toOptionalProviderConfig(descriptor)])
+  )
+);
 
 export function getOptionalProviderConfig(providerId) {
-  return OPTIONAL_PROVIDER_CONFIGS[providerId] || null;
+  const descriptor = getProviderDescriptor(providerId);
+  if (!descriptor || descriptor.access !== 'optional') {
+    return null;
+  }
+  return toOptionalProviderConfig(descriptor);
 }
 
 export async function hasOptionalProviderPermission(providerId) {
@@ -137,7 +113,9 @@ export async function filterProvidersWithGrantedAccess(providerIds) {
 
 export async function syncOptionalProviderAccess(enabledProviderIds) {
   const enabledIds = new Set(Array.isArray(enabledProviderIds) ? enabledProviderIds : []);
-  const configs = Object.entries(OPTIONAL_PROVIDER_CONFIGS);
+  const configs = listProviderDescriptors()
+    .filter((descriptor) => descriptor.access === 'optional')
+    .map((descriptor) => [descriptor.id, toOptionalProviderConfig(descriptor)]);
   const desiredConfigs = [];
 
   for (const [providerId, config] of configs) {

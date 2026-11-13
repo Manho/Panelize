@@ -1,21 +1,5 @@
 import { getGoogleProviderUrl, normalizeGoogleProviderMode } from './google-mode.js';
-
-const PROVIDER_ALLOWED_HOSTS = {
-  chatgpt: new Set(['chatgpt.com', 'chat.openai.com']),
-  claude: new Set(['claude.ai']),
-  gemini: new Set(['gemini.google.com']),
-  grok: new Set(['grok.com']),
-  deepseek: new Set(['chat.deepseek.com']),
-  kimi: new Set(['www.kimi.com', 'kimi.com']),
-  google: new Set(['www.google.com', 'google.com']),
-  doubao: new Set(['www.doubao.com', 'doubao.com']),
-  'qwen-cn': new Set(['www.qianwen.com']),
-  'qwen-global': new Set(['chat.qwen.ai']),
-  chatglm: new Set(['chatglm.cn']),
-  'zai-global': new Set(['chat.z.ai']),
-  yuanbao: new Set(['yuanbao.tencent.com']),
-  aistudio: new Set(['aistudio.google.com'])
-};
+import { getProviderDescriptor } from './provider-registry.js';
 
 const QWEN_GLOBAL_NON_CONVERSATION_IDS = new Set(['new-chat', 'new-branch', 'guest']);
 const AISTUDIO_NON_CONVERSATION_IDS = new Set(['new_chat', 'new_multiturn', 'new_chunk']);
@@ -34,8 +18,8 @@ function parseHttpUrl(url) {
 }
 
 function hasAllowedProviderHost(providerId, url) {
-  const allowedHosts = PROVIDER_ALLOWED_HOSTS[providerId];
-  return Boolean(allowedHosts && allowedHosts.has(url.hostname));
+  const descriptor = getProviderDescriptor(providerId);
+  return Boolean(descriptor && descriptor.allowedHosts.includes(url.hostname));
 }
 
 /**
@@ -47,10 +31,8 @@ function hasAllowedProviderHost(providerId, url) {
  * @returns {string[]}
  */
 export function getProviderFrameOrigins(providerId) {
-  if (!Object.prototype.hasOwnProperty.call(PROVIDER_ALLOWED_HOSTS, providerId)) {
-    return [];
-  }
-  return Array.from(PROVIDER_ALLOWED_HOSTS[providerId], (host) => `https://${host}`);
+  const descriptor = getProviderDescriptor(providerId);
+  return descriptor ? [...descriptor.frameOrigins] : [];
 }
 
 /**
