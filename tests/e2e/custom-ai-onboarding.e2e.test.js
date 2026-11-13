@@ -142,11 +142,15 @@ test.describe('Custom AI onboarding flow from Multi-Panel menus to Settings', ()
       await expect(modeHint).toContainText('Ollama works with no CORS setup');
       await expect(optionsPage.locator('#custom-provider-api-note')).toBeVisible();
       await expect(chipButtons).toHaveText([
+        'Magpie',
         'Ollama (local)',
         'LM Studio',
         'OpenRouter',
         'DeepSeek API',
       ]);
+      await chipButtons.first().click();
+      await expect(nameInput).toHaveValue('Magpie');
+      await expect(urlInput).toHaveValue('http://127.0.0.1:3425/v1');
 
       // Check mobile viewport (375x667) has no horizontal overflow on Settings page
       await optionsPage.setViewportSize({ width: 375, height: 667 });

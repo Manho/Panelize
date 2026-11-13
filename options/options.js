@@ -174,6 +174,12 @@ export const CUSTOM_PROVIDER_MODE_CONFIG = Object.freeze({
       'Connect local servers (Ollama works with no CORS setup, LM Studio, vLLM) or cloud APIs (OpenRouter, DeepSeek, OpenAI), then click "Load models".',
     examples: Object.freeze([
       Object.freeze({
+        id: 'magpie',
+        label: 'Magpie',
+        name: 'Magpie',
+        url: 'http://127.0.0.1:3425/v1'
+      }),
+      Object.freeze({
         id: 'ollama',
         labelKey: 'chipCustomExampleOllamaLocal',
         label: 'Ollama (local)',
@@ -200,6 +206,12 @@ export const CUSTOM_PROVIDER_MODE_CONFIG = Object.freeze({
       })
     ]),
     examplesZhCn: Object.freeze([
+      Object.freeze({
+        id: 'magpie',
+        label: 'Magpie',
+        name: 'Magpie',
+        url: 'http://127.0.0.1:3425/v1'
+      }),
       Object.freeze({
         id: 'ollama',
         labelKey: 'chipCustomExampleOllamaLocal',

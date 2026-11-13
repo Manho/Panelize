@@ -397,23 +397,32 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
         document.querySelectorAll('#custom-provider-examples .custom-provider-example-chip')
       );
       expect(apiChips.map((el) => el.textContent)).toEqual([
+        'Magpie',
         'Ollama (local)',
         'LM Studio',
         'OpenRouter',
         'DeepSeek API',
       ]);
 
-      // Clicking Ollama chip populates fields, clears errors, updates endpoint preview, and focuses model input
+      // Clicking first API chip (Magpie) populates fields, clears errors, updates endpoint preview, and focuses model input
       document.getElementById('custom-provider-error').hidden = false;
       document.getElementById('custom-provider-error').textContent = 'Previous error';
       apiChips[0].click();
+      expect(nameInput.value).toBe('Magpie');
+      expect(urlInput.value).toBe('http://127.0.0.1:3425/v1');
+      expect(document.getElementById('custom-provider-origin-preview').textContent).toContain(
+        'http://127.0.0.1:3425/v1/chat/completions'
+      );
+      expect(document.getElementById('custom-provider-error').hidden).toBe(true);
+      expect(document.activeElement).toBe(document.getElementById('custom-provider-model'));
+
+      // Clicking Ollama chip also populates fields cleanly
+      apiChips[1].click();
       expect(nameInput.value).toBe('Ollama');
       expect(urlInput.value).toBe('http://localhost:11434/v1');
       expect(document.getElementById('custom-provider-origin-preview').textContent).toContain(
         'http://localhost:11434/v1/chat/completions'
       );
-      expect(document.getElementById('custom-provider-error').hidden).toBe(true);
-      expect(document.activeElement).toBe(document.getElementById('custom-provider-model'));
     });
 
     it('uses the Chinese setup guide URL and localized zh_CN quick-fill presets when UI language is zh_CN', async () => {
@@ -454,12 +463,16 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
         document.querySelectorAll('#custom-provider-examples .custom-provider-example-chip')
       );
       expect(apiChips.map((el) => el.textContent)).toEqual([
+        'Magpie',
         'Ollama（本地）',
         '硅基流动',
         'DeepSeek API',
         'OpenRouter',
       ]);
-      apiChips[1].click();
+      apiChips[0].click();
+      expect(document.getElementById('custom-provider-name').value).toBe('Magpie');
+      expect(document.getElementById('custom-provider-url').value).toBe('http://127.0.0.1:3425/v1');
+      apiChips[2].click();
       expect(document.getElementById('custom-provider-name').value).toBe('硅基流动');
       expect(document.getElementById('custom-provider-url').value).toBe('https://api.siliconflow.cn/v1');
 
