@@ -179,4 +179,37 @@ describe('ChatGPT composer content scripts', () => {
     expect(sendResponse).toHaveBeenCalledWith({ success: true });
     expect(document.activeElement).toBe(editor);
   });
+
+  it('finds and submits from the narrow mobile Octane textarea composer', () => {
+    loadScripts(`
+      <form data-testid="edit-message">
+        <textarea>Earlier message</textarea>
+        <button type="submit" aria-label="Send">Send</button>
+      </form>
+      <form data-mobile-composer>
+        <textarea id="mobile-composer-prompt" data-mobile-composer-prompt name="prompt"></textarea>
+        <button id="mobile-send-btn" type="submit" aria-label="Send message"></button>
+      </form>
+    `);
+    const mobileTextarea = document.getElementById('mobile-composer-prompt');
+    const mobileForm = document.querySelector('form[data-mobile-composer]');
+    const mobileSendBtn = document.getElementById('mobile-send-btn');
+    const otherSendBtn = document.querySelector('[data-testid="edit-message"] button');
+    const mobileClick = vi.spyOn(mobileSendBtn, 'click');
+    const otherClick = vi.spyOn(otherSendBtn, 'click');
+
+    expect(testWindow.PanelizeChatgptComposer.findEditor()).toBe(mobileTextarea);
+    expect(testWindow.PanelizeChatgptComposer.findForm()).toBe(mobileForm);
+
+    mobileTextarea.focus();
+    const newlineEvent = trustedEnter({ shiftKey: true });
+    testWindow.handleEnterSwap(newlineEvent);
+    expect(newlineEvent.preventDefault).not.toHaveBeenCalled();
+
+    const sendEvent = trustedEnter();
+    testWindow.handleEnterSwap(sendEvent);
+    expect(sendEvent.preventDefault).toHaveBeenCalled();
+    expect(mobileClick).toHaveBeenCalledOnce();
+    expect(otherClick).not.toHaveBeenCalled();
+  });
 });
