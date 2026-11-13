@@ -175,9 +175,13 @@ describe('custom providers: registry, id rules, URL validation, and storage hydr
           id: 10000,
           urlFilter: '|http://localhost:3000/',
         },
-        tempChat: null,
+        tempChat: {
+          url: null,
+          normalUrl: 'http://localhost:3000/chat?model=llama',
+          retry: true,
+        },
         capabilities: {
-          imageUpload: false,
+          imageUpload: true,
           inPageNewChat: false,
           snapshotStitch: false,
         },
@@ -188,6 +192,7 @@ describe('custom providers: registry, id rules, URL validation, and storage hydr
       expect(Object.isFrozen(descriptor.permissionOrigins)).toBe(true);
       expect(Object.isFrozen(descriptor.contentScript)).toBe(true);
       expect(Object.isFrozen(descriptor.frameRule)).toBe(true);
+      expect(Object.isFrozen(descriptor.tempChat)).toBe(true);
       expect(Object.isFrozen(descriptor.capabilities)).toBe(true);
       expect(validateProviderDescriptor(descriptor)).toEqual([]);
     });
@@ -276,11 +281,17 @@ describe('custom providers: registry, id rules, URL validation, and storage hydr
         })
       ).not.toEqual([]);
 
-      // Non-null tempChat on custom
+      // Invalid tempChat on custom (retry: false without URL, or cross-origin normalUrl)
       expect(
         validateProviderDescriptor({
           ...base,
           tempChat: { url: null, normalUrl: 'http://localhost:3000/', retry: false },
+        })
+      ).not.toEqual([]);
+      expect(
+        validateProviderDescriptor({
+          ...base,
+          tempChat: { url: null, normalUrl: 'https://evil.example/', retry: true },
         })
       ).not.toEqual([]);
 

@@ -27,7 +27,7 @@ export const CUSTOM_PROVIDER_COOKIE_CONSENT_SCRIPT =
 export const CUSTOM_API_PANEL_PATH = 'api-panel/api-panel.html';
 
 const CUSTOM_CAPABILITIES = Object.freeze({
-  imageUpload: false,
+  imageUpload: true,
   inPageNewChat: false,
   snapshotStitch: false
 });
@@ -432,7 +432,11 @@ export function toCustomProviderDescriptor(record, { extensionOrigin = null } = 
       id: record.frameRuleId,
       urlFilter: `|${origin}/`
     }),
-    tempChat: null,
+    tempChat: Object.freeze({
+      url: null,
+      normalUrl: normalizedUrl,
+      retry: true
+    }),
     capabilities: CUSTOM_CAPABILITIES
   });
 }

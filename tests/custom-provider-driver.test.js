@@ -1031,4 +1031,453 @@ describe('content-scripts/custom-provider-driver.js', () => {
       }
     }
   });
+
+  it('toggles Perplexity-style sticky incognito button on ENABLE_TEMP_CHAT and exits on DISABLE_TEMP_CHAT without double-toggling when already active', async () => {
+    const env = createDriverEnvironment({
+      url: 'https://www.perplexity.ai/',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      let isIncognito = false;
+      let hydrated = false;
+      let clickCount = 0;
+
+      env.document.body.innerHTML = `
+        <header id="top-bar">
+          <a id="privacy-link" href="https://www.perplexity.ai/hub/privacy" target="_blank">Incognito privacy policy</a>
+          <button
+            id="incognito-btn"
+            type="button"
+            aria-label="Use incognito: create anonymous sessions that aren't saved to your history and expire after 24 hours"
+          >
+            <svg><use xlink:href="#pplx-icon-spy"></use></svg>
+          </button>
+        </header>
+        <div data-composer="true">
+          <div id="ask-input" contenteditable="true" role="textbox"></div>
+        </div>
+      `;
+
+      const incognitoBtn = setLayoutRect(env.document.getElementById('incognito-btn'), {
+        left: 440,
+        top: 12,
+        width: 32,
+        height: 32,
+      });
+      setLayoutRect(env.document.getElementById('privacy-link'), {
+        left: 300,
+        top: 12,
+        width: 120,
+        height: 24,
+      });
+      setLayoutRect(env.document.getElementById('ask-input'));
+
+      const privacyClickSpy = vi.fn((e) => e.preventDefault());
+      env.document.getElementById('privacy-link').addEventListener('click', privacyClickSpy);
+
+      const syncUi = () => {
+        env.document.cookie = `pplx.is-incognito=${isIncognito ? 'true' : 'false'}; path=/`;
+        incognitoBtn.setAttribute(
+          'aria-label',
+          isIncognito
+            ? 'Exit incognito'
+            : "Use incognito: create anonymous sessions that aren't saved to your history and expire after 24 hours"
+        );
+      };
+      syncUi();
+
+      incognitoBtn.addEventListener('click', () => {
+        clickCount += 1;
+        if (!hydrated) {
+          return;
+        }
+        isIncognito = !isIncognito;
+        syncUi();
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      // 1. Pre-hydration click does not flip state -> driver must NOT falsely report enabled yet
+      env.postFromHost({
+        type: 'ENABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(260);
+      expect(clickCount).toBe(1);
+      expect(isIncognito).toBe(false);
+      expect(
+        env.parent.postMessage.mock.calls.some(([msg]) => msg.type === 'PANELIZE_TEMP_CHAT_ENABLED')
+      ).toBe(false);
+
+      // 2. Hydrated retry activates incognito and reports PANELIZE_TEMP_CHAT_ENABLED
+      hydrated = true;
+      env.postFromHost({
+        type: 'ENABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(120);
+      expect(clickCount).toBe(2);
+      expect(isIncognito).toBe(true);
+      expect(privacyClickSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_TEMP_CHAT_ENABLED',
+          provider: CUSTOM_PROVIDER_ID,
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+
+      // 3. Subsequent ENABLE_TEMP_CHAT while already active is idempotent (must NOT click Exit incognito)
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'ENABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(80);
+      expect(clickCount).toBe(2);
+      expect(isIncognito).toBe(true);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_TEMP_CHAT_ENABLED',
+          provider: CUSTOM_PROVIDER_ID,
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+
+      // 4. DISABLE_TEMP_CHAT clicks Exit incognito, clears sticky state, and reports PANELIZE_TEMP_CHAT_DISABLED
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'DISABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(120);
+      expect(clickCount).toBe(3);
+      expect(isIncognito).toBe(false);
+      expect(incognitoBtn.getAttribute('aria-label')).toContain('Use incognito');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_TEMP_CHAT_DISABLED',
+          provider: CUSTOM_PROVIDER_ID,
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+
+      // 5. Duplicate DISABLE_TEMP_CHAT when already off does NOT re-enable incognito
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'DISABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(80);
+      expect(clickCount).toBe(3);
+      expect(isIncognito).toBe(false);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_TEMP_CHAT_DISABLED',
+          provider: CUSTOM_PROVIDER_ID,
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('toggles generic aria-pressed / role="switch" temporary chat controls on ENABLE_TEMP_CHAT and DISABLE_TEMP_CHAT', async () => {
+    const env = createDriverEnvironment({
+      url: 'http://127.0.0.1:3000/',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      env.document.body.innerHTML = `
+        <nav>
+          <button id="temp-switch" role="switch" aria-checked="false" aria-label="Temporary Chat">
+            Temporary
+          </button>
+        </nav>
+        <textarea id="composer"></textarea>
+      `;
+      const tempSwitch = setLayoutRect(env.document.getElementById('temp-switch'), {
+        left: 600,
+        top: 16,
+        width: 88,
+        height: 30,
+      });
+      setLayoutRect(env.document.getElementById('composer'));
+
+      tempSwitch.addEventListener('click', () => {
+        const next = tempSwitch.getAttribute('aria-checked') !== 'true';
+        tempSwitch.setAttribute('aria-checked', next ? 'true' : 'false');
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      env.postFromHost({
+        type: 'ENABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(100);
+      expect(tempSwitch.getAttribute('aria-checked')).toBe('true');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_TEMP_CHAT_ENABLED',
+          provider: CUSTOM_PROVIDER_ID,
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'DISABLE_TEMP_CHAT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+      });
+      await wait(100);
+      expect(tempSwitch.getAttribute('aria-checked')).toBe('false');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_TEMP_CHAT_DISABLED',
+          provider: CUSTOM_PROVIDER_ID,
+          context: 'multi-panel-provider-status',
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('uploads multiple images via Perplexity-style <input type="file" multiple>, waits for .png -> .jpg transcoding and disabled preview completion, injects text, and clears attachments on CLEAR_INPUT', async () => {
+    const env = createDriverEnvironment({
+      url: 'https://www.perplexity.ai/',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      env.document.body.innerHTML = `
+        <div id="composer-shell" style="height:140px">
+          <div id="attachment-strip"></div>
+          <div data-composer="true">
+            <textarea id="composer" placeholder="Ask anything..."></textarea>
+          </div>
+          <input id="file-input" type="file" multiple accept="image/*,.png,.jpg,.jpeg,.webp" style="display:none" />
+          <button id="submit-btn" type="button" aria-label="Submit">Submit</button>
+        </div>
+      `;
+
+      setLayoutRect(env.document.getElementById('composer-shell'), {
+        left: 20,
+        top: 420,
+        width: 720,
+        height: 140,
+      });
+      const strip = setLayoutRect(env.document.getElementById('attachment-strip'), {
+        left: 24,
+        top: 424,
+        width: 680,
+        height: 56,
+      });
+      const composer = setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      setLayoutRect(env.document.getElementById('submit-btn'), {
+        left: 680,
+        top: 500,
+        width: 40,
+        height: 36,
+      });
+
+      let receivedFiles = [];
+      fileInput.addEventListener('change', () => {
+        receivedFiles = Array.from(fileInput.files || []);
+        for (const file of receivedFiles) {
+          const stem = file.name.replace(/\.[^.]+$/, '');
+          const chip = env.document.createElement('div');
+          chip.className = 'upload-chip';
+
+          const previewBtn = env.document.createElement('button');
+          previewBtn.type = 'button';
+          previewBtn.disabled = true;
+          previewBtn.setAttribute('aria-label', `Preview ${file.name}`);
+
+          const removeBtn = env.document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.setAttribute('aria-label', `Remove ${file.name}`);
+          setLayoutRect(removeBtn, { left: 60, top: 428, width: 20, height: 20 });
+          removeBtn.addEventListener('click', () => {
+            chip.remove();
+          });
+
+          chip.append(previewBtn, removeBtn);
+          strip.appendChild(chip);
+
+          // Simulate Perplexity's async .png -> .jpg transcode while still disabled, then blob finish
+          setTimeout(() => {
+            previewBtn.setAttribute('aria-label', `Preview ${stem}.jpg`);
+            removeBtn.setAttribute('aria-label', `Remove ${stem}.jpg`);
+          }, 60);
+
+          setTimeout(() => {
+            const thumb = env.document.createElement('img');
+            thumb.setAttribute('src', `blob:https://www.perplexity.ai/${stem}`);
+            thumb.setAttribute('alt', `${stem}.jpg`);
+            previewBtn.appendChild(thumb);
+            previewBtn.disabled = false;
+          }, 180);
+        }
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      const pngDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-pplx-multi-img',
+        action: 'fill',
+        text: 'Compare these two charts',
+        images: [
+          { id: 'img-a', name: 'chart-alpha.png', type: 'image/png', dataUrl: pngDataUrl },
+          { id: 'img-b', name: 'chart-beta.png', type: 'image/png', dataUrl: pngDataUrl },
+        ],
+        autoSubmit: false,
+      });
+
+      // Must NOT resolve early at 90ms while previewBtn.disabled is still true
+      await wait(90);
+      expect(
+        env.parent.postMessage.mock.calls.some(([msg]) => msg.type === 'PANELIZE_ACTION_RESULT')
+      ).toBe(false);
+
+      await wait(260);
+      expect(receivedFiles.map((f) => f.name)).toEqual(['chart-alpha.png', 'chart-beta.png']);
+      expect(composer.value).toBe('Compare these two charts');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-pplx-multi-img',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'succeeded',
+          succeededImageIds: ['img-a', 'img-b'],
+        },
+        EXTENSION_ORIGIN
+      );
+
+      // CLEAR_INPUT with clearImages: true removes both uploaded chips and clears composer text
+      env.postFromHost({
+        type: 'CLEAR_INPUT',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        clearImages: true,
+      });
+
+      await wait(40);
+      expect(composer.value).toBe('');
+      expect(strip.querySelectorAll('.upload-chip')).toHaveLength(0);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('falls back to ClipboardEvent("paste") for image-only fill when no <input type="file"> exists in DOM', async () => {
+    const env = createDriverEnvironment({
+      url: 'http://127.0.0.1:3000/chat',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    try {
+      env.document.body.innerHTML = `
+        <form id="chat-form" style="height:120px">
+          <div id="previews"></div>
+          <div id="editor" contenteditable="true" role="textbox"></div>
+          <button id="send" type="submit">Send</button>
+        </form>
+      `;
+      setLayoutRect(env.document.getElementById('chat-form'), {
+        left: 20,
+        top: 440,
+        width: 680,
+        height: 120,
+      });
+      const previews = env.document.getElementById('previews');
+      const editor = setLayoutRect(env.document.getElementById('editor'));
+      setLayoutRect(env.document.getElementById('send'), {
+        left: 620,
+        top: 500,
+        width: 60,
+        height: 36,
+      });
+
+      let pastedFileNames = [];
+      editor.addEventListener('paste', (ev) => {
+        const files = Array.from(ev.clipboardData?.files || []);
+        if (files.length > 0) {
+          ev.preventDefault();
+          pastedFileNames = files.map((f) => f.name);
+          setTimeout(() => {
+            for (const file of files) {
+              const img = env.document.createElement('img');
+              img.setAttribute('src', `blob:http://127.0.0.1:3000/${file.name}`);
+              img.setAttribute('alt', file.name);
+              previews.appendChild(img);
+            }
+          }, 50);
+        }
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      const pngDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-paste-image-only',
+        action: 'fill',
+        text: '',
+        images: [{ id: 'img-paste-1', name: 'pasted.png', type: 'image/png', dataUrl: pngDataUrl }],
+        autoSubmit: false,
+      });
+
+      await wait(180);
+      expect(pastedFileNames).toEqual(['pasted.png']);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-paste-image-only',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'succeeded',
+          succeededImageIds: ['img-paste-1'],
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });
