@@ -31,3 +31,46 @@ test('Send All supports the current ChatGPT composer without a legacy id', async
     await extension.close();
   }
 });
+
+test('direct page reload clears restored sent ChatGPT draft without erasing unsent drafts', async () => {
+  const extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+  try {
+    await extension.context.route('https://chatgpt.com/**', route => route.fulfill({
+      contentType: 'text/html',
+      body: renderChatgptFixture({ composer: 'current', persistDraftOnReload: true }),
+    }));
+    const page = await openMultiPanel(extension, { providers: ['chatgpt'] });
+    const panel = page.frameLocator('iframe');
+    const editor = panel.locator('[data-composer-placement="thread"] [data-composer-markdown]');
+    await expect(editor).toBeVisible();
+
+    const readFixture = () => {
+      const frame = page.frames().find(candidate => candidate.url().startsWith('https://chatgpt.com/'));
+      return frame ? frame.evaluate(() => window.__fixture).catch(() => null) : null;
+    };
+
+    // 1. Send a prompt via Multi-Panel Send All and wait for confirmed submission
+    await page.locator('#unified-input').fill('Sent prompt before browser reload');
+    await page.locator('#send-all-btn').click();
+    await expect.poll(async () => (await readFixture())?.sentTexts)
+      .toEqual(['Sent prompt before browser reload']);
+    await expect(editor).toHaveText('');
+
+    // 2. Directly reload the Multi-Panel page (not clicking New Chat)
+    await page.reload();
+    await expect(editor).toBeVisible();
+    await page.waitForTimeout(450);
+    await expect(editor).toHaveText('');
+    await expect(page.locator('#unified-input')).toBeFocused();
+
+    // 3. Fill an unsent draft (without sending) and reload -> must be preserved
+    await page.locator('#unified-input').fill('Unsent draft to keep');
+    await page.locator('#fill-input-btn').click();
+    await expect(editor).toHaveText('Unsent draft to keep');
+    await page.reload();
+    await expect(editor).toBeVisible();
+    await expect(editor).toHaveText('Unsent draft to keep');
+  } finally {
+    await extension.close();
+  }
+});

@@ -61,6 +61,8 @@ describe('chatgpt content script provider status', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     window.happyDOM.setURL('https://chatgpt.com/c/test');
+    window.localStorage?.removeItem('panelize:chatgpt-sent-drafts');
+    window.sessionStorage?.removeItem('panelize:chatgpt-sent-drafts');
     Object.defineProperty(window, 'parent', {
       configurable: true,
       value: { postMessage: vi.fn() },
@@ -529,6 +531,294 @@ describe('chatgpt content script provider status', () => {
       } finally {
         vi.useRealTimers();
         await frameWin.happyDOM.close();
+      }
+    });
+  });
+
+  describe('reload sent-draft clearing', () => {
+    async function bootEmbeddedChatgptFrame({
+      url = 'https://chatgpt.com/',
+      sharedStorage = new Map(),
+      composerHtml = `
+        <form data-type="unified-composer" data-chatgpt-composer>
+          <div id="prompt-textarea" data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror"></div>
+          <button type="button" data-testid="send-button" aria-label="Send prompt">Send</button>
+        </form>
+      `,
+    } = {}) {
+      const { Window: HappyWindow } = await import('happy-dom');
+      const frameWin = new HappyWindow({ url });
+      const hostStub = { postMessage: vi.fn() };
+      const extOrigin = chrome.runtime.getURL('').replace(/\/+$/, '');
+      frameWin.chrome = globalThis.chrome;
+      Object.defineProperty(frameWin, 'parent', { configurable: true, value: hostStub });
+      Object.defineProperty(frameWin, 'top', { configurable: true, value: hostStub });
+      Object.defineProperty(frameWin, 'localStorage', {
+        configurable: true,
+        value: {
+          getItem: (key) => (sharedStorage.has(key) ? sharedStorage.get(key) : null),
+          setItem: (key, value) => sharedStorage.set(key, String(value)),
+          removeItem: (key) => sharedStorage.delete(key),
+        },
+      });
+      frameWin.document.body.innerHTML = composerHtml;
+      const editor = frameWin.document.querySelector('[contenteditable="true"], textarea');
+      if (editor) {
+        Object.defineProperty(editor, 'offsetParent', {
+          configurable: true,
+          get: () => frameWin.document.body,
+        });
+      }
+      const sendBtn = frameWin.document.querySelector('button[data-testid="send-button"]');
+      if (sendBtn) {
+        Object.defineProperty(sendBtn, 'offsetParent', {
+          configurable: true,
+          get: () => frameWin.document.body,
+        });
+      }
+
+      frameWin.eval(composerScriptSource);
+      frameWin.eval(contentScriptSource);
+
+      const postFromHost = (data) => {
+        frameWin.dispatchEvent(
+          new frameWin.MessageEvent('message', {
+            data,
+            source: hostStub,
+            origin: extOrigin,
+          })
+        );
+      };
+
+      return { frameWin, editor, sendBtn, postFromHost, sharedStorage };
+    }
+
+    it('clears a sent prompt restored after browser reload without stealing focus, including late hydration', async () => {
+      const sharedStorage = new Map();
+
+      // 1. Send a prompt via Multi-Panel and let ChatGPT clear the composer on send.
+      const first = await bootEmbeddedChatgptFrame({ sharedStorage });
+      try {
+        first.sendBtn.addEventListener('click', () => {
+          first.editor.innerHTML = '';
+        });
+        first.postFromHost({
+          type: 'INJECT_TEXT',
+          text: 'Hello after reload',
+          autoSubmit: true,
+          context: 'multi-panel',
+        });
+        await wait(600);
+        expect(sharedStorage.get('panelize:chatgpt-sent-drafts')).toContain('Hello after reload');
+      } finally {
+        await first.frameWin.happyDOM.close();
+      }
+
+      // 2. Simulate direct browser refresh: ChatGPT restores the sent prompt without New Chat marker.
+      const reloaded = await bootEmbeddedChatgptFrame({ sharedStorage });
+      try {
+        const focusSpy = vi.spyOn(reloaded.editor, 'focus');
+        reloaded.editor.innerHTML = '<p>Hello after reload</p>';
+        await wait(250);
+        expect(reloaded.editor.textContent).toBe('');
+        expect(focusSpy).not.toHaveBeenCalled();
+
+        // Late React hydration re-inserts the same sent draft -> cleared again without focus.
+        reloaded.editor.innerHTML = '<p>Hello after reload</p>';
+        await wait(250);
+        expect(reloaded.editor.textContent).toBe('');
+        expect(focusSpy).not.toHaveBeenCalled();
+      } finally {
+        await reloaded.frameWin.happyDOM.close();
+      }
+    });
+
+    it('preserves unsent drafts and unconfirmed failed sends across reload', async () => {
+      const sharedStorage = new Map();
+
+      // Send click does not clear the composer, show stop button, or navigate -> must not be recorded.
+      const first = await bootEmbeddedChatgptFrame({ sharedStorage });
+      try {
+        first.postFromHost({
+          type: 'INJECT_TEXT',
+          text: 'Failed send draft',
+          autoSubmit: true,
+          context: 'multi-panel',
+        });
+        await wait(600);
+        expect(sharedStorage.get('panelize:chatgpt-sent-drafts')).toBeUndefined();
+      } finally {
+        await first.frameWin.happyDOM.close();
+      }
+
+      // Record one real sent prompt, then reload with an unsent draft in the composer.
+      sharedStorage.set(
+        'panelize:chatgpt-sent-drafts',
+        JSON.stringify([{ text: 'Already sent prompt', at: Date.now() }])
+      );
+      const reloaded = await bootEmbeddedChatgptFrame({ sharedStorage });
+      try {
+        reloaded.editor.innerHTML = '<p>Unsent work in progress</p>';
+        await wait(300);
+        expect(reloaded.editor.textContent).toBe('Unsent work in progress');
+      } finally {
+        await reloaded.frameWin.happyDOM.close();
+      }
+    });
+
+    it('records in-panel manual sends, clears on SPA return to home, ignores Cmd+R, and stops on trusted typing', async () => {
+      const sharedStorage = new Map();
+      const frame = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/c/conv-1',
+        sharedStorage,
+      });
+      try {
+        frame.sendBtn.addEventListener('click', () => {
+          frame.editor.innerHTML = '';
+        });
+        frame.editor.innerHTML = '<p>Manual panel prompt</p>';
+        frame.sendBtn.click();
+        await wait(50);
+        expect(sharedStorage.get('panelize:chatgpt-sent-drafts')).toContain('Manual panel prompt');
+
+        // Navigate back to '/' via SPA pushState and restore the sent draft
+        frame.frameWin.history.pushState({}, '', '/');
+        frame.editor.innerHTML = '<p>Manual panel prompt</p>';
+        await wait(250);
+        expect(frame.editor.textContent).toBe('');
+
+        // Cmd+R shortcut does not cancel reload clearing
+        const cmdR = new frame.frameWin.KeyboardEvent('keydown', { key: 'r', metaKey: true, bubbles: true });
+        Object.defineProperty(cmdR, 'isTrusted', { value: true });
+        frame.frameWin.document.dispatchEvent(cmdR);
+        frame.editor.innerHTML = '<p>Manual panel prompt</p>';
+        await wait(250);
+        expect(frame.editor.textContent).toBe('');
+
+        // Trusted editing key stops clearing so new user input is preserved
+        const typing = new frame.frameWin.KeyboardEvent('keydown', { key: 'a', bubbles: true });
+        Object.defineProperty(typing, 'isTrusted', { value: true });
+        frame.editor.dispatchEvent(typing);
+        frame.editor.innerHTML = '<p>Manual panel prompt</p>';
+        await wait(300);
+        expect(frame.editor.textContent).toBe('Manual panel prompt');
+      } finally {
+        await frame.frameWin.happyDOM.close();
+      }
+    });
+
+    it('clears a restored sent draft right before a fresh Multi-Panel INJECT_TEXT fill', async () => {
+      const sharedStorage = new Map([
+        [
+          'panelize:chatgpt-sent-drafts',
+          JSON.stringify([{ text: 'Old sent prompt', at: Date.now() }]),
+        ],
+      ]);
+      const reloaded = await bootEmbeddedChatgptFrame({ sharedStorage });
+      try {
+        reloaded.editor.innerHTML = '<p>Old sent prompt</p>';
+        reloaded.postFromHost({
+          type: 'INJECT_TEXT',
+          text: 'Fresh prompt',
+          autoSubmit: false,
+          context: 'multi-panel',
+        });
+        await wait(300);
+        expect(reloaded.editor.textContent).toBe('Fresh prompt');
+      } finally {
+        await reloaded.frameWin.happyDOM.close();
+      }
+    });
+
+    it('does not let SPA route-change reload clear override an active unconditional New Chat clear', async () => {
+      const sharedStorage = new Map([
+        [
+          'panelize:chatgpt-sent-drafts',
+          JSON.stringify([{ text: 'Earlier sent prompt', at: Date.now() }]),
+        ],
+      ]);
+      const frame = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/c/abc',
+        sharedStorage,
+        composerHtml: `
+          <a id="spa-new-chat" href="/" aria-label="New chat">New chat</a>
+          <form data-type="unified-composer" data-chatgpt-composer>
+            <div id="prompt-textarea" data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror"></div>
+            <button type="button" data-testid="send-button" aria-label="Send prompt">Send</button>
+          </form>
+        `,
+      });
+      try {
+        const newChatLink = frame.frameWin.document.getElementById('spa-new-chat');
+        Object.defineProperty(newChatLink, 'offsetParent', {
+          configurable: true,
+          get: () => frame.frameWin.document.body,
+        });
+        newChatLink.getBoundingClientRect = () => ({
+          x: 8,
+          y: 8,
+          width: 80,
+          height: 32,
+          top: 8,
+          left: 8,
+          right: 88,
+          bottom: 40,
+        });
+        newChatLink.addEventListener('click', (event) => {
+          event.preventDefault();
+          frame.frameWin.history.pushState({}, '', '/');
+        });
+
+        frame.postFromHost({
+          type: 'NEW_CHAT',
+          context: 'multi-panel',
+        });
+        await wait(30);
+
+        frame.editor.innerHTML = '<p>Unsent persisted home draft</p>';
+        await wait(250);
+        expect(frame.editor.textContent).toBe('');
+      } finally {
+        await frame.frameWin.happyDOM.close();
+      }
+    });
+
+    it('does not record an Enter key press while already streaming as a sent draft or clear it after reload', async () => {
+      const sharedStorage = new Map();
+      const streamingFrame = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/c/streaming',
+        sharedStorage,
+        composerHtml: `
+          <form data-type="unified-composer" data-chatgpt-composer>
+            <div id="prompt-textarea" data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror"><p>Follow-up typed while streaming</p></div>
+            <button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>
+          </form>
+        `,
+      });
+      try {
+        const enterEvent = new streamingFrame.frameWin.KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        });
+        streamingFrame.editor.dispatchEvent(enterEvent);
+        await wait(200);
+        expect(sharedStorage.get('panelize:chatgpt-sent-drafts')).toBeUndefined();
+      } finally {
+        await streamingFrame.frameWin.happyDOM.close();
+      }
+
+      const reloaded = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/',
+        sharedStorage,
+      });
+      try {
+        reloaded.editor.innerHTML = '<p>Follow-up typed while streaming</p>';
+        await wait(250);
+        expect(reloaded.editor.textContent).toBe('Follow-up typed while streaming');
+      } finally {
+        await reloaded.frameWin.happyDOM.close();
       }
     });
   });
