@@ -2,6 +2,20 @@ import { test, expect } from '@playwright/test';
 import { launchExtension, openMultiPanel } from './extension-harness.js';
 import { renderChatgptFixture } from './fixtures/chatgpt-fixture.js';
 
+async function readModeState(page) {
+  return page.evaluate(async () => {
+    const [win, syncSettings] = await Promise.all([
+      chrome.windows.getCurrent(),
+      chrome.storage.sync.get({ openMode: null })
+    ]);
+    return {
+      windowType: win.type,
+      toggleIcon: document.querySelector('#toggle-open-mode-btn .material-symbols-outlined')?.textContent,
+      openMode: syncSettings.openMode
+    };
+  });
+}
+
 test('switching between Tab Mode and Popup Mode preserves live chat state without reloading', async () => {
   const extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
   try {
@@ -49,37 +63,35 @@ test('switching between Tab Mode and Popup Mode preserves live chat state withou
     // Switch Tab Mode -> Popup Mode
     await page.locator('#toggle-open-mode-btn').click();
 
-    await expect.poll(async () => page.evaluate(async () => {
-      const win = await chrome.windows.getCurrent();
-      return win.type;
-    })).toBe('popup');
+    await expect.poll(() => readModeState(page)).toEqual({
+      windowType: 'popup',
+      toggleIcon: 'tab',
+      openMode: 'popup'
+    });
 
     const popupState = await page.evaluate(async () => {
-      const [win, tab, syncSettings, sessionState, localState] = await Promise.all([
+      const [win, tab, sessionState, localState] = await Promise.all([
         chrome.windows.getCurrent(),
         chrome.tabs.getCurrent(),
-        chrome.storage.sync.get({ openMode: null }),
-        chrome.storage.session.get('preservedState'),
-        chrome.storage.local.get('preservedState')
+        chrome.storage.session.get(null),
+        chrome.storage.local.get(null)
       ]);
+      const hasPreservedState = (obj) =>
+        Object.keys(obj || {}).some((key) => key === 'preservedState' || key.startsWith('preservedState:'));
       return {
         hostToken: window.__panelizeHostSessionToken,
         windowType: win.type,
         windowId: win.id,
         tabId: tab.id,
-        openMode: syncSettings.openMode,
-        toggleIcon: document.querySelector('#toggle-open-mode-btn .material-symbols-outlined')?.textContent,
         draft: document.getElementById('unified-input')?.value,
-        hasSessionPreservedState: Boolean(sessionState.preservedState),
-        hasLocalPreservedState: Boolean(localState.preservedState)
+        hasSessionPreservedState: hasPreservedState(sessionState),
+        hasLocalPreservedState: hasPreservedState(localState)
       };
     });
 
     expect(popupState.hostToken).toBe('host-session-alive');
     expect(popupState.windowType).toBe('popup');
     expect(popupState.tabId).toBe(initialMeta.tabId);
-    expect(popupState.openMode).toBe('popup');
-    expect(popupState.toggleIcon).toBe('tab');
     expect(popupState.draft).toBe('Draft preserved across mode switch');
     expect(popupState.hasSessionPreservedState).toBe(false);
     expect(popupState.hasLocalPreservedState).toBe(false);
@@ -102,24 +114,22 @@ test('switching between Tab Mode and Popup Mode preserves live chat state withou
     // Switch Popup Mode -> Tab Mode
     await page.locator('#toggle-open-mode-btn').click();
 
-    await expect.poll(async () => page.evaluate(async () => {
-      const win = await chrome.windows.getCurrent();
-      return win.type;
-    })).toBe('normal');
+    await expect.poll(() => readModeState(page)).toEqual({
+      windowType: 'normal',
+      toggleIcon: 'open_in_new',
+      openMode: 'tab'
+    });
 
     const backInTabState = await page.evaluate(async () => {
-      const [win, tab, syncSettings] = await Promise.all([
+      const [win, tab] = await Promise.all([
         chrome.windows.getCurrent(),
-        chrome.tabs.getCurrent(),
-        chrome.storage.sync.get({ openMode: null })
+        chrome.tabs.getCurrent()
       ]);
       return {
         hostToken: window.__panelizeHostSessionToken,
         windowType: win.type,
         windowId: win.id,
-        tabId: tab.id,
-        openMode: syncSettings.openMode,
-        toggleIcon: document.querySelector('#toggle-open-mode-btn .material-symbols-outlined')?.textContent
+        tabId: tab.id
       };
     });
 
@@ -127,8 +137,6 @@ test('switching between Tab Mode and Popup Mode preserves live chat state withou
     expect(backInTabState.windowType).toBe('normal');
     expect(backInTabState.windowId).toBe(initialMeta.windowId);
     expect(backInTabState.tabId).toBe(initialMeta.tabId);
-    expect(backInTabState.openMode).toBe('tab');
-    expect(backInTabState.toggleIcon).toBe('open_in_new');
 
     const frameStateBackInTab = await getProviderFrame().evaluate(() => ({
       token: window.__providerChatSessionToken,
@@ -177,8 +185,11 @@ test('returning from Popup Mode to Tab Mode creates a normal window without relo
 
     // Switch to Popup Mode
     await page.locator('#toggle-open-mode-btn').click();
-    await expect.poll(async () => page.evaluate(async () => (await chrome.windows.getCurrent()).type))
-      .toBe('popup');
+    await expect.poll(() => readModeState(page)).toEqual({
+      windowType: 'popup',
+      toggleIcon: 'tab',
+      openMode: 'popup'
+    });
 
     // Close every remaining normal window so none exist
     await page.evaluate(async () => {
@@ -190,21 +201,16 @@ test('returning from Popup Mode to Tab Mode creates a normal window without relo
 
     // Switch back to Tab Mode with zero normal windows open
     await page.locator('#toggle-open-mode-btn').click();
-    await expect.poll(async () => page.evaluate(async () => (await chrome.windows.getCurrent()).type))
-      .toBe('normal');
+    await expect.poll(() => readModeState(page)).toEqual({
+      windowType: 'normal',
+      toggleIcon: 'open_in_new',
+      openMode: 'tab'
+    });
 
-    const result = await page.evaluate(async () => ({
-      hostToken: window.__panelizeHostSessionToken,
-      windowType: (await chrome.windows.getCurrent()).type,
-      toggleIcon: document.querySelector('#toggle-open-mode-btn .material-symbols-outlined')?.textContent
-    }));
+    const hostToken = await page.evaluate(() => window.__panelizeHostSessionToken);
     const frameToken = await getProviderFrame().evaluate(() => window.__providerChatSessionToken);
 
-    expect(result).toEqual({
-      hostToken: 'solo-popup-alive',
-      windowType: 'normal',
-      toggleIcon: 'open_in_new'
-    });
+    expect(hostToken).toBe('solo-popup-alive');
     expect(frameToken).toBe('solo-iframe-alive');
   } finally {
     await extension.close();

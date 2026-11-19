@@ -121,6 +121,13 @@ import { setupPanelResize } from '../modules/panel-resize.js';
 import {
   DEFAULT_POPUP_HEIGHT,
   DEFAULT_POPUP_WIDTH,
+  HANDOFF_QUERY_PARAM,
+  OpenModeSwitchUnsupportedError,
+  PRESERVED_STATE_KEY,
+  createHandoffStorageKey,
+  generateHandoffToken,
+  getHandoffTokenFromUrl,
+  stripHandoffTokenFromUrl,
   switchTabOpenMode
 } from '../modules/open-mode-switcher.js';
 import { createPointerGuard, createPointerTracker } from '../modules/pointer-guard.js';
@@ -228,12 +235,12 @@ let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
 let currentEditingPromptId = null;
 
 // Open mode state
-let currentOpenMode = 'tab'; // 'tab' or 'popup'
 let isPopupWindow = false;   // Whether the current window is a popup window
 let currentTabId = null;
 let lastNormalWindowId = null;
 let isTogglingOpenMode = false;
 let tabAttachmentListenerRegistered = false;
+let pendingTabAttachmentWindowId = null;
 
 // Default panel configuration
 const DEFAULT_PROVIDERS = DEFAULT_PROVIDER_IDS;
@@ -1361,12 +1368,10 @@ async function loadSettings() {
     const settings = await chrome.storage.sync.get({
       multiPanelLayout: '1x3',
       multiPanelProviders: DEFAULT_PROVIDERS,
-      openMode: 'tab',
       googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE
     });
 
     currentLayout = normalizeLayout(settings.multiPanelLayout);
-    currentOpenMode = settings.openMode || 'tab';
     currentGoogleProviderMode = normalizeGoogleProviderMode(settings.googleProviderMode);
 
     // Apply layout
@@ -1384,10 +1389,17 @@ function registerTabAttachmentListener() {
   }
 
   tabAttachmentListenerRegistered = true;
-  chrome.tabs.onAttached.addListener((attachedTabId) => {
-    if (!isTogglingOpenMode && currentTabId != null && attachedTabId === currentTabId) {
-      detectWindowType();
+  chrome.tabs.onAttached.addListener((attachedTabId, attachInfo) => {
+    if (currentTabId == null || attachedTabId !== currentTabId) {
+      return;
     }
+
+    if (isTogglingOpenMode) {
+      pendingTabAttachmentWindowId = attachInfo?.newWindowId ?? Symbol('attached');
+      return;
+    }
+
+    detectWindowType();
   });
 }
 
@@ -1407,9 +1419,6 @@ async function detectWindowType() {
     if (!isPopupWindow && currentWindow?.id != null) {
       lastNormalWindowId = currentWindow.id;
     }
-
-    const settings = await chrome.storage.sync.get({ openMode: 'tab' });
-    currentOpenMode = settings.openMode;
 
     updateToggleButton();
   } catch (error) {
@@ -1449,60 +1458,96 @@ function collectCurrentState() {
   return state;
 }
 
+async function clearPreservedStateKey(storageKey) {
+  const removals = [];
+  if (typeof chrome?.storage?.session?.remove === 'function') {
+    removals.push(chrome.storage.session.remove(storageKey));
+  }
+  if (typeof chrome?.storage?.local?.remove === 'function') {
+    removals.push(chrome.storage.local.remove(storageKey));
+  }
+  await Promise.allSettled(removals);
+}
+
 async function fallbackRecreateForOpenMode(targetIsPopup) {
   const state = collectCurrentState();
+  const handoffToken = generateHandoffToken();
+  const storageKey = createHandoffStorageKey(handoffToken);
 
   try {
     await chrome.storage.session.set({
-      preservedState: state
+      [storageKey]: state
     });
   } catch (error) {
     console.error('Error saving state:', error);
     await chrome.storage.local.set({
-      preservedState: state
+      [storageKey]: state
     });
   }
 
+  const targetUrl = new URL(chrome.runtime.getURL('multi-panel/multi-panel.html'));
+  targetUrl.searchParams.set(HANDOFF_QUERY_PARAM, handoffToken);
+  const multiPanelUrl = targetUrl.toString();
   const newMode = targetIsPopup ? 'popup' : 'tab';
-  await chrome.storage.sync.set({ openMode: newMode });
 
-  const multiPanelUrl = chrome.runtime.getURL('multi-panel/multi-panel.html');
+  try {
+    if (!targetIsPopup) {
+      await chrome.tabs.create({ url: multiPanelUrl, active: true });
+    } else {
+      await chrome.windows.create({
+        url: multiPanelUrl,
+        type: 'popup',
+        width: DEFAULT_POPUP_WIDTH,
+        height: DEFAULT_POPUP_HEIGHT
+      });
+    }
+  } catch (createError) {
+    await clearPreservedStateKey(storageKey);
+    throw createError;
+  }
+
+  try {
+    await chrome.storage.sync.set({ openMode: newMode });
+  } catch (storageError) {
+    console.error('Error saving open mode setting:', storageError);
+  }
 
   if (!targetIsPopup) {
-    await chrome.tabs.create({ url: multiPanelUrl, active: true });
     window.close();
   } else {
-    await chrome.windows.create({
-      url: multiPanelUrl,
-      type: 'popup',
-      width: DEFAULT_POPUP_WIDTH,
-      height: DEFAULT_POPUP_HEIGHT
-    });
-    const currentTab = await chrome.tabs.getCurrent();
-    if (currentTab) {
+    const currentTab = typeof chrome?.tabs?.getCurrent === 'function'
+      ? await chrome.tabs.getCurrent().catch(() => null)
+      : null;
+    if (currentTab?.id != null && typeof chrome?.tabs?.remove === 'function') {
       await chrome.tabs.remove(currentTab.id);
+    } else {
+      window.close();
     }
   }
 }
 
-async function toggleOpenMode() {
+export async function toggleOpenMode() {
   if (isTogglingOpenMode) {
     return;
   }
 
   isTogglingOpenMode = true;
+  pendingTabAttachmentWindowId = null;
+  let expectedWindowId = null;
   try {
     try {
       const result = await switchTabOpenMode(chrome, {
         preferredNormalWindowId: lastNormalWindowId
       });
 
+      expectedWindowId = result.windowId;
       isPopupWindow = result.isPopupWindow;
-      currentOpenMode = result.mode;
       currentTabId = result.tabId;
       if (result.previousNormalWindowId != null) {
         lastNormalWindowId = result.previousNormalWindowId;
       }
+
+      updateToggleButton();
 
       try {
         await chrome.storage.sync.set({ openMode: result.mode });
@@ -1510,29 +1555,68 @@ async function toggleOpenMode() {
         console.error('Error saving open mode setting:', storageError);
       }
 
-      updateToggleButton();
       return;
     } catch (reparentError) {
-      console.warn('In-place mode switch failed, falling back to recreate:', reparentError);
-      await fallbackRecreateForOpenMode(!isPopupWindow);
+      if (reparentError instanceof OpenModeSwitchUnsupportedError) {
+        console.warn('In-place mode switch unsupported, falling back to recreate:', reparentError);
+        try {
+          await fallbackRecreateForOpenMode(!isPopupWindow);
+        } catch (fallbackError) {
+          console.error('Fallback mode switch failed:', fallbackError);
+          showToast(t('msgOpenModeSwitchFailed') || 'Unable to switch window mode right now. Please try again.');
+        }
+        return;
+      }
+
+      // Keep the live page and active chats intact when Chrome rejects a tab
+      // or window edit transiently (for example while the user drags a tab).
+      console.warn('In-place mode switch failed; preserving current session:', reparentError);
+      showToast(t('msgOpenModeSwitchFailed') || 'Unable to switch window mode right now. Please try again.');
     }
   } finally {
+    const observedWindowId = pendingTabAttachmentWindowId;
+    pendingTabAttachmentWindowId = null;
     isTogglingOpenMode = false;
+
+    if (
+      observedWindowId != null &&
+      (expectedWindowId == null || observedWindowId !== expectedWindowId)
+    ) {
+      await detectWindowType();
+    }
   }
 }
 
 async function restoreStateIfNeeded() {
   try {
+    const currentHref = typeof window !== 'undefined' ? window.location?.href : null;
+    const handoffToken = getHandoffTokenFromUrl(currentHref);
+    const storageKey = handoffToken
+      ? createHandoffStorageKey(handoffToken)
+      : PRESERVED_STATE_KEY;
+
     // Try session storage first, then local storage
-    let result = await chrome.storage.session.get('preservedState');
-    if (!result.preservedState) {
-      result = await chrome.storage.local.get('preservedState');
+    let result = typeof chrome?.storage?.session?.get === 'function'
+      ? await chrome.storage.session.get(storageKey).catch(() => ({}))
+      : {};
+    if (!result?.[storageKey] && typeof chrome?.storage?.local?.get === 'function') {
+      result = await chrome.storage.local.get(storageKey);
     }
 
-    if (result.preservedState) {
-      const state = result.preservedState;
+    if (handoffToken) {
+      const cleanedUrl = stripHandoffTokenFromUrl(currentHref);
+      if (cleanedUrl && typeof window?.history?.replaceState === 'function') {
+        try {
+          window.history.replaceState(null, '', cleanedUrl);
+        } catch {
+          // Ignore History API restrictions in synthetic test environments.
+        }
+      }
+    }
 
-      // 恢复输入文本
+    const state = result?.[storageKey];
+    if (state) {
+      // Restore unified input text
       const input = document.getElementById('unified-input');
       if (input && state.inputText) {
         input.value = state.inputText;
@@ -1540,13 +1624,13 @@ async function restoreStateIfNeeded() {
         resizeTextarea();
       }
 
-      // 恢复图片
+      // Restore uploaded images
       if (state.uploadedImages && state.uploadedImages.length > 0) {
         uploadedImages = state.uploadedImages;
         renderImagePreviews();
       }
 
-      // 恢复布局
+      // Restore layout
       if (state.currentLayout) {
         currentLayout = normalizeLayout(state.currentLayout);
         const panelGrid = document.getElementById('panel-grid');
@@ -1555,7 +1639,7 @@ async function restoreStateIfNeeded() {
         }
       }
 
-      // 恢复面板配置（保存到 multiPanelProviders）
+      // Restore panel configuration (save to multiPanelProviders)
       if (state.panels && state.panels.length > 0) {
         const providerIds = state.panels.map(p => p.providerId);
         const existing = await chrome.storage.sync.get({ multiPanelProviders: null });
@@ -1573,9 +1657,7 @@ async function restoreStateIfNeeded() {
         });
       }
 
-      // 清除已恢复的状态
-      await chrome.storage.session.remove('preservedState');
-      await chrome.storage.local.remove('preservedState');
+      await clearPreservedStateKey(storageKey);
     }
   } catch (error) {
     console.error('Error restoring state:', error);

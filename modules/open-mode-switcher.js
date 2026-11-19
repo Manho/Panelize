@@ -6,6 +6,111 @@
 
 export const DEFAULT_POPUP_WIDTH = 1400;
 export const DEFAULT_POPUP_HEIGHT = 900;
+export const PRESERVED_STATE_KEY = 'preservedState';
+export const HANDOFF_QUERY_PARAM = 'openModeHandoff';
+
+const TRANSIENT_TAB_EDIT_ERROR_PATTERN = /tabs cannot be edited right now/i;
+const DEFAULT_TRANSIENT_MAX_RETRIES = 4;
+const DEFAULT_TRANSIENT_RETRY_DELAY_MS = 60;
+
+/**
+ * Thrown only when the host environment lacks the tab/window APIs required for
+ * in-place tab adoption (indicating a legacy recreate fallback is needed).
+ */
+export class OpenModeSwitchUnsupportedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'OpenModeSwitchUnsupportedError';
+  }
+}
+
+/**
+ * Returns true when Chrome rejected a tab/window mutation because the tab strip
+ * is momentarily locked (for example, while the user is dragging a tab).
+ *
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isTransientTabEditError(error) {
+  const message = typeof error === 'string' ? error : error?.message;
+  return typeof message === 'string' && TRANSIENT_TAB_EDIT_ERROR_PATTERN.test(message);
+}
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retries a Chrome tab/window mutation on transient tab-strip-busy errors.
+ *
+ * @template T
+ * @param {() => Promise<T>} operation
+ * @param {object} [options]
+ * @param {number} [options.maxRetries]
+ * @param {number} [options.retryDelayMs]
+ * @param {(ms: number) => Promise<void>} [options.sleep]
+ * @returns {Promise<T>}
+ */
+export async function retryOnTransientTabEditError(
+  operation,
+  {
+    maxRetries = DEFAULT_TRANSIENT_MAX_RETRIES,
+    retryDelayMs = DEFAULT_TRANSIENT_RETRY_DELAY_MS,
+    sleep = defaultSleep
+  } = {}
+) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientTabEditError(error) || attempt >= maxRetries) {
+        throw error;
+      }
+      attempt += 1;
+      await sleep(retryDelayMs);
+    }
+  }
+}
+
+export function createHandoffStorageKey(token) {
+  return `${PRESERVED_STATE_KEY}:${token}`;
+}
+
+export function generateHandoffToken() {
+  if (typeof globalThis?.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function getHandoffTokenFromUrl(urlString) {
+  if (!urlString) {
+    return null;
+  }
+  try {
+    const token = new URL(urlString).searchParams.get(HANDOFF_QUERY_PARAM);
+    return token && token.trim() ? token.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function stripHandoffTokenFromUrl(urlString) {
+  if (!urlString) {
+    return null;
+  }
+  try {
+    const parsed = new URL(urlString);
+    if (!parsed.searchParams.has(HANDOFF_QUERY_PARAM)) {
+      return null;
+    }
+    parsed.searchParams.delete(HANDOFF_QUERY_PARAM);
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Finds the best existing normal browser window that can accept the tab when
@@ -70,6 +175,9 @@ export async function findTargetNormalWindow(
  * @param {number|null} [options.preferredNormalWindowId] - Normal window to prefer when returning to tab mode.
  * @param {number} [options.popupWidth]
  * @param {number} [options.popupHeight]
+ * @param {number} [options.maxRetries]
+ * @param {number} [options.retryDelayMs]
+ * @param {(ms: number) => Promise<void>} [options.sleep]
  * @returns {Promise<{
  *   mode: 'tab'|'popup',
  *   isPopupWindow: boolean,
@@ -83,7 +191,10 @@ export async function switchTabOpenMode(
   {
     preferredNormalWindowId = null,
     popupWidth = DEFAULT_POPUP_WIDTH,
-    popupHeight = DEFAULT_POPUP_HEIGHT
+    popupHeight = DEFAULT_POPUP_HEIGHT,
+    maxRetries = DEFAULT_TRANSIENT_MAX_RETRIES,
+    retryDelayMs = DEFAULT_TRANSIENT_RETRY_DELAY_MS,
+    sleep = defaultSleep
   } = {}
 ) {
   if (
@@ -91,7 +202,7 @@ export async function switchTabOpenMode(
     typeof chromeApi?.tabs?.getCurrent !== 'function' ||
     typeof chromeApi?.windows?.create !== 'function'
   ) {
-    throw new Error('Required chrome.windows/tabs APIs are unavailable');
+    throw new OpenModeSwitchUnsupportedError('Required chrome.windows/tabs APIs are unavailable');
   }
 
   const [currentWindow, currentTab] = await Promise.all([
@@ -100,20 +211,25 @@ export async function switchTabOpenMode(
   ]);
 
   if (!currentWindow || currentTab?.id == null) {
-    throw new Error('Unable to resolve current tab or window');
+    throw new OpenModeSwitchUnsupportedError('Unable to resolve current tab or window');
   }
 
+  const retryOptions = { maxRetries, retryDelayMs, sleep };
   const wasPopup = currentWindow.type === 'popup';
 
   if (!wasPopup) {
     const previousNormalWindowId = currentWindow.id ?? currentTab.windowId ?? null;
-    const popupWindow = await chromeApi.windows.create({
-      tabId: currentTab.id,
-      type: 'popup',
-      width: popupWidth,
-      height: popupHeight,
-      focused: true
-    });
+    const popupWindow = await retryOnTransientTabEditError(
+      () =>
+        chromeApi.windows.create({
+          tabId: currentTab.id,
+          type: 'popup',
+          width: popupWidth,
+          height: popupHeight,
+          focused: true
+        }),
+      retryOptions
+    );
 
     return {
       mode: 'popup',
@@ -132,13 +248,21 @@ export async function switchTabOpenMode(
   if (targetWindow && typeof chromeApi?.tabs?.move === 'function') {
     let moved = false;
     try {
-      await chromeApi.tabs.move(currentTab.id, {
-        windowId: targetWindow.id,
-        index: -1
-      });
+      await retryOnTransientTabEditError(
+        () =>
+          chromeApi.tabs.move(currentTab.id, {
+            windowId: targetWindow.id,
+            index: -1
+          }),
+        retryOptions
+      );
       moved = true;
-    } catch {
-      // Fall through to creating a new normal window adopting the existing tab.
+    } catch (moveError) {
+      if (isTransientTabEditError(moveError)) {
+        throw moveError;
+      }
+      // Target window may have closed concurrently or refused cross-type move;
+      // fall through to creating a new normal window adopting the existing tab.
     }
 
     if (moved) {
@@ -170,11 +294,15 @@ export async function switchTabOpenMode(
     }
   }
 
-  const normalWindow = await chromeApi.windows.create({
-    tabId: currentTab.id,
-    type: 'normal',
-    focused: true
-  });
+  const normalWindow = await retryOnTransientTabEditError(
+    () =>
+      chromeApi.windows.create({
+        tabId: currentTab.id,
+        type: 'normal',
+        focused: true
+      }),
+    retryOptions
+  );
 
   return {
     mode: 'tab',
