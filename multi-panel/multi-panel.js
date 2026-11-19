@@ -118,6 +118,11 @@ import {
   updatePanelFitState
 } from '../modules/panel-fit.js';
 import { setupPanelResize } from '../modules/panel-resize.js';
+import {
+  DEFAULT_POPUP_HEIGHT,
+  DEFAULT_POPUP_WIDTH,
+  switchTabOpenMode
+} from '../modules/open-mode-switcher.js';
 import { createPointerGuard, createPointerTracker } from '../modules/pointer-guard.js';
 
 
@@ -222,9 +227,13 @@ let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
 // 提示词编辑器状态
 let currentEditingPromptId = null;
 
-// 打开模式状态
-let currentOpenMode = 'tab'; // 'tab' 或 'popup'
-let isPopupWindow = false;   // 当前窗口是否为弹出窗口
+// Open mode state
+let currentOpenMode = 'tab'; // 'tab' or 'popup'
+let isPopupWindow = false;   // Whether the current window is a popup window
+let currentTabId = null;
+let lastNormalWindowId = null;
+let isTogglingOpenMode = false;
+let tabAttachmentListenerRegistered = false;
 
 // Default panel configuration
 const DEFAULT_PROVIDERS = DEFAULT_PROVIDER_IDS;
@@ -280,6 +289,7 @@ async function init() {
   translatePage();
   registerRuntimeMessageListener();
   registerStorageChangeListener();
+  registerTabAttachmentListener();
 
   // Detect window type and load mode
   await detectWindowType();
@@ -1368,13 +1378,36 @@ async function loadSettings() {
 }
 
 // ===== Open Mode Management =====
+function registerTabAttachmentListener() {
+  if (tabAttachmentListenerRegistered || !chrome?.tabs?.onAttached?.addListener) {
+    return;
+  }
+
+  tabAttachmentListenerRegistered = true;
+  chrome.tabs.onAttached.addListener((attachedTabId) => {
+    if (!isTogglingOpenMode && currentTabId != null && attachedTabId === currentTabId) {
+      detectWindowType();
+    }
+  });
+}
+
 async function detectWindowType() {
   try {
-    const currentWindow = await chrome.windows.getCurrent();
-    // popup 类型的窗口 type 为 'popup'
-    isPopupWindow = currentWindow.type === 'popup';
+    const [currentWindow, currentTab] = await Promise.all([
+      chrome.windows.getCurrent(),
+      typeof chrome?.tabs?.getCurrent === 'function'
+        ? chrome.tabs.getCurrent().catch(() => null)
+        : Promise.resolve(null)
+    ]);
 
-    // 读取设置中的模式
+    isPopupWindow = currentWindow?.type === 'popup';
+    if (currentTab?.id != null) {
+      currentTabId = currentTab.id;
+    }
+    if (!isPopupWindow && currentWindow?.id != null) {
+      lastNormalWindowId = currentWindow.id;
+    }
+
     const settings = await chrome.storage.sync.get({ openMode: 'tab' });
     currentOpenMode = settings.openMode;
 
@@ -1392,12 +1425,10 @@ function updateToggleButton() {
   const text = btn.querySelector('.btn-text');
 
   if (isPopupWindow) {
-    // 当前是弹出窗口，提示可以切换到标签页
     icon.textContent = 'tab';
     text.textContent = t('switchToTabMode') || 'Tab Mode';
     btn.title = t('switchToTabModeTitle') || 'Switch to Tab Mode';
   } else {
-    // 当前是标签页，提示可以切换到弹出窗口
     icon.textContent = 'open_in_new';
     text.textContent = t('switchToPopupMode') || 'Popup Mode';
     btn.title = t('switchToPopupModeTitle') || 'Switch to Popup Mode';
@@ -1418,47 +1449,75 @@ function collectCurrentState() {
   return state;
 }
 
-async function toggleOpenMode() {
-  // 1. 收集当前状态
+async function fallbackRecreateForOpenMode(targetIsPopup) {
   const state = collectCurrentState();
 
-  // 2. 保存状态到 storage（临时）
   try {
     await chrome.storage.session.set({
       preservedState: state
     });
   } catch (error) {
     console.error('Error saving state:', error);
-    // Fallback to local storage if session storage fails
     await chrome.storage.local.set({
       preservedState: state
     });
   }
 
-  // 3. 切换设置
-  const newMode = isPopupWindow ? 'tab' : 'popup';
+  const newMode = targetIsPopup ? 'popup' : 'tab';
   await chrome.storage.sync.set({ openMode: newMode });
 
-  // 4. 在新模式下打开
   const multiPanelUrl = chrome.runtime.getURL('multi-panel/multi-panel.html');
 
-  if (isPopupWindow) {
-    // 从弹出窗口切换到标签页：创建新标签页，关闭当前窗口
+  if (!targetIsPopup) {
     await chrome.tabs.create({ url: multiPanelUrl, active: true });
-    window.close(); // 关闭当前弹出窗口
+    window.close();
   } else {
-    // 从标签页切换到弹出窗口：创建弹出窗口，关闭当前标签页
     await chrome.windows.create({
       url: multiPanelUrl,
       type: 'popup',
-      width: 1400,
-      height: 900
+      width: DEFAULT_POPUP_WIDTH,
+      height: DEFAULT_POPUP_HEIGHT
     });
-    // 获取当前标签页并关闭
     const currentTab = await chrome.tabs.getCurrent();
     if (currentTab) {
       await chrome.tabs.remove(currentTab.id);
     }
+  }
+}
+
+async function toggleOpenMode() {
+  if (isTogglingOpenMode) {
+    return;
+  }
+
+  isTogglingOpenMode = true;
+  try {
+    try {
+      const result = await switchTabOpenMode(chrome, {
+        preferredNormalWindowId: lastNormalWindowId
+      });
+
+      isPopupWindow = result.isPopupWindow;
+      currentOpenMode = result.mode;
+      currentTabId = result.tabId;
+      if (result.previousNormalWindowId != null) {
+        lastNormalWindowId = result.previousNormalWindowId;
+      }
+
+      try {
+        await chrome.storage.sync.set({ openMode: result.mode });
+      } catch (storageError) {
+        console.error('Error saving open mode setting:', storageError);
+      }
+
+      updateToggleButton();
+      return;
+    } catch (reparentError) {
+      console.warn('In-place mode switch failed, falling back to recreate:', reparentError);
+      await fallbackRecreateForOpenMode(!isPopupWindow);
+    }
+  } finally {
+    isTogglingOpenMode = false;
   }
 }
 
