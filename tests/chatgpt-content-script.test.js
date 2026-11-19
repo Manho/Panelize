@@ -729,5 +729,97 @@ describe('chatgpt content script provider status', () => {
         await reloaded.frameWin.happyDOM.close();
       }
     });
+
+    it('does not let SPA route-change reload clear override an active unconditional New Chat clear', async () => {
+      const sharedStorage = new Map([
+        [
+          'panelize:chatgpt-sent-drafts',
+          JSON.stringify([{ text: 'Earlier sent prompt', at: Date.now() }]),
+        ],
+      ]);
+      const frame = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/c/abc',
+        sharedStorage,
+        composerHtml: `
+          <a id="spa-new-chat" href="/" aria-label="New chat">New chat</a>
+          <form data-type="unified-composer" data-chatgpt-composer>
+            <div id="prompt-textarea" data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror"></div>
+            <button type="button" data-testid="send-button" aria-label="Send prompt">Send</button>
+          </form>
+        `,
+      });
+      try {
+        const newChatLink = frame.frameWin.document.getElementById('spa-new-chat');
+        Object.defineProperty(newChatLink, 'offsetParent', {
+          configurable: true,
+          get: () => frame.frameWin.document.body,
+        });
+        newChatLink.getBoundingClientRect = () => ({
+          x: 8,
+          y: 8,
+          width: 80,
+          height: 32,
+          top: 8,
+          left: 8,
+          right: 88,
+          bottom: 40,
+        });
+        newChatLink.addEventListener('click', (event) => {
+          event.preventDefault();
+          frame.frameWin.history.pushState({}, '', '/');
+        });
+
+        frame.postFromHost({
+          type: 'NEW_CHAT',
+          context: 'multi-panel',
+        });
+        await wait(30);
+
+        frame.editor.innerHTML = '<p>Unsent persisted home draft</p>';
+        await wait(250);
+        expect(frame.editor.textContent).toBe('');
+      } finally {
+        await frame.frameWin.happyDOM.close();
+      }
+    });
+
+    it('does not record an Enter key press while already streaming as a sent draft or clear it after reload', async () => {
+      const sharedStorage = new Map();
+      const streamingFrame = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/c/streaming',
+        sharedStorage,
+        composerHtml: `
+          <form data-type="unified-composer" data-chatgpt-composer>
+            <div id="prompt-textarea" data-composer-markdown contenteditable="true" role="textbox" class="ProseMirror"><p>Follow-up typed while streaming</p></div>
+            <button type="button" data-testid="stop-button" aria-label="Stop streaming">Stop</button>
+          </form>
+        `,
+      });
+      try {
+        const enterEvent = new streamingFrame.frameWin.KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        });
+        streamingFrame.editor.dispatchEvent(enterEvent);
+        await wait(200);
+        expect(sharedStorage.get('panelize:chatgpt-sent-drafts')).toBeUndefined();
+      } finally {
+        await streamingFrame.frameWin.happyDOM.close();
+      }
+
+      const reloaded = await bootEmbeddedChatgptFrame({
+        url: 'https://chatgpt.com/',
+        sharedStorage,
+      });
+      try {
+        reloaded.editor.innerHTML = '<p>Follow-up typed while streaming</p>';
+        await wait(250);
+        expect(reloaded.editor.textContent).toBe('Follow-up typed while streaming');
+      } finally {
+        await reloaded.frameWin.happyDOM.close();
+      }
+    });
   });
 });

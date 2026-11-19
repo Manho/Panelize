@@ -1657,6 +1657,9 @@
               ? readChatgptEditorText(findProviderInput('chatgpt'))
               : '';
             const chatgptStartHref = provider === 'chatgpt' ? window.location.href : '';
+            const chatgptWasBusyBeforeSend = provider === 'chatgpt'
+              ? Boolean(findChatgptBusyButton())
+              : false;
             console.log('[Text Injection] Clicking send button:', selector);
             if (provider === 'chatglm') {
               // ChatGLM submits from its mousedown handler; HTMLElement.click() skips it.
@@ -1671,7 +1674,9 @@
               targetElement.click();
             }
             if (provider === 'chatgpt' && chatgptCandidateText.trim().length > 0) {
-              confirmAndRecordChatgptSend(chatgptCandidateText, chatgptStartHref);
+              confirmAndRecordChatgptSend(chatgptCandidateText, chatgptStartHref, {
+                wasBusyBeforeSend: chatgptWasBusyBeforeSend
+              });
             }
             return true;
           } else {
@@ -2020,10 +2025,14 @@
 
   function getChatgptDraftStorages() {
     const storages = [];
-    try {
-      if (window.localStorage) storages.push(window.localStorage);
-    } catch (error) {
-      // Ignore restricted storage contexts.
+    const isTemporaryChat =
+      new URLSearchParams(window.location?.search || '').get('temporary-chat') === 'true';
+    if (!isTemporaryChat) {
+      try {
+        if (window.localStorage) storages.push(window.localStorage);
+      } catch (error) {
+        // Ignore restricted storage contexts.
+      }
     }
     try {
       if (window.sessionStorage) storages.push(window.sessionStorage);
@@ -2093,7 +2102,11 @@
     return readSentChatgptDrafts().some(entry => entry.text === normalized);
   }
 
-  function confirmAndRecordChatgptSend(candidateText, startHref = window.location.href) {
+  function confirmAndRecordChatgptSend(
+    candidateText,
+    startHref = window.location.href,
+    { wasBusyBeforeSend = false } = {}
+  ) {
     if (!isEmbeddedChatgptFrame()) {
       return;
     }
@@ -2108,7 +2121,7 @@
       if (!current) {
         return true;
       }
-      if (findChatgptBusyButton()) {
+      if (!wasBusyBeforeSend && findChatgptBusyButton()) {
         return true;
       }
       if (window.location.href !== startHref && !isChatgptHomePath()) {
@@ -2327,6 +2340,12 @@
     if (!isEmbeddedChatgptFrame() || !isChatgptHomePath()) {
       return;
     }
+    if (
+      (chatgptNewChatClearTimerIds.length > 0 || Boolean(chatgptNewChatMountObserver)) &&
+      !chatgptActiveClearMatchSentOnly
+    ) {
+      return;
+    }
     if (readSentChatgptDrafts().length === 0) {
       return;
     }
@@ -2365,14 +2384,15 @@
         return;
       }
       const startHref = window.location.href;
-      setTimeout(() => confirmAndRecordChatgptSend(text, startHref), 0);
+      const wasBusyBeforeSend = Boolean(findChatgptBusyButton());
+      setTimeout(() => confirmAndRecordChatgptSend(text, startHref, { wasBusyBeforeSend }), 0);
     };
 
     document.addEventListener('click', (event) => {
       const target = event?.target;
       if (!(target instanceof Element)) return;
       const sendButton = target.closest(sendButtonSelector);
-      if (!sendButton) return;
+      if (!sendButton || !isProviderSendControlEnabled('chatgpt', sendButton)) return;
       const composerForm = getChatgptComposer()?.findForm();
       if (composerForm && sendButton.closest('form') !== composerForm) return;
       captureFromEditor();
