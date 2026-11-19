@@ -26,8 +26,15 @@ export function renderChatgptFixture({
   sendStealDelays = [],
   busyAfterSendMs = 0,
   composer = 'legacy',
+  persistDraftOnReload = false,
 } = {}) {
-  const config = { loadStealDelays, newChatStealDelays, sendStealDelays, busyAfterSendMs };
+  const config = {
+    loadStealDelays,
+    newChatStealDelays,
+    sendStealDelays,
+    busyAfterSendMs,
+    persistDraftOnReload,
+  };
   const composerHtml = COMPOSER_HTML[composer];
   if (!composerHtml) {
     throw new Error(`Unknown ChatGPT fixture composer: ${composer}`);
@@ -70,6 +77,22 @@ ${composerHtml}
     });
 
     scheduleComposerFocus(config.loadStealDelays, 'load');
+
+    if (config.persistDraftOnReload) {
+      const DRAFT_KEY = '__fixture_persisted_draft';
+      const savedDraft = window.localStorage.getItem(DRAFT_KEY);
+      if (savedDraft) {
+        setTimeout(() => {
+          composer.innerHTML = '<p>' + savedDraft + '</p>';
+        }, 120);
+      }
+      composer.addEventListener('input', () => {
+        const text = (composer.textContent || '').trim();
+        if (text) {
+          window.localStorage.setItem(DRAFT_KEY, text);
+        }
+      });
+    }
 
     document.querySelector('[data-testid="new-chat-button"]').addEventListener('click', () => {
       window.__fixture.newChats += 1;
