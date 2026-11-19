@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.4 - 2026-11-19
+- Fixed switching between Tab Mode and Popup Mode reloading the Multi-Panel page and clearing active chats; Panelize now moves the existing tab in place between browser windows and standalone popup windows while preserving ongoing provider conversations and drafts.
+
 ## 2.2.3 - 2026-11-13
 - Fixed Full answers Share snapshots not scrolling and stitching long responses on Custom Web UI providers (such as Perplexity), while suppressing sticky composer halos and repeated side-rail overlays across stitched frames.
 
