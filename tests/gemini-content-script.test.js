@@ -139,4 +139,57 @@ describe('Gemini content script integration', () => {
     expect(sendClickSpy).not.toHaveBeenCalled();
     expect(uploadClickSpy).not.toHaveBeenCalled();
   });
+
+  it('intercepts same-origin /u/1/app?pageId=none target="_blank" account links inside Multi-Panel frames while leaving external links alone', () => {
+    const fakeHost = { postMessage: vi.fn() };
+    Object.defineProperty(window, 'parent', { configurable: true, value: fakeHost });
+    Object.defineProperty(window, 'top', { configurable: true, value: fakeHost });
+
+    const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    document.body.innerHTML = `
+      <a id="gemini-u1-link" href="https://gemini.google.com/u/1/app?pageId=none" target="_blank">Account 1</a>
+      <a id="gemini-external-link" href="https://accounts.google.com/Logout" target="_blank">Sign out</a>
+    `;
+
+    const accountLink = document.getElementById('gemini-u1-link');
+    const accountClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    accountLink.dispatchEvent(accountClick);
+
+    expect(accountClick.defaultPrevented).toBe(true);
+    expect(assignSpy).toHaveBeenCalledWith('https://gemini.google.com/u/1/app?pageId=none');
+
+    assignSpy.mockClear();
+    const externalLink = document.getElementById('gemini-external-link');
+    const externalClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    externalLink.dispatchEvent(externalClick);
+
+    expect(externalClick.defaultPrevented).toBe(false);
+    expect(assignSpy).not.toHaveBeenCalled();
+
+    // Ordinary conversation deep links on the SAME /u/1 account must NOT be hijacked when opened with target="_blank"
+    window.happyDOM.setURL('https://gemini.google.com/u/1/app');
+    document.body.innerHTML = `
+      <a id="gemini-same-account-conv" href="https://gemini.google.com/u/1/app/conv-xyz789" target="_blank">Open chat in new tab</a>
+      <a id="gemini-cross-account-conv" href="https://gemini.google.com/u/2/app/conv-xyz789" target="_blank">Switch to account 2 chat</a>
+    `;
+
+    const sameAccountConvClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    document.getElementById('gemini-same-account-conv').dispatchEvent(sameAccountConvClick);
+    expect(sameAccountConvClick.defaultPrevented).toBe(false);
+    expect(assignSpy).not.toHaveBeenCalled();
+
+    const crossAccountConvClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    document.getElementById('gemini-cross-account-conv').dispatchEvent(crossAccountConvClick);
+    expect(crossAccountConvClick.defaultPrevented).toBe(true);
+    expect(assignSpy).toHaveBeenCalledWith('https://gemini.google.com/u/2/app/conv-xyz789');
+  });
+
+  it('preserves the active /u/<n> account prefix on Gemini NEW_CHAT URL fallback', () => {
+    window.happyDOM.setURL('https://gemini.google.com/u/1/app/conv-abc123');
+    createGeminiDom();
+
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+
+    expect(window.location.href).toBe('https://gemini.google.com/u/1/app');
+  });
 });

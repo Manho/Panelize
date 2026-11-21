@@ -200,7 +200,16 @@ export function createPanelActionResultWaiter({
 
     settle({
       ...createFailure(panel, event.data.reason),
-      succeededImageIds: normalizeSucceededImageIds(event.data.succeededImageIds, expectedImageIds, false)
+      succeededImageIds: normalizeSucceededImageIds(event.data.succeededImageIds, expectedImageIds, false),
+      ...(Array.isArray(event.data.attemptedImageIds)
+        ? {
+          attemptedImageIds: normalizeSucceededImageIds(
+            event.data.attemptedImageIds,
+            expectedImageIds,
+            false
+          )
+        }
+        : {})
     });
   };
 

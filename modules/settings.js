@@ -1,9 +1,11 @@
+import { DEFAULT_GEMINI_ACCOUNT_INDEX } from './gemini-account.js';
 import { DEFAULT_GOOGLE_PROVIDER_MODE } from './google-mode.js';
 import { DEFAULT_PROVIDER_IDS } from './provider-defaults.js';
 
 const DEFAULT_SETTINGS = {
   enabledProviders: DEFAULT_PROVIDER_IDS,
   googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE,
+  geminiAccountIndex: DEFAULT_GEMINI_ACCOUNT_INDEX,
   providerOrder: null,
   defaultProvider: 'chatgpt',
   lastSelectedProvider: 'chatgpt',

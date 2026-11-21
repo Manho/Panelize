@@ -58,6 +58,7 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
       'type',
       'text',
       'images',
+      'fallbackImages',
       'autoSubmit',
       'requestId',
       'action',
@@ -189,6 +190,7 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
       'action',
       'status',
       'succeededImageIds',
+      'attemptedImageIds',
       'reason'
     ],
     senderFiles: [
