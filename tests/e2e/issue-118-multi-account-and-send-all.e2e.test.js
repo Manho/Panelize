@@ -214,31 +214,40 @@ test('Gemini multi-account selector and in-frame /u/1/app account link stay insi
       })
     );
 
-    const page = await openMultiPanel(extension, { providers: ['gemini'], layout: '1x1' });
+    const page = await openMultiPanel(extension, { providers: ['gemini', 'gemini'], layout: '1x2' });
     page.on('pageerror', (err) => pageErrors.push(err.message));
 
-    const accountSelect = page.locator('.panel-gemini-account-select');
-    await expect(accountSelect).toBeVisible();
-    await expect(accountSelect).toHaveValue('');
+    const firstAccountSelect = page.locator('.panel-gemini-account-select').nth(0);
+    const secondAccountSelect = page.locator('.panel-gemini-account-select').nth(1);
+    await expect(firstAccountSelect).toBeVisible();
+    await expect(secondAccountSelect).toBeVisible();
+    await expect(firstAccountSelect).toHaveValue('');
+    await expect(secondAccountSelect).toHaveValue('');
 
-    const panelFrame = page.frameLocator('iframe');
-    await expect(panelFrame.locator('#current-path')).toHaveText('/');
+    const firstPanelFrame = page.frameLocator('iframe').nth(0);
+    const secondPanelFrame = page.frameLocator('iframe').nth(1);
+    await expect(firstPanelFrame.locator('#current-path')).toHaveText('/');
+    await expect(secondPanelFrame.locator('#current-path')).toHaveText('/');
 
     const tabCountBeforeClick = (await getTabUrls(page)).length;
 
-    // Clicking a target="_blank" /u/1/app?pageId=none link inside Gemini navigates in-frame instead of spawning an external tab
-    await panelFrame.locator('#switch-account-u1').click();
-    await expect(panelFrame.locator('#current-path')).toHaveText('/u/1/app?pageId=none');
-    await expect(accountSelect).toHaveValue('1');
+    // Clicking a target="_blank" /u/1/app?pageId=none link inside the first Gemini panel navigates in-frame without spawning a new tab or disturbing the second Gemini panel
+    await firstPanelFrame.locator('#switch-account-u1').click();
+    await expect(firstPanelFrame.locator('#current-path')).toHaveText('/u/1/app?pageId=none');
+    await expect(firstAccountSelect).toHaveValue('1');
+    await expect(secondPanelFrame.locator('#current-path')).toHaveText('/');
+    await expect(secondAccountSelect).toHaveValue('');
     expect((await getTabUrls(page)).length).toBe(tabCountBeforeClick);
 
-    // Switching the header dropdown to /u/2 navigates the panel iframe to /u/2/app
-    await accountSelect.selectOption('2');
-    await expect(panelFrame.locator('#current-path')).toHaveText('/u/2/app');
+    // Switching the second Gemini panel's header dropdown to /u/2 navigates ONLY the second panel while keeping the first panel's /u/1 session intact
+    await secondAccountSelect.selectOption('2');
+    await expect(secondPanelFrame.locator('#current-path')).toHaveText('/u/2/app');
+    await expect(firstPanelFrame.locator('#current-path')).toHaveText('/u/1/app?pageId=none');
+    await expect(firstAccountSelect).toHaveValue('1');
 
     // Also verify narrow/mobile viewport rendering of header controls
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(accountSelect).toBeVisible();
+    await expect(firstAccountSelect).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('gemini-multi-account-mobile.png'), fullPage: true });
 
     expect(pageErrors).toEqual([]);

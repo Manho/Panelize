@@ -190,4 +190,41 @@ describe('deepseek content script integration', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not click an enabled unrelated .ds-icon-button while the primary DeepSeek send button is disabled', async () => {
+    vi.useFakeTimers();
+    try {
+      const { sendButton } = createDeepSeekDom({ sendDisabled: true });
+      const unrelatedIconBtn = document.createElement('button');
+      unrelatedIconBtn.type = 'button';
+      unrelatedIconBtn.className = 'ds-icon-button';
+      unrelatedIconBtn.innerHTML = '<svg><path d="M1 1 L10 10"></path></svg>';
+      markVisible(unrelatedIconBtn);
+      sendButton.parentElement.prepend(unrelatedIconBtn);
+
+      const unrelatedSpy = vi.fn();
+      const sendSpy = vi.fn();
+      unrelatedIconBtn.addEventListener('click', unrelatedSpy);
+      sendButton.addEventListener('click', sendSpy);
+
+      dispatchMultiPanelMessage({
+        type: 'INJECT_TEXT',
+        text: 'Avoid unrelated icon buttons',
+        autoSubmit: true,
+        context: 'multi-panel',
+      });
+
+      await vi.advanceTimersByTimeAsync(850);
+      expect(unrelatedSpy).not.toHaveBeenCalled();
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      sendButton.classList.remove('ds-button--disabled');
+      await vi.advanceTimersByTimeAsync(450);
+
+      expect(unrelatedSpy).not.toHaveBeenCalled();
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -214,8 +214,7 @@ export function isProviderCurrentUrl(providerId, rawUrl) {
         url.searchParams.get('chatMode') !== 'temp'
       );
     case 'aistudio': {
-      const aistudioPath = stripGoogleAccountPathPrefix(url.pathname);
-      const promptMatch = aistudioPath.match(/^\/prompts\/([^/]+)\/?$/);
+      const promptMatch = url.pathname.match(/^\/prompts\/([^/]+)\/?$/);
       return Boolean(
         promptMatch &&
         !AISTUDIO_NON_CONVERSATION_IDS.has(promptMatch[1]) &&
@@ -242,17 +241,6 @@ export function getProviderOpenUrl(provider, reportedUrl = null, providerMode = 
       reportedAccountIndex ?? normalizeGeminiAccountIndex(options?.geminiAccountIndex);
     if (effectiveAccountIndex !== null) {
       return getGeminiTopLevelFallbackUrl(effectiveAccountIndex);
-    }
-  }
-
-  if (provider?.id === 'aistudio') {
-    const parsedReported = parseHttpUrl(reportedUrl);
-    const reportedAccountIndex =
-      parsedReported && hasAllowedProviderHost('aistudio', parsedReported)
-        ? extractGoogleAccountIndexFromUrl(reportedUrl)
-        : null;
-    if (reportedAccountIndex !== null) {
-      return `https://aistudio.google.com/u/${reportedAccountIndex}/prompts/new_chat`;
     }
   }
 

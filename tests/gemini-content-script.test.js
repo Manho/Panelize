@@ -165,6 +165,23 @@ describe('Gemini content script integration', () => {
 
     expect(externalClick.defaultPrevented).toBe(false);
     expect(assignSpy).not.toHaveBeenCalled();
+
+    // Ordinary conversation deep links on the SAME /u/1 account must NOT be hijacked when opened with target="_blank"
+    window.happyDOM.setURL('https://gemini.google.com/u/1/app');
+    document.body.innerHTML = `
+      <a id="gemini-same-account-conv" href="https://gemini.google.com/u/1/app/conv-xyz789" target="_blank">Open chat in new tab</a>
+      <a id="gemini-cross-account-conv" href="https://gemini.google.com/u/2/app/conv-xyz789" target="_blank">Switch to account 2 chat</a>
+    `;
+
+    const sameAccountConvClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    document.getElementById('gemini-same-account-conv').dispatchEvent(sameAccountConvClick);
+    expect(sameAccountConvClick.defaultPrevented).toBe(false);
+    expect(assignSpy).not.toHaveBeenCalled();
+
+    const crossAccountConvClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    document.getElementById('gemini-cross-account-conv').dispatchEvent(crossAccountConvClick);
+    expect(crossAccountConvClick.defaultPrevented).toBe(true);
+    expect(assignSpy).toHaveBeenCalledWith('https://gemini.google.com/u/2/app/conv-xyz789');
   });
 
   it('preserves the active /u/<n> account prefix on Gemini NEW_CHAT URL fallback', () => {

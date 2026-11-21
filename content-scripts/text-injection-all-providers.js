@@ -327,10 +327,10 @@
     deepseek: [
       // Current site: a design-system div button that is disabled by class.
       'div[role="button"].ds-button--primary.ds-button--filled:not(.ds-button--disabled)',
-      '.ds-icon-button[role="button"]:not([aria-disabled="true"]):not(.ds-icon-button--disabled)',
-      'button.ds-icon-button:not([aria-disabled="true"]):not(.ds-icon-button--disabled)',
       'button[aria-label="Send"]',
-      'button[type="submit"]'
+      'button[type="submit"]',
+      '.ds-icon-button[role="button"]:not([aria-disabled="true"]):not(.ds-icon-button--disabled):has(svg path[d*="M8.3125"])',
+      'button.ds-icon-button:not([aria-disabled="true"]):not(.ds-icon-button--disabled):has(svg path[d*="M8.3125"])'
     ],
     kimi: [
       // Priority: clickable send button containers that are not disabled
@@ -707,6 +707,10 @@
       message.succeededImageIds = result.succeededImageIds;
     }
 
+    if (!result.ok && Array.isArray(result?.attemptedImageIds)) {
+      message.attemptedImageIds = result.attemptedImageIds;
+    }
+
     if (!result.ok) {
       message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
     }
@@ -744,27 +748,32 @@
     return match ? `/u/${match[1]}` : '';
   }
 
-  function isSameOriginGoogleAccountNavigationUrl(provider, targetUrl) {
+  function isSameOriginGeminiAccountSwitchUrl(targetUrl) {
     if (!targetUrl || targetUrl.origin !== window.location.origin) {
       return false;
     }
 
-    if (provider === 'gemini' || provider === 'aistudio') {
-      return /^\/u\/\d+(?:\/|$)/.test(targetUrl.pathname) || targetUrl.searchParams.has('authuser');
+    if (targetUrl.searchParams.has('authuser')) {
+      return true;
     }
 
-    if (provider === 'google') {
-      return targetUrl.searchParams.has('authuser');
+    const match = /^\/u\/(\d+)(?:\/|$)/.exec(targetUrl.pathname);
+    if (!match) {
+      return false;
     }
 
-    return false;
+    const strippedPath = targetUrl.pathname.replace(/^\/u\/\d+(?=\/|$)/, '') || '/';
+    if (strippedPath === '/' || strippedPath === '/app' || strippedPath === '/app/') {
+      return true;
+    }
+
+    return `/u/${match[1]}` !== getCurrentGoogleAccountPrefix();
   }
 
   /**
-   * Keeps same-origin Google multi-account links (`/u/<n>/...`, `?authuser=<n>`)
+   * Keeps same-origin Gemini Google account-switch links (`/u/<n>/app`, `?authuser=<n>`)
    * inside the embedded panel iframe when the page marks them `target="_blank"`
-   * or `target="_top"`, instead of opening an external tab or hitting sandbox
-   * top-navigation restrictions.
+   * or `target="_top"`, without hijacking ordinary same-account conversation links.
    */
   function setupSameOriginAccountNavigation() {
     document.addEventListener('click', (event) => {
@@ -784,7 +793,7 @@
       }
 
       const provider = detectProvider();
-      if (provider !== 'gemini' && provider !== 'aistudio' && provider !== 'google') {
+      if (provider !== 'gemini') {
         return;
       }
 
@@ -808,7 +817,7 @@
         return;
       }
 
-      if (!isSameOriginGoogleAccountNavigationUrl(provider, resolvedUrl)) {
+      if (!isSameOriginGeminiAccountSwitchUrl(resolvedUrl)) {
         return;
       }
 
@@ -1808,14 +1817,21 @@
 
     console.log('[Text Injection] Attempting to click send button for provider:', provider);
 
-    // ChatGPT's send button lives in the composer's form; searching only there
-    // keeps another form's Send (e.g. an inline edit) from being clicked.
+    // ChatGPT's send button lives in the composer's form; DeepSeek's lives in the
+    // composer ancestor. Scoping the search keeps unrelated toolbar/inline buttons
+    // from being clicked.
     const searchRoot = provider === 'chatgpt'
       ? getChatgptComposer()?.findForm() || document
-      : document;
+      : provider === 'deepseek'
+        ? findClosestAncestorContaining(findProviderInput('deepseek'), 'div[role="button"], button') || document
+        : document;
 
-    // Try each selector
-    for (const selector of selectors) {
+    const hasDisabledPrimaryDeepSeekSend = provider === 'deepseek' && Boolean(
+      searchRoot.querySelector('div[role="button"].ds-button--primary.ds-button--filled.ds-button--disabled')
+    );
+
+    // Try each selector (unless DeepSeek's primary send button is present and disabled)
+    for (const selector of hasDisabledPrimaryDeepSeekSend ? [] : selectors) {
       try {
         const elements = searchRoot.querySelectorAll(selector);
         console.log(`[Text Injection] Found ${elements.length} elements with selector:`, selector);
@@ -2179,10 +2195,9 @@
   function handleAiStudioNewChat(options = {}) {
     const shouldUseTemporaryChat = options?.temporaryChat === true ||
       (options?.temporaryChat !== false && isTemporaryChatAlreadyEnabled('aistudio'));
-    const accountPrefix = getCurrentGoogleAccountPrefix();
-    const targetUrl = accountPrefix
-      ? `https://aistudio.google.com${accountPrefix}/prompts/new_chat${shouldUseTemporaryChat ? '?temporary=true' : ''}`
-      : (shouldUseTemporaryChat ? AISTUDIO_TEMP_CHAT_URL : AISTUDIO_NEW_CHAT_URL);
+    const targetUrl = shouldUseTemporaryChat
+      ? AISTUDIO_TEMP_CHAT_URL
+      : AISTUDIO_NEW_CHAT_URL;
     console.log('[Text Injection] Navigating AI Studio to new chat URL:', targetUrl);
     window.location.href = targetUrl;
     return true;
@@ -2617,11 +2632,86 @@
 
   // ===== Image Injection Functions =====
 
+  const CONTENTEDITABLE_BLOCK_TAGS = new Set([
+    'P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
+  ]);
+
+  function readContentEditableBlockText(root) {
+    if (!root) {
+      return '';
+    }
+
+    const extractInline = (node) => {
+      if (!node) return '';
+      if (node.nodeType === 3) {
+        return node.nodeValue || '';
+      }
+      if (node.nodeType !== 1) {
+        return '';
+      }
+      if (node.tagName === 'BR') {
+        return '\n';
+      }
+      let out = '';
+      for (const child of node.childNodes) {
+        out += extractInline(child);
+      }
+      return out;
+    };
+
+    const children = [...(root.childNodes || [])];
+    const hasBlockChild = children.some(
+      child => child.nodeType === 1 && CONTENTEDITABLE_BLOCK_TAGS.has(child.tagName)
+    );
+    if (!hasBlockChild) {
+      return extractInline(root).replace(/\r\n/g, '\n');
+    }
+
+    const lines = [];
+    let inlineBuffer = '';
+    const flushInline = () => {
+      if (inlineBuffer.length > 0) {
+        lines.push(inlineBuffer.replace(/\n$/, ''));
+        inlineBuffer = '';
+      }
+    };
+
+    for (const child of children) {
+      if (child.nodeType === 1 && CONTENTEDITABLE_BLOCK_TAGS.has(child.tagName)) {
+        flushInline();
+        const rawBlock = extractInline(child).replace(/\r\n/g, '\n');
+        // Empty paragraph `<p><br></p>` represents a single blank line `''`
+        lines.push(rawBlock === '\n' ? '' : rawBlock.replace(/\n$/, ''));
+      } else {
+        inlineBuffer += extractInline(child);
+      }
+    }
+    flushInline();
+    return lines.join('\n');
+  }
+
   // Helper function to inject text into provider's input field
   function inputEndsWithText(element, text) {
-    const isFormControl = element?.tagName === 'TEXTAREA' || element?.tagName === 'INPUT';
-    const currentText = isFormControl ? element.value : element?.textContent;
-    return typeof currentText === 'string' && currentText.endsWith(text);
+    if (!element || typeof text !== 'string') {
+      return false;
+    }
+    const isFormControl = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
+    const currentText = isFormControl ? element.value : element.textContent;
+    if (typeof currentText === 'string' && currentText.endsWith(text)) {
+      return true;
+    }
+    if (isFormControl) {
+      return false;
+    }
+    const normalizedTarget = text.replace(/\r\n/g, '\n').trimEnd();
+    if (!normalizedTarget) {
+      return false;
+    }
+    const blockText = readContentEditableBlockText(element).trimEnd();
+    if (blockText.endsWith(normalizedTarget)) {
+      return true;
+    }
+    return blockText.replace(/\n+/g, '\n').endsWith(normalizedTarget.replace(/\n+/g, '\n'));
   }
 
   function injectText(
@@ -2663,6 +2753,16 @@
     return false;
   }
 
+  function getComposerRootForAttachmentCheck(provider, input) {
+    if (provider === 'deepseek') return getDeepSeekComposer();
+    if (provider === 'kimi') return getKimiComposer();
+    if (provider === 'grok') return getGrokComposer();
+    if (provider === 'yuanbao') return getYuanbaoComposer();
+    return input?.closest?.('form, ms-prompt-box, .input-area-container, .chat-editor, #chat-box') ||
+      input?.parentElement ||
+      null;
+  }
+
   function isProviderComposerCleared(provider, candidateImages = [], providerMode = null) {
     const input = provider === 'google'
       ? findGoogleInput(providerMode)
@@ -2677,26 +2777,27 @@
       return false;
     }
 
-    if ((candidateImages || []).some(img => img?.name && countFilenamePreviewEvidence(document, img.name) > 0)) {
+    const composerRoot = getComposerRootForAttachmentCheck(provider, input);
+    if (
+      composerRoot &&
+      (candidateImages || []).some(img => img?.name && countFilenamePreviewEvidence(composerRoot, img.name) > 0)
+    ) {
       return false;
     }
 
     if (provider === 'deepseek') {
-      const composer = getDeepSeekComposer();
-      if (composer && composer.querySelectorAll('img[src^="blob:"]').length > 0) {
+      if (composerRoot && composerRoot.querySelectorAll('img[src^="blob:"]').length > 0) {
         return false;
       }
     } else if (provider === 'kimi') {
-      const composer = getKimiComposer();
       if (
-        composer &&
-        (countKimiAttachmentPreviews(composer) > 0 || countKimiPendingAttachmentPreviews(composer) > 0)
+        composerRoot &&
+        (countKimiAttachmentPreviews(composerRoot) > 0 || countKimiPendingAttachmentPreviews(composerRoot) > 0)
       ) {
         return false;
       }
     } else if (provider === 'grok') {
-      const composer = getGrokComposer();
-      const attachmentList = composer?.querySelector('[role="list"][aria-label="Conversation attachments"]');
+      const attachmentList = composerRoot?.querySelector('[role="list"][aria-label="Conversation attachments"]');
       if ((attachmentList?.children.length || 0) > 0) {
         return false;
       }
@@ -2750,6 +2851,9 @@
     );
     const effectiveImages = composerClearedOnRetry ? normalizedFallbackImages : images;
     const effectiveRetry = composerClearedOnRetry ? false : retry;
+    const failureAttemptedIds = composerClearedOnRetry
+      ? effectiveImages.map(img => img?.id).filter(id => typeof id === 'string')
+      : undefined;
 
     if (!effectiveImages || effectiveImages.length === 0) {
       if (retry && text && text.trim()) {
@@ -2830,7 +2934,8 @@
           const firstFailure = imageInjectionResults.find(result => !result.ok);
           return createImageInjectionFailure(
             firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
-            succeededImageIds
+            succeededImageIds,
+            failureAttemptedIds
           );
         }
         // If no text but autoSubmit is true, click send button
@@ -2842,21 +2947,23 @@
         const firstFailure = imageInjectionResults.find(result => !result.ok);
         return createImageInjectionFailure(
           firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
-          succeededImageIds
+          succeededImageIds,
+          failureAttemptedIds
         );
       }
 
       if (!textInjected) {
         return createImageInjectionFailure(
           IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND,
-          succeededImageIds
+          succeededImageIds,
+          failureAttemptedIds
         );
       }
 
       return createImageInjectionSuccess(succeededImageIds);
     } catch (error) {
       console.error('[Image Injection] Error:', error);
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, []);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, [], failureAttemptedIds);
     }
   }
 
@@ -2864,8 +2971,13 @@
     return { ok: true, succeededImageIds };
   }
 
-  function createImageInjectionFailure(reason, succeededImageIds = []) {
-    return { ok: false, reason, succeededImageIds };
+  function createImageInjectionFailure(reason, succeededImageIds = [], attemptedImageIds = undefined) {
+    return {
+      ok: false,
+      reason,
+      succeededImageIds,
+      ...(Array.isArray(attemptedImageIds) ? { attemptedImageIds } : {})
+    };
   }
 
   function normalizeImageInjectionResult(result) {
@@ -3299,21 +3411,24 @@
       }
 
       // DeepSeek renders attachment previews beside the composer controls rather
-      // than consistently inside the nearest file-input ancestor; also count blob
-      // thumbnail images inside the composer when narrow chips truncate filenames.
-      const countDeepSeekPreviews = () => Math.max(
-        countFilenamePreviewEvidence(document, imageData.name),
-        composer.querySelectorAll('img[src^="blob:"]').length
-      );
-      const previousCount = countDeepSeekPreviews();
+      // than consistently inside the nearest file-input ancestor; track filename
+      // and composer blob thumbnail baselines independently so historical chat
+      // attachments with the same filename never mask a newly uploaded preview.
+      const previousFilenameCount = countFilenamePreviewEvidence(document, imageData.name);
+      const previousBlobCount = composer.querySelectorAll('img[src^="blob:"]').length;
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
       dispatchFileInputEvents(fileInput);
 
       const accepted = await waitForPreviewIncrease(
-        countDeepSeekPreviews,
-        previousCount
+        () => (
+          countFilenamePreviewEvidence(document, imageData.name) > previousFilenameCount ||
+          composer.querySelectorAll('img[src^="blob:"]').length > previousBlobCount
+            ? 1
+            : 0
+        ),
+        0
       );
       return accepted
         ? createImageInjectionSuccess()

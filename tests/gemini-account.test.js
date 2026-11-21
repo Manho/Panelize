@@ -343,4 +343,143 @@ describe('multi-panel Gemini account selector & Send All cleared-panel retry', (
     expect(deepseekPayload.fallbackImages).toHaveLength(1);
     expect(document.getElementById('send-status').textContent).toBe('Filled 2 inputs');
   });
+
+  it('keeps per-panel Gemini accounts independent so changing one Gemini panel does not reload another', async () => {
+    await bootMultiPanel(['gemini', 'gemini']);
+    const panelEls = Array.from(document.querySelectorAll('#panel-grid .panel-item'));
+    expect(panelEls).toHaveLength(2);
+
+    const [firstPanelEl, secondPanelEl] = panelEls;
+    const firstIframe = firstPanelEl.querySelector('iframe');
+    const secondIframe = secondPanelEl.querySelector('iframe');
+    const firstSelect = firstPanelEl.querySelector('.panel-gemini-account-select');
+    const secondSelect = secondPanelEl.querySelector('.panel-gemini-account-select');
+
+    // Select /u/0 in the first Gemini panel
+    firstSelect.value = '0';
+    firstSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(firstIframe.getAttribute('src')).toBe('https://gemini.google.com/u/0/app');
+    });
+    expect(secondIframe.getAttribute('src')).toBe('https://gemini.google.com');
+    expect(secondSelect.value).toBe('');
+
+    // Simulate active conversation on first Gemini panel, then switch second Gemini panel to /u/1
+    firstIframe.setAttribute('src', 'https://gemini.google.com/u/0/app/live-conv-1');
+    secondSelect.value = '1';
+    secondSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(secondIframe.getAttribute('src')).toBe('https://gemini.google.com/u/1/app');
+    });
+    // First Gemini panel must NOT be reloaded or have its account selector overwritten
+    expect(firstIframe.getAttribute('src')).toBe('https://gemini.google.com/u/0/app/live-conv-1');
+    expect(firstSelect.value).toBe('0');
+    expect(secondSelect.value).toBe('1');
+  });
+
+  it('preserves missing image IDs via attemptedImageIds when a cleared-composer fallback retry partially fails', async () => {
+    const { mod, handleByProvider } = await bootMultiPanel(['deepseek']);
+    const deepseek = handleByProvider.deepseek;
+
+    // Attach 3 images A, B, C
+    const fileInput = document.getElementById('image-file-input');
+    const files = ['a.png', 'b.png', 'c.png'].map(
+      (name) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' })
+    );
+    const origFileReader = globalThis.FileReader;
+    globalThis.FileReader = class MockFileReader {
+      readAsDataURL() {
+        this.result = SAMPLE_PNG_DATA_URL;
+        if (this.onload) this.onload({ target: { result: SAMPLE_PNG_DATA_URL } });
+      }
+    };
+    try {
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: files });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    } finally {
+      globalThis.FileReader = origFileReader;
+    }
+
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.image-preview-item')).toHaveLength(3);
+    });
+
+    let pass = 0;
+    deepseek.fakeWindow.postMessage.mockImplementation((msg) => {
+      if (msg?.type !== 'INJECT_TEXT_WITH_IMAGES') return;
+      pass += 1;
+      const allIds = (msg.fallbackImages || msg.images).map((img) => img.id);
+      queueMicrotask(() => {
+        if (pass === 1) {
+          // Pass 1: A and B succeed, C fails -> pending=[C]
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'PANELIZE_ACTION_RESULT',
+                context: 'multi-panel-action-result',
+                requestId: msg.requestId,
+                provider: 'deepseek',
+                action: 'fill',
+                status: 'failed',
+                reason: 'preview-timeout',
+                succeededImageIds: [allIds[0], allIds[1]],
+              },
+              source: deepseek.fakeWindow,
+              origin: 'https://chat.deepseek.com',
+            })
+          );
+        } else if (pass === 2) {
+          // Pass 2: composer was cleared, frame attempted all [A, B, C]; A succeeded, B failed!
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'PANELIZE_ACTION_RESULT',
+                context: 'multi-panel-action-result',
+                requestId: msg.requestId,
+                provider: 'deepseek',
+                action: 'fill',
+                status: 'failed',
+                reason: 'preview-timeout',
+                succeededImageIds: [allIds[0]],
+                attemptedImageIds: allIds,
+              },
+              source: deepseek.fakeWindow,
+              origin: 'https://chat.deepseek.com',
+            })
+          );
+        } else {
+          // Pass 3: must receive BOTH B and C in msg.images!
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'PANELIZE_ACTION_RESULT',
+                context: 'multi-panel-action-result',
+                requestId: msg.requestId,
+                provider: 'deepseek',
+                action: 'fill',
+                status: 'succeeded',
+                succeededImageIds: msg.images.map((img) => img.id),
+              },
+              source: deepseek.fakeWindow,
+              origin: 'https://chat.deepseek.com',
+            })
+          );
+        }
+      });
+    });
+
+    // Pass 1
+    await mod.broadcastMessage('Three images', true);
+    const allThreeIds = deepseek.fakeWindow.postMessage.mock.calls[0][0].images.map((i) => i.id);
+
+    // Pass 2 (user cleared composer, clicks Send All; A succeeds, B fails)
+    await mod.broadcastMessage('Three images', true);
+
+    // Pass 3 (Retry Failed): must retry BOTH B and C, never dropping B
+    deepseek.fakeWindow.postMessage.mockClear();
+    await mod.broadcastMessage('Three images', false);
+    const pass3Payload = deepseek.fakeWindow.postMessage.mock.calls[0][0];
+    expect(pass3Payload.images.map((i) => i.id)).toEqual([allThreeIds[1], allThreeIds[2]]);
+  });
 });

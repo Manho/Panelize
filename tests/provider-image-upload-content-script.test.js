@@ -868,4 +868,79 @@ describe('provider image upload adapters', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(realSendClickSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('does not duplicate block-rendered multiline text (<p> lines) on Kimi Send All retry', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    createKimiDom();
+    const editor = document.querySelector('.chat-input-editor');
+    editor.innerHTML = '<p>Alpha line</p><p>Beta line</p>';
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      fallbackImages: SAMPLE_IMAGES,
+      text: 'Alpha line\nBeta line',
+      autoSubmit: false,
+      requestId: 'kimi-block-multiline-retry',
+      retry: true,
+    });
+    await finishSuccessfulInjection();
+
+    // Must recognize `<p>Alpha line</p><p>Beta line</p>` as ending with `Alpha line\nBeta line`
+    expect(editor.innerHTML).toBe('<p>Alpha line</p><p>Beta line</p>');
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'kimi-block-multiline-retry',
+      provider: 'kimi',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: ['sample-one-id', 'sample-two-id'],
+    }, EXTENSION_ORIGIN);
+  });
+
+  it('re-uploads fallbackImages into cleared DeepSeek composer even when historical messages have matching filenames and unnamed blob previews', async () => {
+    window.happyDOM.setURL('https://chat.deepseek.com/');
+    const { composer, fileInput, uploadedNames } = createDeepSeekDom({ previewOnChange: false });
+
+    // Seed two historical chat attachments outside `#deepseek-composer` sharing `sample-one.png`
+    const historyTurn = document.createElement('section');
+    historyTurn.innerHTML = `
+      <img alt="sample-one.png" src="https://cdn.deepseek.com/old-1.png" />
+      <img alt="sample-one.png" src="https://cdn.deepseek.com/old-2.png" />
+    `;
+    document.body.prepend(historyTurn);
+
+    // Mount an unnamed blob thumbnail inside the composer (simulating narrow truncated chip)
+    fileInput.addEventListener('change', () => {
+      const unnamedBlob = document.createElement('img');
+      unnamedBlob.src = `blob:https://chat.deepseek.com/${uploadedNames.length}`;
+      composer.querySelector('#deepseek-previews').appendChild(unnamedBlob);
+    });
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      fallbackImages: [SAMPLE_IMAGES[0]],
+      text: 'Fresh prompt after clear',
+      autoSubmit: false,
+      requestId: 'deepseek-history-filename-req',
+      retry: true,
+    });
+    await finishSuccessfulInjection();
+
+    expect(uploadedNames).toEqual(['sample-one.png']);
+    expect(composer.querySelector('textarea').value).toBe('Fresh prompt after clear');
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'deepseek-history-filename-req',
+      provider: 'deepseek',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: ['sample-one-id'],
+    }, EXTENSION_ORIGIN);
+  });
 });

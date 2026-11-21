@@ -190,6 +190,7 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
       'action',
       'status',
       'succeededImageIds',
+      'attemptedImageIds',
       'reason'
     ],
     senderFiles: [

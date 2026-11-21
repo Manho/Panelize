@@ -23,7 +23,6 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/agent123/chat456')).toBe(true);
     expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/1abcDEF234')).toBe(true);
-    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/u/1/prompts/1abcDEF234')).toBe(true);
   });
 
   it('accepts current Google pages for both AI Mode and Search', () => {
@@ -90,7 +89,6 @@ describe('provider open URL helpers', () => {
       )
     ).toBe('https://aistudio.google.com/prompts/new_chat');
     expect(isProviderCurrentUrl('gemini', 'https://gemini.google.com/u/1/app')).toBe(false);
-    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/u/1/prompts/new_chat')).toBe(false);
     expect(
       getProviderOpenUrl(
         getProviderById('gemini'),
