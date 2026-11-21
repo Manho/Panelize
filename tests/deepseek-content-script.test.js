@@ -107,4 +107,87 @@ describe('deepseek content script integration', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(window.location.href).toBe('https://chat.deepseek.com/');
   });
+
+  it('re-populates the visible React-controlled DeepSeek composer after deleting its prompt even with an inline-edit textarea earlier in the DOM', () => {
+    const { editor } = createDeepSeekDom();
+
+    // Prepend a hidden/inline-edit textarea earlier in DOM order
+    const inlineEdit = document.createElement('textarea');
+    inlineEdit.setAttribute('name', 'user query');
+    inlineEdit.value = 'old edited turn';
+    document.body.prepend(inlineEdit);
+
+    // Simulate React 18 controlled input value tracker on the composer textarea
+    let trackedValue = '';
+    const reactSeenValues = [];
+    editor._valueTracker = {
+      getValue: () => trackedValue,
+      setValue: (next) => {
+        trackedValue = String(next);
+      },
+    };
+    editor.addEventListener('input', () => {
+      if (editor._valueTracker.getValue() !== editor.value) {
+        editor._valueTracker.setValue(editor.value);
+        reactSeenValues.push(editor.value);
+      }
+    });
+
+    // Pass 1: initial fill
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT',
+      text: 'First DeepSeek prompt',
+      autoSubmit: false,
+      context: 'multi-panel',
+    });
+    expect(editor.value).toBe('First DeepSeek prompt');
+    expect(reactSeenValues).toEqual(['First DeepSeek prompt']);
+
+    // Simulate user deleting the prompt inside DeepSeek while _valueTracker goes stale
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    nativeSetter.call(editor, '');
+    editor._valueTracker.setValue('First DeepSeek prompt');
+
+    // Pass 2: re-sending the exact same prompt after deletion must still notify React and populate editor
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT',
+      text: 'First DeepSeek prompt',
+      autoSubmit: false,
+      context: 'multi-panel',
+    });
+
+    expect(editor.value).toBe('First DeepSeek prompt');
+    expect(inlineEdit.value).toBe('old edited turn');
+    expect(reactSeenValues).toEqual(['First DeepSeek prompt', 'First DeepSeek prompt']);
+  });
+
+  it('retries auto-submit when DeepSeek send button transitions from disabled to enabled asynchronously', async () => {
+    vi.useFakeTimers();
+    try {
+      const { editor, sendButton } = createDeepSeekDom({ sendDisabled: true });
+      const sendSpy = vi.fn();
+      sendButton.addEventListener('click', sendSpy);
+
+      dispatchMultiPanelMessage({
+        type: 'INJECT_TEXT',
+        text: 'Delayed enablement prompt',
+        autoSubmit: true,
+        context: 'multi-panel',
+      });
+
+      expect(editor.value).toBe('Delayed enablement prompt');
+
+      // Still disabled at initial 800ms check -> should wait rather than firing premature Enter
+      await vi.advanceTimersByTimeAsync(850);
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      // DeepSeek React composer finishes enabling the send button at ~1000ms
+      sendButton.classList.remove('ds-button--disabled');
+      await vi.advanceTimersByTimeAsync(450);
+
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

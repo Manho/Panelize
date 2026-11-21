@@ -747,4 +747,125 @@ describe('provider image upload adapters', () => {
       succeededImageIds: [],
     }, EXTENSION_ORIGIN);
   });
+
+  it('re-uploads fallbackImages and re-injects text when a DeepSeek composer was cleared before Send All retry', async () => {
+    window.happyDOM.setURL('https://chat.deepseek.com/');
+    const { composer, uploadedNames } = createDeepSeekDom();
+    const textarea = composer.querySelector('textarea');
+
+    // User deleted DeepSeek's text and attachments before clicking Send All again
+    textarea.value = '';
+    composer.querySelector('#deepseek-previews').innerHTML = '';
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      fallbackImages: SAMPLE_IMAGES,
+      text: 'Restored DeepSeek prompt',
+      autoSubmit: false,
+      requestId: 'deepseek-cleared-retry-req',
+      retry: true,
+    });
+    await vi.advanceTimersByTimeAsync(4500);
+
+    expect(uploadedNames).toEqual(['sample-one.png', 'sample-two.png']);
+    expect(textarea.value).toBe('Restored DeepSeek prompt');
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'deepseek-cleared-retry-req',
+      provider: 'deepseek',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: ['sample-one-id', 'sample-two-id'],
+    }, EXTENSION_ORIGIN);
+  });
+
+  it('does not duplicate uploads or text when fallbackImages are passed to an untouched DeepSeek composer', async () => {
+    window.happyDOM.setURL('https://chat.deepseek.com/');
+    const { composer, uploadedNames } = createDeepSeekDom();
+    const textarea = composer.querySelector('textarea');
+    textarea.value = 'Already filled prompt';
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      fallbackImages: SAMPLE_IMAGES,
+      text: 'Already filled prompt',
+      autoSubmit: false,
+      requestId: 'deepseek-untouched-retry-req',
+      retry: true,
+    });
+    await finishSuccessfulInjection();
+
+    expect(uploadedNames).toEqual([]);
+    expect(textarea.value).toBe('Already filled prompt');
+    expect(window.parent.postMessage).toHaveBeenCalledWith({
+      type: 'PANELIZE_ACTION_RESULT',
+      context: 'multi-panel-action-result',
+      requestId: 'deepseek-untouched-retry-req',
+      provider: 'deepseek',
+      action: 'fill',
+      status: 'succeeded',
+      succeededImageIds: ['sample-one-id', 'sample-two-id'],
+    }, EXTENSION_ORIGIN);
+  });
+
+  it('injects all 10 lines into Kimi Lexical editor via paste without premature click on disabled send wrapper', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    const { composer, sendButton } = createKimiDom();
+    const editor = composer.querySelector('.chat-input-editor');
+    editor.setAttribute('data-lexical-editor', 'true');
+    markVisible(editor);
+
+    // Add a non-disabled inner send-icon wrapper inside a disabled `.send-button-container.disabled`
+    sendButton.classList.add('disabled');
+    const straySendIcon = document.createElement('div');
+    straySendIcon.className = 'send-icon-wrapper';
+    markVisible(straySendIcon);
+    sendButton.appendChild(straySendIcon);
+
+    const strayClickSpy = vi.fn();
+    const realSendClickSpy = vi.fn();
+    straySendIcon.addEventListener('click', strayClickSpy);
+    sendButton.addEventListener('click', (event) => {
+      if (!sendButton.classList.contains('disabled') && event.target === sendButton) {
+        realSendClickSpy();
+      }
+    });
+
+    // Simulate Lexical's paste handler preserving all 10 lines atomically
+    editor.addEventListener('paste', (event) => {
+      const pasted = event.clipboardData?.getData('text/plain') || '';
+      event.preventDefault();
+      Promise.resolve().then(() => {
+        editor.textContent = pasted;
+        setTimeout(() => {
+          sendButton.classList.remove('disabled');
+        }, 1000);
+      });
+    });
+
+    const tenLinePrompt = Array.from({ length: 10 }, (_, idx) => `Line ${idx + 1}: Kimi test payload`).join('\n');
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT',
+      context: 'multi-panel',
+      text: tenLinePrompt,
+      autoSubmit: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(850);
+    expect(editor.textContent.split('\n')).toHaveLength(10);
+    expect(editor.textContent).toBe(tenLinePrompt);
+    // Must not click `.send-icon-wrapper` while `.send-button-container` is still `.disabled`
+    expect(strayClickSpy).not.toHaveBeenCalled();
+    expect(realSendClickSpy).not.toHaveBeenCalled();
+
+    // Once Lexical enables `.send-button-container` at 1000ms, retry clicks it cleanly
+    await vi.advanceTimersByTimeAsync(500);
+    expect(realSendClickSpy).toHaveBeenCalledTimes(1);
+  });
 });

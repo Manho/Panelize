@@ -139,4 +139,40 @@ describe('Gemini content script integration', () => {
     expect(sendClickSpy).not.toHaveBeenCalled();
     expect(uploadClickSpy).not.toHaveBeenCalled();
   });
+
+  it('intercepts same-origin /u/1/app?pageId=none target="_blank" account links inside Multi-Panel frames while leaving external links alone', () => {
+    const fakeHost = { postMessage: vi.fn() };
+    Object.defineProperty(window, 'parent', { configurable: true, value: fakeHost });
+    Object.defineProperty(window, 'top', { configurable: true, value: fakeHost });
+
+    const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    document.body.innerHTML = `
+      <a id="gemini-u1-link" href="https://gemini.google.com/u/1/app?pageId=none" target="_blank">Account 1</a>
+      <a id="gemini-external-link" href="https://accounts.google.com/Logout" target="_blank">Sign out</a>
+    `;
+
+    const accountLink = document.getElementById('gemini-u1-link');
+    const accountClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    accountLink.dispatchEvent(accountClick);
+
+    expect(accountClick.defaultPrevented).toBe(true);
+    expect(assignSpy).toHaveBeenCalledWith('https://gemini.google.com/u/1/app?pageId=none');
+
+    assignSpy.mockClear();
+    const externalLink = document.getElementById('gemini-external-link');
+    const externalClick = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    externalLink.dispatchEvent(externalClick);
+
+    expect(externalClick.defaultPrevented).toBe(false);
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves the active /u/<n> account prefix on Gemini NEW_CHAT URL fallback', () => {
+    window.happyDOM.setURL('https://gemini.google.com/u/1/app/conv-abc123');
+    createGeminiDom();
+
+    dispatchMultiPanelMessage({ type: 'NEW_CHAT', context: 'multi-panel' });
+
+    expect(window.location.href).toBe('https://gemini.google.com/u/1/app');
+  });
 });

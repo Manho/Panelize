@@ -32,6 +32,16 @@ import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
 import { OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION } from '../modules/optional-provider-access.js';
 import {
+  DEFAULT_GEMINI_ACCOUNT_INDEX,
+  GEMINI_ACCOUNT_OPTIONS,
+  extractGoogleAccountIndexFromUrl,
+  getGeminiAccountOptionLabel,
+  getGeminiProviderUrl,
+  getGeminiTemporaryChatNormalUrl,
+  normalizeGeminiAccountIndex,
+  toGeminiAccountSelectValue
+} from '../modules/gemini-account.js';
+import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
   GOOGLE_PROVIDER_MODE_AI,
   GOOGLE_PROVIDER_MODE_SEARCH,
@@ -230,6 +240,7 @@ function refreshThemeAwareProviderIcons() {
   });
 }
 let currentGoogleProviderMode = DEFAULT_GOOGLE_PROVIDER_MODE;
+let currentGeminiAccountIndex = DEFAULT_GEMINI_ACCOUNT_INDEX;
 
 // 提示词编辑器状态
 let currentEditingPromptId = null;
@@ -395,6 +406,10 @@ function isGoogleProvider(providerId) {
   return providerId === 'google';
 }
 
+function isGeminiProvider(providerId) {
+  return providerId === 'gemini';
+}
+
 export function isSendFocusTrackedProvider(providerId) {
   return providerId === 'chatgpt' || providerId === 'aistudio';
 }
@@ -439,6 +454,10 @@ async function requestGrokWebSocketCookieSync() {
 }
 
 function getTemporaryChatNormalUrl(providerId) {
+  if (isGeminiProvider(providerId) && currentGeminiAccountIndex !== null) {
+    return getGeminiTemporaryChatNormalUrl(currentGeminiAccountIndex);
+  }
+
   const configuredNormalUrl = getProviderTemporaryChatNormalUrl(providerId);
   if (configuredNormalUrl !== null) {
     return configuredNormalUrl;
@@ -520,6 +539,10 @@ function getProviderFrameUrl(providerId) {
 
   if (isTemporaryChatModeEnabled && isUrlDrivenTemporaryChatProvider(providerId)) {
     return getTemporaryChatUrl(providerId);
+  }
+
+  if (isGeminiProvider(providerId) && currentGeminiAccountIndex !== null) {
+    return getGeminiProviderUrl(currentGeminiAccountIndex);
   }
 
   return isGoogleProvider(providerId)
@@ -606,10 +629,38 @@ function fitPanelSelectWidth(select) {
   )}px`;
 }
 
+function createGeminiAccountSelectElement(accountIndex = currentGeminiAccountIndex) {
+  const normalizedAccount = normalizeGeminiAccountIndex(accountIndex);
+  const selectedValue = toGeminiAccountSelectValue(normalizedAccount);
+  const select = document.createElement('select');
+  select.className = 'panel-gemini-account-select';
+  select.title = 'Google account (/u/0, /u/1, …)';
+
+  const optionIndices = GEMINI_ACCOUNT_OPTIONS.includes(normalizedAccount)
+    ? GEMINI_ACCOUNT_OPTIONS
+    : [...GEMINI_ACCOUNT_OPTIONS, normalizedAccount];
+
+  optionIndices.forEach((candidate) => {
+    const option = document.createElement('option');
+    const optionValue = toGeminiAccountSelectValue(candidate);
+    option.value = optionValue;
+    option.textContent = getGeminiAccountOptionLabel(candidate);
+    if (optionValue === selectedValue) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  });
+
+  select.value = selectedValue;
+  return select;
+}
+
 function populatePanelHeaderRight(headerRightEl, providerId) {
   const children = [];
   if (isGoogleProvider(providerId)) {
     children.push(createGoogleModeSelectElement());
+  } else if (isGeminiProvider(providerId)) {
+    children.push(createGeminiAccountSelectElement());
   }
   const descriptor = getProviderDescriptor(providerId);
   if (descriptor?.topLevelUrl !== null) {
@@ -640,6 +691,25 @@ function syncGoogleModeControls() {
   document.querySelectorAll('.panel-google-mode-select').forEach((select) => {
     if (select.value !== currentGoogleProviderMode) {
       select.value = currentGoogleProviderMode;
+    }
+    fitPanelSelectWidth(select);
+  });
+}
+
+function syncGeminiAccountControls() {
+  const expectedValue = toGeminiAccountSelectValue(currentGeminiAccountIndex);
+  document.querySelectorAll('.panel-gemini-account-select').forEach((select) => {
+    if (
+      expectedValue !== '' &&
+      !Array.from(select.options).some((opt) => opt.value === expectedValue)
+    ) {
+      const extraOption = document.createElement('option');
+      extraOption.value = expectedValue;
+      extraOption.textContent = getGeminiAccountOptionLabel(currentGeminiAccountIndex);
+      select.appendChild(extraOption);
+    }
+    if (select.value !== expectedValue) {
+      select.value = expectedValue;
     }
     fitPanelSelectWidth(select);
   });
@@ -680,6 +750,7 @@ function reloadPanelIframe(panel, overrideUrl = null, { isRecoveryReload = false
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
   panel.currentUrl = null;
+  panel.lastReportedAllowedUrl = null;
   panel.iframe = iframe;
   customSwRecoveryController?.notifyNavigationStart(panel, nextUrl, { isRecoveryReload });
   iframe.src = nextUrl;
@@ -691,7 +762,14 @@ async function openProviderTopLevel(panel) {
     return;
   }
 
-  const url = getProviderOpenUrl(provider, panel.currentUrl, getPanelProviderMode(panel));
+  const url = getProviderOpenUrl(
+    provider,
+    panel.currentUrl || panel.lastReportedAllowedUrl || null,
+    getPanelProviderMode(panel),
+    {
+      geminiAccountIndex: isGeminiProvider(panel.providerId) ? currentGeminiAccountIndex : null
+    }
+  );
 
   try {
     if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
@@ -755,6 +833,21 @@ function bindPanelHeaderActions(panelId) {
       await updateGoogleProviderMode(event.target.value, { persist: true, reloadPanels: true });
     });
   }
+
+  const geminiAccountSelect = panelEl.querySelector('.panel-gemini-account-select');
+  if (geminiAccountSelect) {
+    fitPanelSelectWidth(geminiAccountSelect);
+    geminiAccountSelect.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+    geminiAccountSelect.addEventListener('mousedown', (event) => {
+      event.stopPropagation();
+    });
+    geminiAccountSelect.addEventListener('change', async (event) => {
+      fitPanelSelectWidth(event.target);
+      await updateGeminiAccountIndex(event.target.value, { persist: true, reloadPanels: true });
+    });
+  }
 }
 
 async function updateGoogleProviderMode(mode, { persist = false, reloadPanels = false } = {}) {
@@ -771,6 +864,26 @@ async function updateGoogleProviderMode(mode, { persist = false, reloadPanels = 
 
   if (persist) {
     await saveSetting('googleProviderMode', normalizedMode);
+  }
+}
+
+async function updateGeminiAccountIndex(
+  accountIndex,
+  { persist = false, reloadPanels = false, excludePanelId = null } = {}
+) {
+  const normalizedAccount = normalizeGeminiAccountIndex(accountIndex);
+  const accountChanged = currentGeminiAccountIndex !== normalizedAccount;
+  currentGeminiAccountIndex = normalizedAccount;
+  syncGeminiAccountControls();
+
+  if (reloadPanels && accountChanged) {
+    panels
+      .filter(panel => isGeminiProvider(panel.providerId) && panel.id !== excludePanelId)
+      .forEach(panel => reloadPanelIframe(panel));
+  }
+
+  if (persist) {
+    await saveSetting('geminiAccountIndex', normalizedAccount);
   }
 }
 
@@ -846,6 +959,17 @@ function registerStorageChangeListener() {
       } else {
         updateGoogleProviderMode(nextMode, { reloadPanels: true }).catch((error) => {
           console.error('Error syncing Google provider mode:', error);
+        });
+      }
+    }
+
+    if ('geminiAccountIndex' in changes) {
+      const nextAccount = normalizeGeminiAccountIndex(changes.geminiAccountIndex?.newValue);
+      if (nextAccount === currentGeminiAccountIndex) {
+        syncGeminiAccountControls();
+      } else {
+        updateGeminiAccountIndex(nextAccount, { reloadPanels: true }).catch((error) => {
+          console.error('Error syncing Gemini account index:', error);
         });
       }
     }
@@ -1214,7 +1338,18 @@ function handleProviderStatusMessage(event) {
       if (!isProviderAllowedUrl(panel.providerId, data.url)) {
         return;
       }
+      panel.lastReportedAllowedUrl = data.url;
       panel.currentUrl = isProviderCurrentUrl(panel.providerId, data.url) ? data.url : null;
+      if (isGeminiProvider(panel.providerId)) {
+        const reportedAccountIndex = extractGoogleAccountIndexFromUrl(data.url);
+        if (reportedAccountIndex !== null && reportedAccountIndex !== currentGeminiAccountIndex) {
+          void updateGeminiAccountIndex(reportedAccountIndex, {
+            persist: true,
+            reloadPanels: true,
+            excludePanelId: panel.id
+          });
+        }
+      }
       break;
     case PANELIZE_PAGE_WIDTH:
       if (!Number.isFinite(data.neededWidth) || data.neededWidth < 0) {
@@ -1368,11 +1503,13 @@ async function loadSettings() {
     const settings = await chrome.storage.sync.get({
       multiPanelLayout: '1x3',
       multiPanelProviders: DEFAULT_PROVIDERS,
-      googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE
+      googleProviderMode: DEFAULT_GOOGLE_PROVIDER_MODE,
+      geminiAccountIndex: DEFAULT_GEMINI_ACCOUNT_INDEX
     });
 
     currentLayout = normalizeLayout(settings.multiPanelLayout);
     currentGoogleProviderMode = normalizeGoogleProviderMode(settings.googleProviderMode);
+    currentGeminiAccountIndex = normalizeGeminiAccountIndex(settings.geminiAccountIndex);
 
     // Apply layout
     const panelGrid = document.getElementById('panel-grid');
@@ -1453,6 +1590,7 @@ function collectCurrentState() {
       providerId: p.providerId
     })),
     googleProviderMode: currentGoogleProviderMode,
+    geminiAccountIndex: currentGeminiAccountIndex,
     timestamp: Date.now()
   };
   return state;
@@ -1654,6 +1792,12 @@ async function restoreStateIfNeeded() {
       if (state.googleProviderMode) {
         await chrome.storage.sync.set({
           googleProviderMode: normalizeGoogleProviderMode(state.googleProviderMode)
+        });
+      }
+
+      if (state.geminiAccountIndex !== undefined) {
+        await chrome.storage.sync.set({
+          geminiAccountIndex: normalizeGeminiAccountIndex(state.geminiAccountIndex)
         });
       }
 
@@ -1978,6 +2122,8 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   if (isGoogleProvider(newProviderId)) {
     syncGoogleModeControls();
+  } else if (isGeminiProvider(newProviderId)) {
+    syncGeminiAccountControls();
   }
 
   if (requiresOptionalProviderAccessSync(newProviderId)) {
@@ -2007,6 +2153,7 @@ async function switchPanelProvider(panelId, newProviderId) {
   panel.providerId = newProviderId;
   panel.iframe = iframe;
   panel.currentUrl = null;
+  panel.lastReportedAllowedUrl = null;
   panel.pageNeededWidth = 0;
   updatePanelFit(panel);
   bindPanelHeaderActions(panelId);
@@ -2170,7 +2317,8 @@ export async function broadcastMessage(text, autoSubmit = true) {
 
     cleanStalePanelRetryState(panels, pendingFillImageIdsByPanel, failedFillPanelIds);
 
-    const targetPanels = hasImages
+    const isSendAllRetryPass = Boolean(autoSubmit && failedFillPanelIds.size > 0);
+    const targetPanels = hasImages && !autoSubmit
       ? getFillTargetPanels(panels, failedFillPanelIds)
       : panels;
     const imageSkippedPanels = hasImages
@@ -2182,16 +2330,23 @@ export async function broadcastMessage(text, autoSubmit = true) {
       targetPanels.forEach(panel => sendFocusFillingPanelIds.add(panel.id));
     }
 
-    // Send to all panels, or only the panels that failed the previous image fill.
+    // Retry Failed (#fill-input-btn) targets only failed panels; Send All (#send-all-btn)
+    // reaches every panel so any panel cleared manually by the user is re-populated.
     const panelResults = await Promise.allSettled(
       targetPanels.map(panel => {
-        const isPanelRetry = previousFailedPanelIds.has(panel.id);
+        const wasPanelFailed = previousFailedPanelIds.has(panel.id);
+        const isPanelRetry = wasPanelFailed || isSendAllRetryPass;
         const panelSupportsImages = supportsImageUpload(panel.providerId);
         let panelImages = [];
+        let fallbackImages = null;
         if (hasImages && panelSupportsImages) {
-          if (isPanelRetry && pendingFillImageIdsByPanel.has(panel.id)) {
+          if (wasPanelFailed && pendingFillImageIdsByPanel.has(panel.id)) {
             const pendingIds = new Set(pendingFillImageIdsByPanel.get(panel.id));
             panelImages = uploadedImages.filter(img => pendingIds.has(img.id));
+            fallbackImages = uploadedImages;
+          } else if (isSendAllRetryPass && !wasPanelFailed) {
+            panelImages = [];
+            fallbackImages = uploadedImages;
           } else {
             panelImages = uploadedImages;
           }
@@ -2215,7 +2370,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
           }).finally(releaseFocusTracking);
         }
 
-        const imageCount = panelImages.length;
+        const imageCount = fallbackImages
+          ? Math.max(panelImages.length, fallbackImages.length)
+          : panelImages.length;
         const panelTimeoutMs = isFillAction
           ? getPanelActionResultTimeoutMs(imageCount)
           : 8000;
@@ -2230,7 +2387,8 @@ export async function broadcastMessage(text, autoSubmit = true) {
           panelTimeoutMs,
           {
             isFillAction,
-            waitForActionResult
+            waitForActionResult,
+            fallbackImages
           }
         ).finally(releaseFocusTracking);
       })
@@ -2288,7 +2446,7 @@ export async function broadcastMessage(text, autoSubmit = true) {
       normalizedResults.forEach(result => {
         if (!result?.panelId) return;
         const attempted = attemptedImagesByPanel.get(result.panelId) || uploadedImages;
-        const attemptedIds = attempted.map(img => img.id);
+        const attemptedIds = (attempted.length > 0 ? attempted : uploadedImages).map(img => img.id);
 
         if (result.ok) {
           failedFillPanelIds.delete(result.panelId);
@@ -2434,7 +2592,10 @@ export async function sendToPanel(
 
   const isFillAction = options.isFillAction === true;
   const waitForActionResult = options.waitForActionResult === true;
-  const expectedImageIds = images.map(img => img.id).filter(Boolean);
+  const fallbackImages = Array.isArray(options.fallbackImages) && options.fallbackImages.length > 0
+    ? options.fallbackImages
+    : null;
+  const expectedImageIds = (fallbackImages || images).map(img => img.id).filter(Boolean);
 
   const waiter = waitForActionResult
     ? createPanelActionResultWaiter({
@@ -2457,10 +2618,20 @@ export async function sendToPanel(
       type: img.type
     }));
 
+    const fallbackImagesPayload = waitForActionResult && fallbackImages
+      ? fallbackImages.map(img => ({
+        id: img.id,
+        dataUrl: img.dataUrl,
+        name: img.name,
+        type: img.type
+      }))
+      : null;
+
     postToPanelFrame(panel, {
       type: messageType,
       text,
       images: imagesPayload,
+      ...(fallbackImagesPayload ? { fallbackImages: fallbackImagesPayload } : {}),
       autoSubmit,
       requestId,
       action: waitForActionResult ? 'fill' : undefined,

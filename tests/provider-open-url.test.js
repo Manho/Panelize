@@ -13,6 +13,7 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('chatgpt', 'https://chatgpt.com/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('claude', 'https://claude.ai/chat/abc123')).toBe(true);
     expect(isProviderCurrentUrl('gemini', 'https://gemini.google.com/app/abc123')).toBe(true);
+    expect(isProviderCurrentUrl('gemini', 'https://gemini.google.com/u/1/app/abc123')).toBe(true);
     expect(isProviderCurrentUrl('grok', 'https://grok.com/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('deepseek', 'https://chat.deepseek.com/a/chat/s/abc123')).toBe(true);
     expect(isProviderCurrentUrl('kimi', 'https://www.kimi.com/chat/abc123')).toBe(true);
@@ -22,6 +23,7 @@ describe('provider open URL helpers', () => {
     expect(isProviderCurrentUrl('zai-global', 'https://chat.z.ai/c/abc123')).toBe(true);
     expect(isProviderCurrentUrl('yuanbao', 'https://yuanbao.tencent.com/chat/agent123/chat456')).toBe(true);
     expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/prompts/1abcDEF234')).toBe(true);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/u/1/prompts/1abcDEF234')).toBe(true);
   });
 
   it('accepts current Google pages for both AI Mode and Search', () => {
@@ -87,5 +89,16 @@ describe('provider open URL helpers', () => {
         'https://aistudio.google.com/prompts/new_chat?temporary=true'
       )
     ).toBe('https://aistudio.google.com/prompts/new_chat');
+    expect(isProviderCurrentUrl('gemini', 'https://gemini.google.com/u/1/app')).toBe(false);
+    expect(isProviderCurrentUrl('aistudio', 'https://aistudio.google.com/u/1/prompts/new_chat')).toBe(false);
+    expect(
+      getProviderOpenUrl(
+        getProviderById('gemini'),
+        'https://gemini.google.com/u/1/app?pageId=none'
+      )
+    ).toBe('https://gemini.google.com/u/1/app');
+    expect(
+      getProviderFallbackUrl(getProviderById('gemini'), null, { geminiAccountIndex: 1 })
+    ).toBe('https://gemini.google.com/u/1/app');
   });
 });
