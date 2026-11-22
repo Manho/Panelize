@@ -275,6 +275,9 @@
   "linkDownloadLatest": {
     "message": "最新バージョンをダウンロード"
   },
+  "linkSupportPanelize": {
+    "message": "コーヒーをおごる ↗"
+  },
   "descAbout1": {
     "message": "Panelize は、1 つの便利なサイドバーから複数の AI アシスタントに素早くアクセスできます。"
   },

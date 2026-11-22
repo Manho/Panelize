@@ -275,6 +275,9 @@
   "linkDownloadLatest": {
     "message": "최신 버전 다운로드"
   },
+  "linkSupportPanelize": {
+    "message": "커피 한 잔 사주기 ↗"
+  },
   "descAbout1": {
     "message": "Panelize 는 하나의 편리한 사이드바에서 여러 AI 어시스턴트에 빠르게 접근할 수 있습니다."
   },

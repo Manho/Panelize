@@ -275,6 +275,9 @@
   "linkDownloadLatest": {
     "message": "Neueste Version herunterladen"
   },
+  "linkSupportPanelize": {
+    "message": "Einen Kaffee ausgeben ↗"
+  },
   "descAbout1": {
     "message": "Panelize bietet schnellen Zugriff auf mehrere KI-Assistenten in einer praktischen Seitenleiste."
   },

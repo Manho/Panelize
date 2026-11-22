@@ -264,6 +264,12 @@ Found a bug? Have an idea? Contributions are welcome:
 
 ---
 
+## Support
+
+Panelize is free and open source. If it saves you time, you can [buy me a coffee ↗](https://www.creem.io/product/prod_251L781OFoY218MIE84jx1) to support ongoing development.
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
