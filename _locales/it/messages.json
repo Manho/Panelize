@@ -275,6 +275,9 @@
   "linkDownloadLatest": {
     "message": "Scarica ultima versione"
   },
+  "linkSupportPanelize": {
+    "message": "Offrimi un caffè ↗"
+  },
   "descAbout1": {
     "message": "Panelize fornisce accesso rapido a più assistenti IA in una comoda barra laterale."
   },

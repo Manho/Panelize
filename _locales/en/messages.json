@@ -329,6 +329,9 @@
   "linkDownloadLatest": {
     "message": "Download Latest Version"
   },
+  "linkSupportPanelize": {
+    "message": "Buy me a coffee ↗"
+  },
   "descAbout1": {
     "message": "Panelize lets you compare multiple AI chatbots side-by-side in one window."
   },
