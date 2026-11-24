@@ -305,8 +305,10 @@ body {
 #panel-grid {
   flex: 1;
   display: grid;
-  gap: 3px;
-  padding: 3px 3px 2px;
+  /* Share Snapshot stitching assumes these: keep in sync with
+     STITCH_GRID_GAP and STITCH_GRID_PADDING in modules/snapshot-stitch.js. */
+  gap: 4px;
+  padding: 4px;
   background: #e2e0db;
   overflow-x: auto;
   overflow-y: hidden;
