@@ -3204,7 +3204,13 @@
       if (
         composerRoot &&
         (composerRoot.querySelectorAll('img[src^="blob:"]').length > 0 ||
-          composerRoot.querySelectorAll('[class*="file-card"], [class*="attachment"], [data-file-name], [data-filename]').length > 0)
+          composerRoot.querySelectorAll('[class*="file-card"], [class*="attachment"], [data-file-name], [data-filename]').length > 0 ||
+          [...composerRoot.querySelectorAll('.ds-animated-size-item')].some(
+            item => (item.textContent || '').trim().length > 0 || Boolean(item.querySelector('img'))
+          ) ||
+          (candidateImages || []).some(
+            img => img?.name && countDeepSeekCardPreviews(composerRoot, img.name, { scopeToComposerOnly: true }) > 0
+          ))
       ) {
         return false;
       }
@@ -3218,8 +3224,12 @@
         return false;
       }
     } else if (provider === 'grok') {
-      const attachmentList = composerRoot?.querySelector('[role="list"][aria-label="Conversation attachments"]');
-      if ((attachmentList?.children.length || 0) > 0) {
+      if (
+        countGrokAttachmentContainerItems(composerRoot, { scopeToComposerOnly: true }) > 0 ||
+        (candidateImages || []).some(
+          img => img?.name && countGrokAttachmentFilenameEvidence(composerRoot, img.name, { scopeToComposerOnly: true }) > 0
+        )
+      ) {
         return false;
       }
     } else if (provider === 'yuanbao') {
@@ -4071,25 +4081,190 @@
     }
   }
 
+  const GROK_ATTACHMENT_REGION_SELECTOR = [
+    '[role="list"][aria-label="Conversation attachments"]',
+    '[role="region"][aria-label="Attachments"]'
+  ].join(', ');
+  const GROK_ATTACH_BUTTON_SELECTOR = [
+    'button[aria-label="Attach"]',
+    'button[data-testid="attach-button"]',
+    'button[aria-label="Add files, skills, and connectors"]',
+    'button[aria-label*="Add files" i]',
+    'button[aria-label*="Attach" i]'
+  ].join(', ');
+  const DEEPSEEK_PENDING_CLASS_RE = /(?:^|[-_\s])(?:loading|uploading|parsing|pending|error|fail(?:ed)?)(?:$|[-_\s])/i;
+  const DEEPSEEK_PENDING_TEXT_RE = /\b(?:uploading|parsing|loading)\b|上传中|解析中/i;
+
+  function getGrokEditor() {
+    return document.querySelector('[data-testid="chat-input"] [contenteditable="true"]') ||
+      document.querySelector('[contenteditable="true"][aria-label="Ask Grok anything"]') ||
+      document.querySelector('[role="textbox"][aria-label="Message Grok"]') ||
+      document.querySelector('.tiptap.ProseMirror[role="textbox"], .tiptap[contenteditable="true"], .ProseMirror[contenteditable="true"]') ||
+      document.querySelector('form textarea');
+  }
+
   function getGrokComposer() {
-    const editor = document.querySelector('[data-testid="chat-input"] [contenteditable="true"]') ||
-      document.querySelector('[contenteditable="true"][aria-label="Ask Grok anything"]');
-    return editor?.closest('form') || null;
+    const editor = getGrokEditor();
+    if (!editor) {
+      return null;
+    }
+    return editor.closest('form') ||
+      editor.closest('[class*="composer"]') ||
+      findClosestAncestorContaining(editor, 'input[type="file"]', 10) ||
+      editor.parentElement ||
+      null;
+  }
+
+  function walkGrokComposerAncestors(composer, maxDepth = 3) {
+    const ancestors = [];
+    let current = composer;
+    for (let depth = 0; current && depth <= maxDepth; depth++) {
+      if (current === document.body || current === document.documentElement) {
+        break;
+      }
+      if (
+        depth > 0 &&
+        (current.querySelector('nav, aside') || current.querySelectorAll('form').length > 1)
+      ) {
+        break;
+      }
+      ancestors.push(current);
+      current = current.parentElement;
+    }
+    return ancestors;
+  }
+
+  function getGrokFileInputs(composer) {
+    for (const scope of walkGrokComposerAncestors(composer, 3)) {
+      const inputs = [...scope.querySelectorAll('input[type="file"]')];
+      if (inputs.length > 0) {
+        return inputs;
+      }
+    }
+    return [];
   }
 
   function findGrokFileInput(composer, attachmentData = null) {
-    return [...(composer?.querySelectorAll('input[type="file"]') || [])]
-      .find(input => acceptsAttachmentFile(input, attachmentData)) || null;
+    const inputs = getGrokFileInputs(composer);
+    return inputs.find(input => input.multiple && acceptsAttachmentFile(input, attachmentData)) ||
+      inputs.find(input => acceptsAttachmentFile(input, attachmentData)) ||
+      null;
   }
 
-  function countGrokAttachmentPreviews(composer, fileName) {
-    const attachmentList = composer?.querySelector('[role="list"][aria-label="Conversation attachments"]');
-    const attachmentListCount = attachmentList?.children.length || 0;
+  function findGrokAttachButton(composer) {
+    for (const scope of walkGrokComposerAncestors(composer, 2)) {
+      const button = scope.querySelector(GROK_ATTACH_BUTTON_SELECTOR);
+      if (button) {
+        return button;
+      }
+    }
+    return null;
+  }
+
+  function getGrokAttachmentRegions(composer, { scopeToComposerOnly = false } = {}) {
+    const regions = new Set();
+    for (const scope of walkGrokComposerAncestors(composer, 2)) {
+      scope.querySelectorAll(GROK_ATTACHMENT_REGION_SELECTOR).forEach(region => {
+        regions.add(region);
+      });
+    }
+    if (!scopeToComposerOnly && regions.size === 0) {
+      document.querySelectorAll(GROK_ATTACHMENT_REGION_SELECTOR).forEach(region => {
+        regions.add(region);
+      });
+    }
+    return [...regions];
+  }
+
+  function isGrokAttachmentNodeRejected(element, region, normalizedName = '') {
+    if (isRejectionUiElement(element, normalizedName)) {
+      return true;
+    }
+    const parent = element.parentElement;
+    if (parent && parent !== region && region.contains(parent) && isRejectionUiElement(parent, normalizedName)) {
+      return true;
+    }
+    return false;
+  }
+
+  function countGrokAttachmentContainerItems(composer, { scopeToComposerOnly = false } = {}) {
+    let total = 0;
+    for (const region of getGrokAttachmentRegions(composer, { scopeToComposerOnly })) {
+      if (region.matches('[role="list"][aria-label="Conversation attachments"]')) {
+        total += [...region.children].filter(child => !isRejectionUiElement(child, '')).length;
+        continue;
+      }
+      const removeButtons = [...region.querySelectorAll('button[aria-label^="Remove " i]')].filter(
+        btn => !isGrokAttachmentNodeRejected(btn, region)
+      );
+      if (removeButtons.length > 0) {
+        total += removeButtons.length;
+        continue;
+      }
+      const openButtons = [...region.querySelectorAll('button[aria-label^="Open " i]')].filter(
+        btn => !isGrokAttachmentNodeRejected(btn, region)
+      );
+      if (openButtons.length > 0) {
+        total += openButtons.length;
+        continue;
+      }
+      total += [...region.children].filter(
+        child =>
+          !isRejectionUiElement(child, '') &&
+          ((child.textContent || '').trim().length > 0 ||
+            Boolean(child.querySelector('img, button, [data-file-name], [data-filename]')))
+      ).length;
+    }
+    return total;
+  }
+
+  function countGrokAttachmentFilenameEvidence(composer, fileName, { scopeToComposerOnly = false } = {}) {
+    const normalizedName = (fileName || '').trim().toLowerCase();
+    if (!normalizedName) {
+      return 0;
+    }
+
+    const regionEvidence = new Set();
+    for (const region of getGrokAttachmentRegions(composer, { scopeToComposerOnly })) {
+      region.querySelectorAll('button[aria-label], [role="button"][aria-label], img[alt], [data-file-name], [data-filename], span, div').forEach(element => {
+        if (element.closest('textarea, input, [contenteditable="true"]')) {
+          return;
+        }
+        const ariaLabel = (element.getAttribute('aria-label') || '').trim().toLowerCase();
+        const alt = (element.getAttribute('alt') || '').trim().toLowerCase();
+        const dataName = (
+          element.getAttribute('data-file-name') ||
+          element.getAttribute('data-filename') ||
+          ''
+        ).trim().toLowerCase();
+        const isExactLeaf =
+          element.childElementCount === 0 &&
+          (element.textContent || '').trim().toLowerCase() === normalizedName;
+        const matches =
+          alt === normalizedName ||
+          dataName === normalizedName ||
+          ariaLabel === `open ${normalizedName}` ||
+          ariaLabel === `remove ${normalizedName}` ||
+          (ariaLabel && ariaLabel.includes(normalizedName)) ||
+          isExactLeaf;
+        if (!matches) {
+          return;
+        }
+        if (isGrokAttachmentNodeRejected(element, region, normalizedName)) {
+          return;
+        }
+        regionEvidence.add(element.closest('button, [role="button"]') || element);
+      });
+    }
 
     // Grok may render the visible attachment chip in a portal outside the form.
     // The filename is exposed as the preview button/image accessible name.
-    const filenameEvidence = countFilenamePreviewEvidence(document, fileName);
-    return Math.max(attachmentListCount, filenameEvidence);
+    const filenameEvidence = countFilenamePreviewEvidence(
+      scopeToComposerOnly ? composer : document,
+      fileName,
+      { excludeRejectionUi: true }
+    );
+    return Math.max(regionEvidence.size, filenameEvidence);
   }
 
   async function injectImageToGrok(imageData) {
@@ -4099,14 +4274,16 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const attachButton = composer.querySelector('button[aria-label="Attach"], button[data-testid="attach-button"]');
-      if (!attachButton) {
-        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
-      }
-
       const file = await createAttachmentFile(imageData);
       let fileInput = findGrokFileInput(composer, imageData);
       if (!fileInput) {
+        if (isDocumentAttachmentData(imageData) && getGrokFileInputs(composer).length > 0) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
+        const attachButton = findGrokAttachButton(composer);
+        if (!attachButton) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+        }
         // Grok ignores synthetic clicks when deciding whether to open its
         // attachment menu. Its native composer file input is still usable;
         // only use synthetic UI events to wake a lazily mounted input.
@@ -4115,21 +4292,27 @@
         fileInput = await waitForFileInput(() => findGrokFileInput(composer, imageData));
       }
       if (!fileInput) {
-        if (isDocumentAttachmentData(imageData) && composer.querySelectorAll('input[type="file"]').length > 0) {
+        if (isDocumentAttachmentData(imageData) && getGrokFileInputs(composer).length > 0) {
           return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
         }
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const previousCount = countGrokAttachmentPreviews(composer, imageData.name);
+      const previousContainerCount = countGrokAttachmentContainerItems(composer);
+      const previousFilenameCount = countGrokAttachmentFilenameEvidence(composer, imageData.name);
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
       dispatchFileInputEvents(fileInput);
 
       const accepted = await waitForPreviewIncrease(
-        () => countGrokAttachmentPreviews(composer, imageData.name),
-        previousCount,
+        () => (
+          countGrokAttachmentContainerItems(composer) > previousContainerCount ||
+          countGrokAttachmentFilenameEvidence(composer, imageData.name) > previousFilenameCount
+            ? 1
+            : 0
+        ),
+        0,
         getPreviewTimeoutMs(imageData)
       );
       return accepted
@@ -4155,6 +4338,81 @@
       null;
   }
 
+  function isDeepSeekCardPendingOrRejected(card, normalizedName) {
+    if (!card || isRejectionUiElement(card, normalizedName)) {
+      return true;
+    }
+    if (
+      card.matches?.('[aria-busy="true"]') ||
+      Boolean(card.querySelector?.('[aria-busy="true"], [role="progressbar"]'))
+    ) {
+      return true;
+    }
+    const nodes = [card, ...(card.querySelectorAll?.('[class]') || [])];
+    for (const node of nodes) {
+      const cls = node.getAttribute?.('class') || '';
+      if (cls && DEEPSEEK_PENDING_CLASS_RE.test(cls)) {
+        return true;
+      }
+    }
+    const text = (card.textContent || '').trim().toLowerCase();
+    const withoutName = normalizedName ? text.split(normalizedName).join(' ') : text;
+    return DEEPSEEK_PENDING_TEXT_RE.test(withoutName);
+  }
+
+  function countDeepSeekCardPreviews(composer, fileName, { scopeToComposerOnly = false } = {}) {
+    const normalizedName = (fileName || '').trim().toLowerCase();
+    if (!normalizedName) {
+      return 0;
+    }
+
+    const cards = new Set();
+    const animatedScope = scopeToComposerOnly ? composer : document;
+    animatedScope?.querySelectorAll('.ds-animated-size-item').forEach(item => {
+      if (item.closest('textarea, input, [contenteditable="true"]')) {
+        return;
+      }
+      const text = (item.textContent || '').trim().toLowerCase();
+      if (!text || text.length > 240 || !text.includes(normalizedName)) {
+        return;
+      }
+      if (isDeepSeekCardPendingOrRejected(item, normalizedName)) {
+        return;
+      }
+      cards.add(item);
+    });
+
+    if (composer) {
+      composer.querySelectorAll('div, span, p').forEach(element => {
+        if (element.childElementCount > 0 || element.closest('textarea, input, [contenteditable="true"]')) {
+          return;
+        }
+        if ((element.textContent || '').trim().toLowerCase() !== normalizedName) {
+          return;
+        }
+        const animatedItem = element.closest('.ds-animated-size-item');
+        let card = animatedItem && composer.contains(animatedItem) ? animatedItem : element;
+        if (!animatedItem) {
+          let current = element;
+          while (
+            current.parentElement &&
+            current.parentElement !== composer &&
+            !current.parentElement.querySelector('textarea, input[type="file"], [contenteditable="true"]')
+          ) {
+            current = current.parentElement;
+          }
+          card = current;
+        }
+        if (isDeepSeekCardPendingOrRejected(card, normalizedName)) {
+          return;
+        }
+        cards.add(card);
+      });
+    }
+
+    return cards.size;
+  }
+
   async function injectImageToDeepSeek(imageData) {
     try {
       const composer = getDeepSeekComposer();
@@ -4176,10 +4434,12 @@
       }
 
       // DeepSeek renders attachment previews beside the composer controls rather
-      // than consistently inside the nearest file-input ancestor; track filename
-      // and composer blob thumbnail baselines independently so historical chat
-      // attachments with the same filename never mask a newly uploaded preview.
-      const previousFilenameCount = countFilenamePreviewEvidence(document, imageData.name);
+      // than consistently inside the nearest file-input ancestor, and document
+      // cards use hashed classes inside `.ds-animated-size-item`. Track filename,
+      // card, and composer blob thumbnail baselines independently so historical
+      // chat attachments with the same filename never mask a new upload.
+      const previousFilenameCount = countFilenamePreviewEvidence(document, imageData.name, { excludeRejectionUi: true });
+      const previousCardCount = countDeepSeekCardPreviews(composer, imageData.name);
       const previousBlobCount = composer.querySelectorAll('img[src^="blob:"]').length;
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
@@ -4188,7 +4448,8 @@
 
       const accepted = await waitForPreviewIncrease(
         () => (
-          countFilenamePreviewEvidence(document, imageData.name) > previousFilenameCount ||
+          countFilenamePreviewEvidence(document, imageData.name, { excludeRejectionUi: true }) > previousFilenameCount ||
+          countDeepSeekCardPreviews(composer, imageData.name) > previousCardCount ||
           composer.querySelectorAll('img[src^="blob:"]').length > previousBlobCount
             ? 1
             : 0
