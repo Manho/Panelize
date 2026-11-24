@@ -1918,4 +1918,170 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('uploads PDF documents via matching file input and confirms filename preview chip', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" accept="image/*,.pdf,.docx,.txt" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      const composer = setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      const received = [];
+
+      fileInput.addEventListener('change', () => {
+        for (const f of Array.from(fileInput.files || [])) {
+          received.push({ name: f.name, type: f.type, size: f.size });
+          const chip = env.document.createElement('div');
+          chip.className = 'file-chip';
+          chip.dataset.fileName = f.name;
+          chip.textContent = f.name;
+          previews.appendChild(chip);
+        }
+      });
+
+      env.evaluateDriver();
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7\nhello').buffer;
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-custom-pdf-ok',
+        action: 'fill',
+        text: 'Summarize PDF',
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            bytes: pdfBytes,
+          },
+        ],
+        autoSubmit: false,
+      });
+
+      await wait(160);
+      expect(received).toEqual([{ name: 'report.pdf', type: 'application/pdf', size: pdfBytes.byteLength }]);
+      expect(composer.value).toBe('Summarize PDF');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'req-custom-pdf-ok',
+          provider: CUSTOM_PROVIDER_ID,
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-pdf-1'],
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('gates documents against image-only accept="image/*" inputs and returns status "skipped" instead of failing', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="img-only-input" type="file" accept="image/*" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      const composer = setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('img-only-input');
+      const changeSpy = vi.fn();
+      fileInput.addEventListener('change', changeSpy);
+
+      env.evaluateDriver();
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7\nonly').buffer;
+
+      // 1) Pure PDF on image-only Custom Web -> status: 'skipped'
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-custom-pdf-skipped',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            bytes: pdfBytes,
+          },
+        ],
+        autoSubmit: false,
+      });
+
+      await wait(100);
+      expect(changeSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'req-custom-pdf-skipped',
+          provider: CUSTOM_PROVIDER_ID,
+          status: 'skipped',
+          reason: 'type-not-accepted',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'report.pdf', reason: 'type-not-accepted' }],
+        }),
+        EXTENSION_ORIGIN
+      );
+
+      // 2) Text + PDF on image-only Custom Web -> text injected, status: 'succeeded' with skippedAttachments
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-custom-text-plus-pdf-skipped',
+        action: 'fill',
+        text: 'Still inject text',
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            bytes: pdfBytes,
+          },
+        ],
+        autoSubmit: false,
+      });
+
+      await wait(100);
+      expect(composer.value).toBe('Still inject text');
+      expect(changeSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'req-custom-text-plus-pdf-skipped',
+          provider: CUSTOM_PROVIDER_ID,
+          status: 'succeeded',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'report.pdf', reason: 'type-not-accepted' }],
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });

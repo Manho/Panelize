@@ -3677,13 +3677,31 @@
     return matchesInputAccept(fileInput, attachmentData);
   }
 
+  function toLocalUint8Array(value) {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const tag = Object.prototype.toString.call(value);
+    if (tag === '[object ArrayBuffer]' || value instanceof ArrayBuffer) {
+      return new Uint8Array(value);
+    }
+    if (
+      ArrayBuffer.isView(value) ||
+      (value.buffer && typeof value.byteLength === 'number' && typeof value.byteOffset === 'number')
+    ) {
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    }
+    return null;
+  }
+
   async function createAttachmentFile(attachmentData) {
     const fileName = attachmentData?.name || 'attachment';
     const fileExt = getAttachmentExtension(attachmentData);
     const mimeType = (attachmentData?.type || '').trim() || ATTACHMENT_EXTENSION_TO_MIME[fileExt] || 'application/octet-stream';
 
-    if (attachmentData?.bytes instanceof ArrayBuffer || ArrayBuffer.isView(attachmentData?.bytes)) {
-      return new File([attachmentData.bytes], fileName, { type: mimeType });
+    const localBytes = toLocalUint8Array(attachmentData?.bytes);
+    if (localBytes) {
+      return new File([localBytes], fileName, { type: mimeType });
     }
     if (typeof attachmentData?.textContent === 'string' && isDocumentAttachmentData(attachmentData)) {
       return new File([attachmentData.textContent], fileName, { type: mimeType });

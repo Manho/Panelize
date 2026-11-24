@@ -222,6 +222,11 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
         expect(typeof text, `${locale}.msgImagesSkippedForPanels`).toBe('string');
         expect(text.trim().length, `${locale}.msgImagesSkippedForPanels`).toBeGreaterThan(0);
         expect(text, `${locale}.msgImagesSkippedForPanels`).toContain('$1');
+
+        const docText = messages.msgDocumentsSkippedForPanels?.message;
+        expect(typeof docText, `${locale}.msgDocumentsSkippedForPanels`).toBe('string');
+        expect(docText.trim().length, `${locale}.msgDocumentsSkippedForPanels`).toBeGreaterThan(0);
+        expect(docText, `${locale}.msgDocumentsSkippedForPanels`).toContain('$1');
       }
     });
   });
