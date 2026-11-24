@@ -113,12 +113,14 @@
   const TEMP_CHAT_POLL_TIMEOUT_MS = 1200;
   const YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS = 5000;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
+  const DOCUMENT_UPLOAD_PREVIEW_TIMEOUT_MS = 10000;
   const SLOW_COMPOSER_PROVIDERS = new Set([
     'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao'
   ]);
   const IMAGE_INJECTION_REASONS = Object.freeze({
     CONTROL_NOT_FOUND: 'control-not-found',
     UNSUPPORTED: 'unsupported',
+    TYPE_NOT_ACCEPTED: 'type-not-accepted',
     PREVIEW_TIMEOUT: 'preview-timeout',
     INJECTION_ERROR: 'injection-error'
   });
@@ -242,20 +244,21 @@
     google: true  // Google AI Mode supports images
   };
 
-  // Provider-specific file input selectors for image upload
+  // Provider-specific file input selectors for image and document upload
   const FILE_INPUT_SELECTORS = {
     chatgpt: ['input[type="file"][data-testid="file-upload-input"]', 'input[type="file"]'],
     claude: ['input[type="file"]'],
     gemini: ['input[type="file"]'],
-    doubao: ['input[type="file"]'],
-    'qwen-cn': ['input[type="file"][accept*="image"]'],
+    doubao: ['#input-engine-container input[type="file"]', 'input[type="file"]'],
+    'qwen-cn': ['input[type="file"][accept*="image"]', 'input[type="file"]'],
     'qwen-global': [
       '.message-input-container input#filesUpload',
-      '#dropzone-container input#filesUpload'
+      '#dropzone-container input#filesUpload',
+      'input[type="file"]'
     ],
-    chatglm: ['input.el-upload__input[type="file"]'],
-    'zai-global': ['input[type="file"][multiple][accept*=".png"]'],
-    yuanbao: ['input[type="file"][multiple][accept*="image"]'],
+    chatglm: ['input.el-upload__input[type="file"]', 'input[type="file"]'],
+    'zai-global': ['input[type="file"][multiple]', 'input[type="file"]'],
+    yuanbao: ['input[type="file"][multiple]', 'input[type="file"]'],
     aistudio: ['ms-prompt-box input[type="file"]', 'input[type="file"]'],
     google: ['input[type="file"]']
   };
@@ -695,25 +698,41 @@
       return;
     }
 
+    const isSkipped = Boolean(result?.skipped);
+    const hasSkippedAttachments = Array.isArray(result?.skippedAttachments) && result.skippedAttachments.length > 0;
+    const includeAttachmentProtocol = Boolean(
+      result?.includeAttachmentProtocol || isSkipped || hasSkippedAttachments
+    );
+
     const message = {
       type: PANELIZE_ACTION_RESULT,
       context: MULTI_PANEL_ACTION_RESULT_CONTEXT,
       requestId,
       provider,
       action: 'fill',
-      status: result.ok ? 'succeeded' : 'failed'
+      status: isSkipped ? 'skipped' : (result.ok ? 'succeeded' : 'failed')
     };
 
     if (Array.isArray(result?.succeededImageIds)) {
       message.succeededImageIds = result.succeededImageIds;
+      if (includeAttachmentProtocol) {
+        message.succeededAttachmentIds = result.succeededImageIds;
+      }
     }
 
     if (!result.ok && Array.isArray(result?.attemptedImageIds)) {
       message.attemptedImageIds = result.attemptedImageIds;
+      if (includeAttachmentProtocol) {
+        message.attemptedAttachmentIds = result.attemptedImageIds;
+      }
     }
 
-    if (!result.ok) {
-      message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
+    if (hasSkippedAttachments) {
+      message.skippedAttachments = result.skippedAttachments;
+    }
+
+    if (!result.ok || isSkipped) {
+      message.reason = result.reason || (isSkipped ? IMAGE_INJECTION_REASONS.UNSUPPORTED : IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
 
     postToMultiPanelHost(message);
@@ -1536,10 +1555,28 @@
     return true;
   }
 
-  function findGoogleFileInput() {
+  function findGoogleFileInput(attachmentData = null) {
     const fileInputs = querySelectorAllDeep('input[type="file"]');
-    let fallbackInput = null;
+    const isDoc = isDocumentAttachmentData(attachmentData);
 
+    if (isDoc) {
+      let exactMatch = null;
+      let wildcardFallback = null;
+      for (const input of fileInputs) {
+        const accept = (input.getAttribute('accept') || '').trim().toLowerCase();
+        if (!accept || accept === '*/*') {
+          if (!wildcardFallback) wildcardFallback = input;
+          continue;
+        }
+        if (acceptsAttachmentFile(input, attachmentData)) {
+          exactMatch = input;
+          break;
+        }
+      }
+      return exactMatch || wildcardFallback;
+    }
+
+    let fallbackInput = null;
     for (const input of fileInputs) {
       const accept = (input.getAttribute('accept') || '').toLowerCase();
       if (accept && accept.includes('image') && !accept.includes('.pdf') && !accept.includes('application/pdf')) {
@@ -1581,18 +1618,22 @@
     (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', escape));
   }
 
-  async function openGoogleImagePicker() {
+  async function openGoogleImagePicker(attachmentData = null) {
     // The current AI Mode composer only renders its hidden file inputs inside
-    // the "+" menu ("添加图片" item), so the menu has to be opened first.
+    // the "+" menu ("添加图片" / "上传文件" items), so the menu has to be opened first.
     const menuTrigger = findGoogleComposerMenuTrigger();
     if (menuTrigger) {
       if (menuTrigger.getAttribute('aria-expanded') !== 'true') {
         menuTrigger.click();
       }
       await sleep(150);
-      const menuInput = findGoogleFileInput();
+      const menuInput = findGoogleFileInput(attachmentData);
       if (menuInput) {
         return menuInput;
+      }
+      // If inputs exist in the menu (e.g. image + PDF) and none accept this file, return early so caller can skip.
+      if (isDocumentAttachmentData(attachmentData) && querySelectorAllDeep('input[type="file"]').length > 0) {
+        return null;
       }
     }
 
@@ -1602,31 +1643,22 @@
       await sleep(150);
     }
 
-    let fileInput = findGoogleFileInput();
+    let fileInput = findGoogleFileInput(attachmentData);
     if (fileInput) {
       return fileInput;
     }
 
-    const imageMenuAction = findDeepClickableElementByKeywords([
-      '更多输入项',
-      'add image',
-      'upload image',
-      'upload file',
-      'image',
-      'photo',
-      '上传图片',
-      '上传文件',
-      '图片',
-      '照片',
-      '图像'
-    ]);
+    const keywords = isDocumentAttachmentData(attachmentData)
+      ? ['upload file', 'add file', 'upload pdf', 'pdf', '上传文件', '添加文件', '文件', '更多输入项']
+      : ['更多输入项', 'add image', 'upload image', 'upload file', 'image', 'photo', '上传图片', '上传文件', '图片', '照片', '图像'];
+    const menuAction = findDeepClickableElementByKeywords(keywords);
 
-    if (imageMenuAction) {
-      imageMenuAction.click();
+    if (menuAction) {
+      menuAction.click();
       await sleep(150);
     }
 
-    fileInput = findGoogleFileInput();
+    fileInput = findGoogleFileInput(attachmentData);
     if (fileInput) {
       return fileInput;
     }
@@ -1644,7 +1676,7 @@
       await sleep(150);
     }
 
-    return findGoogleFileInput();
+    return findGoogleFileInput(attachmentData);
   }
 
   function assignFilesToInput(fileInput, files) {
@@ -3118,13 +3150,19 @@
     }
 
     if (provider === 'deepseek') {
-      if (composerRoot && composerRoot.querySelectorAll('img[src^="blob:"]').length > 0) {
+      if (
+        composerRoot &&
+        (composerRoot.querySelectorAll('img[src^="blob:"]').length > 0 ||
+          composerRoot.querySelectorAll('[class*="file-card"], [class*="attachment"], [data-file-name], [data-filename]').length > 0)
+      ) {
         return false;
       }
     } else if (provider === 'kimi') {
       if (
         composerRoot &&
-        (countKimiAttachmentPreviews(composerRoot) > 0 || countKimiPendingAttachmentPreviews(composerRoot) > 0)
+        (countKimiAttachmentPreviews(composerRoot) > 0 ||
+          countKimiPendingAttachmentPreviews(composerRoot) > 0 ||
+          countKimiDocumentPreviews(composerRoot) > 0)
       ) {
         return false;
       }
@@ -3134,7 +3172,7 @@
         return false;
       }
     } else if (provider === 'yuanbao') {
-      if ((candidateImages || []).some(img => img?.name && countYuanbaoCompletedPreviews(img.name) > 0)) {
+      if ((candidateImages || []).some(img => img?.name && countYuanbaoCompletedPreviews(img.name, img) > 0)) {
         return false;
       }
     }
@@ -3142,9 +3180,21 @@
     return true;
   }
 
-  // Handle image injection message
+  // Handle image & document injection message
   async function handleImageInjection(event) {
-    const { text, images, fallbackImages, autoSubmit, requestId, retry = false } = event.data;
+    const {
+      text,
+      images,
+      fallbackImages,
+      attachments,
+      fallbackAttachments,
+      autoSubmit,
+      requestId,
+      retry = false
+    } = event.data;
+    const hasAttachmentProtocol = Array.isArray(attachments);
+    const incomingAttachments = hasAttachmentProtocol ? attachments : images;
+    const incomingFallback = Array.isArray(fallbackAttachments) ? fallbackAttachments : fallbackImages;
     const provider = detectProvider();
     const providerMode = provider === 'google'
       ? normalizeGoogleProviderMode(event.data.providerMode)
@@ -3152,42 +3202,64 @@
 
     if (!provider) {
       console.warn('[Image Injection] Provider not detected');
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, []);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, [], undefined, {
+        includeAttachmentProtocol: hasAttachmentProtocol
+      });
     }
 
+    const toSkippedList = (items, reason = IMAGE_INJECTION_REASONS.UNSUPPORTED) =>
+      (Array.isArray(items) ? items : []).map(item => ({
+        ...(item?.id ? { id: item.id } : {}),
+        name: item?.name || 'attachment',
+        reason
+      }));
+
     if (provider === 'google' && providerMode === GOOGLE_PROVIDER_MODE_SEARCH) {
-      console.warn('[Image Injection] Google Search mode does not support image injection, falling back to text only');
-      if (text && text.trim()) {
+      console.warn('[Image Injection] Google Search mode does not support attachments, skipping');
+      const hasText = Boolean(text && text.trim());
+      if (hasText) {
         handleGoogleTextInjection(text, autoSubmit, providerMode);
       }
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED, []);
+      const skippedAttachments = toSkippedList(incomingAttachments, IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      return hasText
+        ? createImageInjectionSuccess([], {
+          includeAttachmentProtocol: true,
+          skippedAttachments
+        })
+        : createImageInjectionSkipped(IMAGE_INJECTION_REASONS.UNSUPPORTED, skippedAttachments);
     }
 
     if (!PROVIDER_IMAGE_SUPPORT[provider]) {
-      console.warn('[Image Injection] Provider does not support images:', provider);
-      // For providers that don't support images, just inject text
-      if (text) {
+      console.warn('[Image Injection] Provider does not support attachments:', provider);
+      const hasText = Boolean(text && text.trim());
+      if (hasText) {
         injectText(provider, text, autoSubmit, providerMode);
       }
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED, []);
+      const skippedAttachments = toSkippedList(incomingAttachments, IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      return hasText
+        ? createImageInjectionSuccess([], {
+          includeAttachmentProtocol: true,
+          skippedAttachments
+        })
+        : createImageInjectionSkipped(IMAGE_INJECTION_REASONS.UNSUPPORTED, skippedAttachments);
     }
 
-    const normalizedFallbackImages = Array.isArray(fallbackImages) ? fallbackImages : [];
-    const fallbackSucceededIds = normalizedFallbackImages
-      .map(img => img?.id)
+    const normalizedFallbackAttachments = Array.isArray(incomingFallback) ? incomingFallback : [];
+    const fallbackSucceededIds = normalizedFallbackAttachments
+      .map(att => att?.id)
       .filter(id => typeof id === 'string');
     const composerClearedOnRetry = Boolean(
       retry &&
-      normalizedFallbackImages.length > 0 &&
-      isProviderComposerCleared(provider, normalizedFallbackImages, providerMode)
+      normalizedFallbackAttachments.length > 0 &&
+      isProviderComposerCleared(provider, normalizedFallbackAttachments, providerMode)
     );
-    const effectiveImages = composerClearedOnRetry ? normalizedFallbackImages : images;
+    const effectiveAttachments = composerClearedOnRetry ? normalizedFallbackAttachments : incomingAttachments;
     const effectiveRetry = composerClearedOnRetry ? false : retry;
     const failureAttemptedIds = composerClearedOnRetry
-      ? effectiveImages.map(img => img?.id).filter(id => typeof id === 'string')
+      ? effectiveAttachments.map(att => att?.id).filter(id => typeof id === 'string')
       : undefined;
 
-    if (!effectiveImages || effectiveImages.length === 0) {
+    if (!effectiveAttachments || effectiveAttachments.length === 0) {
       if (retry && text && text.trim()) {
         const textInjected = injectText(
           provider,
@@ -3197,17 +3269,25 @@
           { skipIfAlreadyPresent: true }
         );
         return textInjected
-          ? createImageInjectionSuccess(fallbackSucceededIds)
-          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, []);
+          ? createImageInjectionSuccess(fallbackSucceededIds, {
+            includeAttachmentProtocol: hasAttachmentProtocol
+          })
+          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, [], undefined, {
+            includeAttachmentProtocol: hasAttachmentProtocol
+          });
       }
-      if (retry && normalizedFallbackImages.length > 0) {
-        return createImageInjectionSuccess(fallbackSucceededIds);
+      if (retry && normalizedFallbackAttachments.length > 0) {
+        return createImageInjectionSuccess(fallbackSucceededIds, {
+          includeAttachmentProtocol: hasAttachmentProtocol
+        });
       }
-      console.warn('[Image Injection] No images provided');
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, []);
+      console.warn('[Image Injection] No attachments provided');
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, [], undefined, {
+        includeAttachmentProtocol: hasAttachmentProtocol
+      });
     }
 
-    console.log(`[Image Injection] Injecting ${effectiveImages.length} images to ${provider}`);
+    console.log(`[Image Injection] Injecting ${effectiveAttachments.length} attachment(s) to ${provider}`);
 
     try {
       // Fills protect the unified input's focus too, so report a click in
@@ -3222,93 +3302,150 @@
         startChatgptSendTracking(requestId, provider);
       }
 
-      const succeededImageIds = [];
-      const imageInjectionResults = [];
+      const succeededAttachmentIds = [];
+      const skippedAttachments = [];
+      const attachmentResults = [];
 
-      // Inject images first
-      for (const image of effectiveImages) {
-        const result = await injectSingleImage(provider, image, { retry: effectiveRetry });
-        imageInjectionResults.push(result);
+      // Inject attachments sequentially
+      for (const attachment of effectiveAttachments) {
+        const result = await injectSingleImage(provider, attachment, { retry: effectiveRetry });
+        attachmentResults.push(result);
+        if (result.skipped) {
+          skippedAttachments.push({
+            ...(attachment?.id ? { id: attachment.id } : {}),
+            name: attachment?.name || 'attachment',
+            reason: result.reason || IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED
+          });
+          continue;
+        }
         if (result.ok) {
-          if (image.id && typeof image.id === 'string') {
-            succeededImageIds.push(image.id);
+          if (attachment.id && typeof attachment.id === 'string') {
+            succeededAttachmentIds.push(attachment.id);
           }
         } else {
           break;
         }
-        // Wait a bit between images
+        // Wait a bit between attachments
         await sleep(200);
       }
 
-      const allImagesInjected = imageInjectionResults.length === effectiveImages.length &&
-        imageInjectionResults.every(result => result.ok);
-      if (!allImagesInjected) {
-        console.warn('[Image Injection] One or more images failed to inject for:', provider);
+      const firstFailure = attachmentResults.find(result => !result.ok && !result.skipped);
+      const allNonSkippedInjected = !firstFailure && attachmentResults.length === effectiveAttachments.length;
+      const allAttachmentsSkipped =
+        allNonSkippedInjected &&
+        skippedAttachments.length === effectiveAttachments.length &&
+        succeededAttachmentIds.length === 0;
+
+      if (!allNonSkippedInjected) {
+        console.warn('[Image Injection] One or more attachments failed to inject for:', provider);
       }
 
-      // Wait for images to upload
-      await sleep(500);
+      if (!allAttachmentsSkipped) {
+        // Wait for uploads to settle
+        await sleep(500);
+      }
 
       // Then inject text if provided
+      const hasText = Boolean(text && text.trim());
       let textInjected = true;
-      if (text && text.trim()) {
-        await sleep(300);
+      if (hasText) {
+        if (!allAttachmentsSkipped) {
+          await sleep(300);
+        }
         textInjected = injectText(
           provider,
           text,
-          autoSubmit && allImagesInjected,
+          autoSubmit && allNonSkippedInjected,
           providerMode,
           { skipIfAlreadyPresent: effectiveRetry }
         );
       } else if (autoSubmit) {
-        if (!allImagesInjected) {
-          console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
-          const firstFailure = imageInjectionResults.find(result => !result.ok);
+        if (!allNonSkippedInjected) {
+          console.warn('[Image Injection] Skipping auto-submit because attachment injection failed for:', provider);
           return createImageInjectionFailure(
             firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
-            succeededImageIds,
-            failureAttemptedIds
+            succeededAttachmentIds,
+            failureAttemptedIds,
+            { includeAttachmentProtocol: hasAttachmentProtocol, skippedAttachments }
           );
         }
-        // If no text but autoSubmit is true, click send button
-        await sleep(300);
-        clickSendButton(provider, providerMode);
+        if (!allAttachmentsSkipped) {
+          await sleep(300);
+          clickSendButton(provider, providerMode);
+        }
       }
 
-      if (!allImagesInjected) {
-        const firstFailure = imageInjectionResults.find(result => !result.ok);
+      if (!allNonSkippedInjected) {
         return createImageInjectionFailure(
           firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
-          succeededImageIds,
-          failureAttemptedIds
+          succeededAttachmentIds,
+          failureAttemptedIds,
+          { includeAttachmentProtocol: hasAttachmentProtocol, skippedAttachments }
         );
       }
 
       if (!textInjected) {
         return createImageInjectionFailure(
           IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND,
-          succeededImageIds,
-          failureAttemptedIds
+          succeededAttachmentIds,
+          failureAttemptedIds,
+          { includeAttachmentProtocol: hasAttachmentProtocol, skippedAttachments }
         );
       }
 
-      return createImageInjectionSuccess(succeededImageIds);
+      if (allAttachmentsSkipped && !hasText) {
+        return createImageInjectionSkipped(
+          skippedAttachments[0]?.reason || IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED,
+          skippedAttachments
+        );
+      }
+
+      return createImageInjectionSuccess(succeededAttachmentIds, {
+        includeAttachmentProtocol: hasAttachmentProtocol || skippedAttachments.length > 0,
+        skippedAttachments
+      });
     } catch (error) {
       console.error('[Image Injection] Error:', error);
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, [], failureAttemptedIds);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, [], failureAttemptedIds, {
+        includeAttachmentProtocol: hasAttachmentProtocol
+      });
     }
   }
 
-  function createImageInjectionSuccess(succeededImageIds = []) {
-    return { ok: true, succeededImageIds };
+  function createImageInjectionSuccess(succeededImageIds = [], options = {}) {
+    return {
+      ok: true,
+      succeededImageIds,
+      ...(options.includeAttachmentProtocol ? { includeAttachmentProtocol: true } : {}),
+      ...(Array.isArray(options.skippedAttachments) && options.skippedAttachments.length > 0
+        ? { skippedAttachments: options.skippedAttachments }
+        : {})
+    };
   }
 
-  function createImageInjectionFailure(reason, succeededImageIds = [], attemptedImageIds = undefined) {
+  function createImageInjectionSkipped(reason = IMAGE_INJECTION_REASONS.UNSUPPORTED, skippedAttachments = []) {
+    return {
+      ok: true,
+      skipped: true,
+      reason,
+      succeededImageIds: [],
+      includeAttachmentProtocol: true,
+      ...(Array.isArray(skippedAttachments) && skippedAttachments.length > 0
+        ? { skippedAttachments }
+        : {})
+    };
+  }
+
+  function createImageInjectionFailure(reason, succeededImageIds = [], attemptedImageIds = undefined, options = {}) {
     return {
       ok: false,
       reason,
       succeededImageIds,
-      ...(Array.isArray(attemptedImageIds) ? { attemptedImageIds } : {})
+      ...(Array.isArray(attemptedImageIds) ? { attemptedImageIds } : {}),
+      ...(options.includeAttachmentProtocol ? { includeAttachmentProtocol: true } : {}),
+      ...(Array.isArray(options.skippedAttachments) && options.skippedAttachments.length > 0
+        ? { skippedAttachments: options.skippedAttachments }
+        : {})
     };
   }
 
@@ -3416,6 +3553,113 @@
     return null;
   }
 
+  const ATTACHMENT_EXTENSION_TO_MIME = Object.freeze({
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.avif': 'image/avif',
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.markdown': 'text/markdown',
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+    '.yaml': 'text/yaml',
+    '.yml': 'text/yaml',
+    '.xml': 'application/xml',
+    '.tsv': 'text/tab-separated-values',
+    '.log': 'text/plain'
+  });
+
+  function getAttachmentExtension(fileOrMeta) {
+    if (typeof fileOrMeta?.ext === 'string' && /^\.[a-z0-9]+$/i.test(fileOrMeta.ext.trim())) {
+      return fileOrMeta.ext.trim().toLowerCase();
+    }
+    const name = typeof fileOrMeta?.name === 'string' ? fileOrMeta.name.trim() : '';
+    const dotIdx = name.lastIndexOf('.');
+    return dotIdx > 0 && dotIdx < name.length - 1 ? name.slice(dotIdx).toLowerCase() : '';
+  }
+
+  function isDocumentAttachmentData(item) {
+    if (!item || typeof item !== 'object') {
+      return false;
+    }
+    if (item.kind === 'document') {
+      return true;
+    }
+    if (item.kind === 'image') {
+      return false;
+    }
+    const mime = String(item.type || '').split(';')[0].trim().toLowerCase();
+    if (mime.startsWith('image/')) {
+      return false;
+    }
+    if (typeof item.dataUrl === 'string' && /^data:image\//i.test(item.dataUrl)) {
+      return false;
+    }
+    return Boolean(item.bytes || typeof item.textContent === 'string' || mime);
+  }
+
+  function getPreviewTimeoutMs(attachmentData) {
+    return isDocumentAttachmentData(attachmentData)
+      ? DOCUMENT_UPLOAD_PREVIEW_TIMEOUT_MS
+      : IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS;
+  }
+
+  function matchesInputAccept(fileInput, fileOrMeta) {
+    if (!fileInput || !fileOrMeta) {
+      return false;
+    }
+    const acceptAttr = String(fileInput.getAttribute?.('accept') ?? fileInput.accept ?? '').trim();
+    if (!acceptAttr) {
+      return true;
+    }
+    const fileExt = getAttachmentExtension(fileOrMeta);
+    let fileMime = String(fileOrMeta.type || '').split(';')[0].trim().toLowerCase();
+    if (!fileMime && fileExt && ATTACHMENT_EXTENSION_TO_MIME[fileExt]) {
+      fileMime = ATTACHMENT_EXTENSION_TO_MIME[fileExt];
+    }
+
+    const tokens = acceptAttr
+      .split(',')
+      .map(token => token.trim().toLowerCase())
+      .filter(Boolean);
+    if (tokens.length === 0) {
+      return true;
+    }
+
+    for (const token of tokens) {
+      if (token === '*/*') {
+        return true;
+      }
+      if (token.startsWith('.')) {
+        if (fileExt && fileExt === token) {
+          return true;
+        }
+        if (!fileExt && fileMime && ATTACHMENT_EXTENSION_TO_MIME[token] === fileMime) {
+          return true;
+        }
+        continue;
+      }
+      if (token.endsWith('/*')) {
+        const prefix = token.slice(0, -1);
+        if (fileMime && fileMime.startsWith(prefix)) {
+          return true;
+        }
+        continue;
+      }
+      const normalizedToken = token.split(';')[0].trim();
+      if (normalizedToken && fileMime && fileMime === normalizedToken) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function acceptsImageFiles(fileInput) {
     const accept = (fileInput?.getAttribute('accept') || '').toLowerCase();
     return !accept || accept.includes('image/') || [
@@ -3423,9 +3667,33 @@
     ].some(extension => accept.includes(extension));
   }
 
+  function acceptsAttachmentFile(fileInput, attachmentData) {
+    if (!fileInput) {
+      return false;
+    }
+    if (!attachmentData) {
+      return acceptsImageFiles(fileInput);
+    }
+    return matchesInputAccept(fileInput, attachmentData);
+  }
+
+  async function createAttachmentFile(attachmentData) {
+    const fileName = attachmentData?.name || 'attachment';
+    const fileExt = getAttachmentExtension(attachmentData);
+    const mimeType = (attachmentData?.type || '').trim() || ATTACHMENT_EXTENSION_TO_MIME[fileExt] || 'application/octet-stream';
+
+    if (attachmentData?.bytes instanceof ArrayBuffer || ArrayBuffer.isView(attachmentData?.bytes)) {
+      return new File([attachmentData.bytes], fileName, { type: mimeType });
+    }
+    if (typeof attachmentData?.textContent === 'string' && isDocumentAttachmentData(attachmentData)) {
+      return new File([attachmentData.textContent], fileName, { type: mimeType });
+    }
+    const blob = await dataUrlToBlob(attachmentData.dataUrl);
+    return new File([blob], fileName, { type: mimeType || blob.type });
+  }
+
   async function createImageFile(imageData) {
-    const blob = await dataUrlToBlob(imageData.dataUrl);
-    return new File([blob], imageData.name, { type: imageData.type });
+    return createAttachmentFile(imageData);
   }
 
   function dispatchFileInputEvents(fileInput) {
@@ -3482,11 +3750,17 @@
     }
 
     const normalizedName = (fileName || '').trim().toLowerCase();
+    if (!normalizedName) {
+      return 0;
+    }
     const evidence = new Set();
 
     root.querySelectorAll(
-      'img[alt], button, [role="button"], [aria-label], [title], [data-file-name], [data-filename]'
+      'img[alt], button, [role="button"], [aria-label], [title], [data-file-name], [data-filename], [class*="file"], [class*="attachment"], [class*="chip"], [role="listitem"]'
     ).forEach(element => {
+      if (element.closest('textarea, input, [contenteditable="true"]')) {
+        return;
+      }
       const alt = (element.getAttribute('alt') || '').trim().toLowerCase();
       const fileNameData = (
         element.getAttribute('data-file-name') ||
@@ -3494,12 +3768,17 @@
         ''
       ).trim().toLowerCase();
       const accessibleText = getElementAccessibleText(element);
+      const isFileElement = element.matches('[class*="file"], [class*="attachment"], [class*="chip"], [role="listitem"]');
+      const smallText = isFileElement && (element.textContent || '').length <= 240
+        ? (element.textContent || '').trim().toLowerCase()
+        : '';
       if (
         alt === normalizedName ||
         fileNameData === normalizedName ||
-        accessibleText.includes(normalizedName)
+        accessibleText.includes(normalizedName) ||
+        (smallText && smallText.includes(normalizedName))
       ) {
-        evidence.add(element.closest('button, [role="button"]') || element);
+        evidence.add(element.closest('button, [role="button"], [role="listitem"]') || element);
       }
     });
 
@@ -3509,7 +3788,7 @@
   function getProviderImageKey(provider, imageData) {
     const imageKey = imageData?.id && typeof imageData.id === 'string'
       ? imageData.id
-      : `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || ''}`;
+      : `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || imageData?.size || ''}`;
     return `${provider}\u0000${imageKey}`;
   }
 
@@ -3532,7 +3811,8 @@
 
     const accepted = await waitForPreviewIncrease(
       countCompletedPreviews,
-      pendingUpload.previousCount
+      pendingUpload.previousCount,
+      getPreviewTimeoutMs(imageData)
     );
     if (accepted) {
       pendingProviderImageUploads.delete(imageKey);
@@ -3559,13 +3839,30 @@
       null;
   }
 
-  function findYuanbaoFileInput() {
-    return [...document.querySelectorAll('input[type="file"]')]
-      .find(input => input.multiple && acceptsImageFiles(input)) || null;
+  function findYuanbaoFileInput(attachmentData = null) {
+    const inputs = [...document.querySelectorAll('input[type="file"]')];
+    return inputs.find(input => input.multiple && acceptsAttachmentFile(input, attachmentData)) ||
+      inputs.find(input => acceptsAttachmentFile(input, attachmentData)) ||
+      null;
   }
 
-  function countYuanbaoCompletedPreviews(fileName) {
+  function countYuanbaoCompletedPreviews(fileName, attachmentData = null) {
     const normalizedName = (fileName || '').trim().toLowerCase();
+    if (isDocumentAttachmentData(attachmentData)) {
+      const fileListItems = [...document.querySelectorAll('[class*="FileList_inputFileListItem"]')];
+      const matchedItems = fileListItems.filter(item => {
+        const cls = String(item.className || '').toLowerCase();
+        if (cls.includes('loading') || cls.includes('uploading') || cls.includes('error')) {
+          return false;
+        }
+        const text = (item.textContent || '').trim().toLowerCase();
+        const title = (item.getAttribute('title') || '').trim().toLowerCase();
+        const dataName = (item.getAttribute('data-file-name') || item.getAttribute('data-filename') || '').trim().toLowerCase();
+        return text.includes(normalizedName) || title.includes(normalizedName) || dataName === normalizedName;
+      });
+      return matchedItems.length;
+    }
+
     return [...document.querySelectorAll('img[alt]')].filter(image => {
       const source = image.getAttribute('src') || '';
       const alt = (image.getAttribute('alt') || '').trim().toLowerCase();
@@ -3577,7 +3874,7 @@
     }).length;
   }
 
-  async function openYuanbaoImagePicker(composer) {
+  async function openYuanbaoImagePicker(composer, attachmentData = null) {
     const addButton = composer?.querySelector('[data-new-input-control="add-tools-trigger"]') ||
       findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.yuanbao);
     if (!addButton) {
@@ -3587,16 +3884,19 @@
     addButton.click();
     await sleep(100);
 
+    const menuLabels = isDocumentAttachmentData(attachmentData)
+      ? ['Upload File', '上传文件', 'Add File', '添加文件']
+      : ['Upload Image', '上传图片'];
     const uploadAction = findVisibleElementByExactText(
       'button, [role="menuitem"]',
-      ['Upload Image', '上传图片']
+      menuLabels
     );
     if (!uploadAction) {
       return null;
     }
 
     uploadAction.click();
-    return waitForFileInput(findYuanbaoFileInput, 1000);
+    return waitForFileInput(() => findYuanbaoFileInput(attachmentData), 1000);
   }
 
   async function injectImageToYuanbao(imageData, { retry = false } = {}) {
@@ -3606,7 +3906,7 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const countCompleted = () => countYuanbaoCompletedPreviews(imageData.name);
+      const countCompleted = () => countYuanbaoCompletedPreviews(imageData.name, imageData);
       if (retry) {
         const reconciled = await reconcilePendingProviderImage(
           'yuanbao',
@@ -3618,22 +3918,29 @@
         }
       }
 
-      let fileInput = findYuanbaoFileInput();
+      let fileInput = findYuanbaoFileInput(imageData);
       if (!fileInput) {
-        fileInput = await openYuanbaoImagePicker(composer);
+        fileInput = await openYuanbaoImagePicker(composer, imageData);
       }
       if (!fileInput) {
+        if (isDocumentAttachmentData(imageData) && document.querySelectorAll('input[type="file"]').length > 0) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
       const previousCount = countCompleted();
-      const file = await createImageFile(imageData);
+      const file = await createAttachmentFile(imageData);
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
       dispatchFileInputEvents(fileInput);
 
-      const accepted = await waitForPreviewIncrease(countCompleted, previousCount);
+      const accepted = await waitForPreviewIncrease(
+        countCompleted,
+        previousCount,
+        getPreviewTimeoutMs(imageData)
+      );
       if (accepted) {
         pendingProviderImageUploads.delete(getProviderImageKey('yuanbao', imageData));
         return createImageInjectionSuccess();
@@ -3653,9 +3960,9 @@
     return editor?.closest('form') || null;
   }
 
-  function findGrokFileInput(composer) {
+  function findGrokFileInput(composer, attachmentData = null) {
     return [...(composer?.querySelectorAll('input[type="file"]') || [])]
-      .find(input => acceptsImageFiles(input)) || null;
+      .find(input => acceptsAttachmentFile(input, attachmentData)) || null;
   }
 
   function countGrokAttachmentPreviews(composer, fileName) {
@@ -3680,17 +3987,20 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const file = await createImageFile(imageData);
-      let fileInput = findGrokFileInput(composer);
+      const file = await createAttachmentFile(imageData);
+      let fileInput = findGrokFileInput(composer, imageData);
       if (!fileInput) {
         // Grok ignores synthetic clicks when deciding whether to open its
         // attachment menu. Its native composer file input is still usable;
         // only use synthetic UI events to wake a lazily mounted input.
         attachButton.click();
         dispatchDragEventsToWakeInput(composer, file);
-        fileInput = await waitForFileInput(() => findGrokFileInput(composer));
+        fileInput = await waitForFileInput(() => findGrokFileInput(composer, imageData));
       }
       if (!fileInput) {
+        if (isDocumentAttachmentData(imageData) && composer.querySelectorAll('input[type="file"]').length > 0) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
@@ -3702,7 +4012,8 @@
 
       const accepted = await waitForPreviewIncrease(
         () => countGrokAttachmentPreviews(composer, imageData.name),
-        previousCount
+        previousCount,
+        getPreviewTimeoutMs(imageData)
       );
       return accepted
         ? createImageInjectionSuccess()
@@ -3720,9 +4031,11 @@
     return findClosestAncestorContaining(editor, 'input[type="file"]');
   }
 
-  function findDeepSeekFileInput(composer) {
-    return [...(composer?.querySelectorAll('input[type="file"]') || [])]
-      .find(input => input.multiple && acceptsImageFiles(input)) || null;
+  function findDeepSeekFileInput(composer, attachmentData = null) {
+    const inputs = [...(composer?.querySelectorAll('input[type="file"]') || [])];
+    return inputs.find(input => input.multiple && acceptsAttachmentFile(input, attachmentData)) ||
+      inputs.find(input => acceptsAttachmentFile(input, attachmentData)) ||
+      null;
   }
 
   async function injectImageToDeepSeek(imageData) {
@@ -3732,13 +4045,16 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const file = await createImageFile(imageData);
-      let fileInput = findDeepSeekFileInput(composer);
+      const file = await createAttachmentFile(imageData);
+      let fileInput = findDeepSeekFileInput(composer, imageData);
       if (!fileInput) {
         dispatchDragEventsToWakeInput(composer, file);
-        fileInput = await waitForFileInput(() => findDeepSeekFileInput(composer));
+        fileInput = await waitForFileInput(() => findDeepSeekFileInput(composer, imageData));
       }
       if (!fileInput) {
+        if (isDocumentAttachmentData(imageData) && composer.querySelectorAll('input[type="file"]').length > 0) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
@@ -3760,7 +4076,8 @@
             ? 1
             : 0
         ),
-        0
+        0,
+        getPreviewTimeoutMs(imageData)
       );
       return accepted
         ? createImageInjectionSuccess()
@@ -3786,15 +4103,57 @@
     ).length || 0;
   }
 
+  function countKimiDocumentPreviews(composer, fileName = '') {
+    if (!composer) {
+      return 0;
+    }
+    const cards = [...composer.querySelectorAll(
+      '.file-card, .file-item, .attachment-card, .attachment-item, [class*="file-card"], [class*="file-item"], [class*="attachment-item"]'
+    )].filter(el => {
+      if (el.matches('.image-thumbnail')) return false;
+      const cls = String(el.className || '').toLowerCase();
+      return !cls.includes('loading') && !cls.includes('uploading') && !cls.includes('error') && !cls.includes('fail');
+    });
+    if (fileName) {
+      const normalized = fileName.trim().toLowerCase();
+      const matchingCards = cards.filter(el => (el.textContent || '').toLowerCase().includes(normalized));
+      if (matchingCards.length > 0) {
+        return matchingCards.length;
+      }
+      // Also check filename evidence inside composer excluding loading/error thumbnails
+      const evidenceNodes = [...composer.querySelectorAll(
+        '[data-file-name], [data-filename], [title], [aria-label]'
+      )].filter(el => {
+        const host = el.closest('.image-thumbnail, .file-card, .file-item, [class*="file"], [class*="attachment"]') || el;
+        const cls = String(host.className || '').toLowerCase();
+        if (cls.includes('loading') || cls.includes('uploading') || cls.includes('error') || cls.includes('fail')) {
+          return false;
+        }
+        const raw = (
+          el.getAttribute('data-file-name') ||
+          el.getAttribute('data-filename') ||
+          el.getAttribute('title') ||
+          el.getAttribute('aria-label') ||
+          ''
+        ).trim().toLowerCase();
+        return raw.includes(normalized);
+      });
+      return Math.max(cards.length, evidenceNodes.length);
+    }
+    return cards.length;
+  }
+
   function countKimiPendingAttachmentPreviews(composer) {
-    return composer?.querySelectorAll('.image-thumbnail.loading').length || 0;
+    return composer?.querySelectorAll(
+      '.image-thumbnail.loading, .file-card.loading, .file-item.loading, [class*="file-card"].loading, [class*="attachment"].loading'
+    ).length || 0;
   }
 
   function getKimiImageKey(imageData) {
     if (imageData && imageData.id && typeof imageData.id === 'string') {
       return imageData.id;
     }
-    return `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || ''}`;
+    return `${imageData?.name || ''}\u0000${imageData?.type || ''}\u0000${imageData?.dataUrl || imageData?.size || ''}`;
   }
 
   function getKimiThumbnailState(thumbnail) {
@@ -3807,13 +4166,19 @@
     ) {
       return 'success';
     }
-    return thumbnail.matches('.image-thumbnail.loading') ? 'loading' : 'failed';
+    if (
+      !thumbnail.matches('.image-thumbnail') &&
+      thumbnail.matches('.success')
+    ) {
+      return 'success';
+    }
+    return thumbnail.matches('.loading') ? 'loading' : 'failed';
   }
 
-  async function waitForTrackedKimiThumbnail(thumbnail) {
+  async function waitForTrackedKimiThumbnail(thumbnail, timeoutMs = IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS) {
     const start = Date.now();
 
-    while (Date.now() - start < IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS) {
+    while (Date.now() - start < timeoutMs) {
       const state = getKimiThumbnailState(thumbnail);
       if (state !== 'loading') {
         return state;
@@ -3824,7 +4189,7 @@
     return getKimiThumbnailState(thumbnail);
   }
 
-  async function reconcilePendingKimiImage(imageKey, composer) {
+  async function reconcilePendingKimiImage(imageKey, composer, countCompleted, timeoutMs) {
     const pendingUpload = pendingKimiImageUploads.get(imageKey);
     if (!pendingUpload) {
       return null;
@@ -3833,15 +4198,15 @@
     // Kimi replaces the original loading thumbnail during upload finalization.
     // The verified success-count increase preserves reconciliation across that
     // replacement while the retry flag keeps it scoped to the failed Fill.
-    if (countKimiAttachmentPreviews(composer) > pendingUpload.previousSuccessCount) {
+    if (countCompleted() > pendingUpload.previousSuccessCount) {
       pendingKimiImageUploads.delete(imageKey);
       return createImageInjectionSuccess();
     }
 
-    const state = await waitForTrackedKimiThumbnail(pendingUpload.thumbnail);
+    const state = await waitForTrackedKimiThumbnail(pendingUpload.thumbnail, timeoutMs);
     if (
       state === 'success' ||
-      countKimiAttachmentPreviews(composer) > pendingUpload.previousSuccessCount
+      countCompleted() > pendingUpload.previousSuccessCount
     ) {
       pendingKimiImageUploads.delete(imageKey);
       return createImageInjectionSuccess();
@@ -3854,11 +4219,11 @@
     return null;
   }
 
-  async function waitForKimiPendingPreview(composer, previousSuccessCount) {
+  async function waitForKimiPendingPreview(composer, countCompleted, previousSuccessCount, timeoutMs) {
     const start = Date.now();
 
-    while (Date.now() - start < IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS) {
-      if (countKimiAttachmentPreviews(composer) > previousSuccessCount) {
+    while (Date.now() - start < timeoutMs) {
+      if (countCompleted() > previousSuccessCount) {
         return true;
       }
       if (countKimiPendingAttachmentPreviews(composer) === 0) {
@@ -3876,15 +4241,19 @@
    * "Add files & images" menu item only forwards a click to it. Older builds
    * rendered the input inside a "文件和图片" label in the toolkit menu.
    */
-  async function findKimiFileInput(composer) {
-    const composerInput = composer.querySelector('input[type="file"]');
-    if (composerInput) {
-      return composerInput;
+  async function findKimiFileInput(composer, attachmentData = null) {
+    const composerInputs = [...composer.querySelectorAll('input[type="file"]')];
+    const matchingComposerInput = composerInputs.find(input => acceptsAttachmentFile(input, attachmentData));
+    if (matchingComposerInput) {
+      return matchingComposerInput;
+    }
+    if (composerInputs.length > 0 && !attachmentData) {
+      return composerInputs[0];
     }
 
     const toolkitTrigger = composer.querySelector('.toolkit-trigger-btn');
     if (!toolkitTrigger) {
-      return null;
+      return composerInputs[0] || null;
     }
 
     let uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
@@ -3893,7 +4262,7 @@
       await sleep(100);
       uploadEntry = findVisibleElementByExactText('label', ['文件和图片', 'Files and images']);
     }
-    return uploadEntry?.querySelector('input[type="file"]') || null;
+    return uploadEntry?.querySelector('input[type="file"]') || composerInputs[0] || null;
   }
 
   async function injectImageToKimi(imageData, { retry = false } = {}) {
@@ -3903,11 +4272,17 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
+      const isDoc = isDocumentAttachmentData(imageData);
+      const timeoutMs = getPreviewTimeoutMs(imageData);
+      const countCompleted = () => isDoc
+        ? countKimiDocumentPreviews(composer, imageData.name)
+        : countKimiAttachmentPreviews(composer);
+
       // A Kimi upload can finish after the first Fill has already timed out.
-      // Reconcile the exact thumbnail created by that attempt before retrying.
+      // Reconcile the exact thumbnail/card created by that attempt before retrying.
       const imageKey = getKimiImageKey(imageData);
       if (retry) {
-        const reconciledResult = await reconcilePendingKimiImage(imageKey, composer);
+        const reconciledResult = await reconcilePendingKimiImage(imageKey, composer, countCompleted, timeoutMs);
         if (reconciledResult) {
           return reconciledResult;
         }
@@ -3915,10 +4290,15 @@
         pendingKimiImageUploads.clear();
       }
 
-      const previousCount = countKimiAttachmentPreviews(composer);
+      const previousCount = countCompleted();
       if (countKimiPendingAttachmentPreviews(composer) > 0) {
         if (pendingKimiImageUploads.has(imageKey)) {
-          const pendingAccepted = await waitForKimiPendingPreview(composer, previousCount);
+          const pendingAccepted = await waitForKimiPendingPreview(
+            composer,
+            countCompleted,
+            previousCount,
+            timeoutMs
+          );
           return pendingAccepted
             ? createImageInjectionSuccess()
             : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
@@ -3926,31 +4306,35 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
       }
 
-      const fileInput = await findKimiFileInput(composer);
+      const fileInput = await findKimiFileInput(composer, imageData);
       if (!fileInput) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED);
       }
-      if (!acceptsImageFiles(fileInput)) {
-        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      if (!acceptsAttachmentFile(fileInput, imageData)) {
+        return isDoc
+          ? createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED)
+          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const file = await createImageFile(imageData);
-      const previousThumbnails = new Set(composer.querySelectorAll('.image-thumbnail'));
+      const file = await createAttachmentFile(imageData);
+      const cardSelector = '.image-thumbnail, .file-card, .file-item, [class*="file-card"], [class*="attachment-item"]';
+      const previousThumbnails = new Set(composer.querySelectorAll(cardSelector));
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
       dispatchFileInputEvents(fileInput);
 
       const accepted = await waitForPreviewIncrease(
-        () => countKimiAttachmentPreviews(composer),
-        previousCount
+        countCompleted,
+        previousCount,
+        timeoutMs
       );
       if (accepted) {
         pendingKimiImageUploads.delete(imageKey);
         return createImageInjectionSuccess();
       }
 
-      const newThumbnail = [...composer.querySelectorAll('.image-thumbnail')]
+      const newThumbnail = [...composer.querySelectorAll(cardSelector)]
         .find(thumbnail => !previousThumbnails.has(thumbnail));
       const thumbnailState = getKimiThumbnailState(newThumbnail);
       if (thumbnailState === 'success') {
@@ -3970,43 +4354,60 @@
     }
   }
 
-  // ChatGPT-specific image injection
+  function findMatchingFileInputFromSelectors(selectors, attachmentData) {
+    const seen = new Set();
+    const candidates = [];
+    for (const selector of selectors) {
+      for (const el of document.querySelectorAll(selector)) {
+        if (!seen.has(el)) {
+          seen.add(el);
+          candidates.push(el);
+        }
+      }
+    }
+    const matched = candidates.find(input => acceptsAttachmentFile(input, attachmentData)) || null;
+    return { matched, hadAnyInput: candidates.length > 0 };
+  }
+
+  // ChatGPT-specific image & document injection
   async function injectImageToChatGPT(imageData) {
     try {
-      // ChatGPT: find and use file input directly
-      const fileInput = document.querySelector('input[type="file"]');
+      const { matched: fileInput, hadAnyInput } = findMatchingFileInputFromSelectors(
+        FILE_INPUT_SELECTORS.chatgpt,
+        imageData
+      );
       if (fileInput) {
-        const blob = await dataUrlToBlob(imageData.dataUrl);
-        const file = new File([blob], imageData.name, { type: imageData.type });
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        fileInput.files = dataTransfer.files;
-        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        const file = await createAttachmentFile(imageData);
+        if (!assignFilesToInput(fileInput, [file])) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+        }
+        dispatchFileInputEvents(fileInput);
         console.log('[Image Injection] ChatGPT: File input triggered');
-        return true;
+        return createImageInjectionSuccess();
+      }
+      if (hadAnyInput && isDocumentAttachmentData(imageData)) {
+        return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
       }
       console.warn('[Image Injection] ChatGPT: No file input found');
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     } catch (error) {
       console.error('[Image Injection] ChatGPT error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
-  // Claude-specific image injection
+  // Claude-specific image & document injection
   async function injectImageToClaude(imageData) {
     try {
-      // Claude: find the file input (it's usually hidden)
-      const fileInput = document.querySelector('input[type="file"]');
-      if (fileInput) {
-        const blob = await dataUrlToBlob(imageData.dataUrl);
-        const file = new File([blob], imageData.name, { type: imageData.type });
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        fileInput.files = dataTransfer.files;
-        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      const initial = findMatchingFileInputFromSelectors(FILE_INPUT_SELECTORS.claude, imageData);
+      if (initial.matched) {
+        const file = await createAttachmentFile(imageData);
+        if (!assignFilesToInput(initial.matched, [file])) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+        }
+        dispatchFileInputEvents(initial.matched);
         console.log('[Image Injection] Claude: File input triggered');
-        return true;
+        return createImageInjectionSuccess();
       }
 
       // Try clicking the attachment button first
@@ -4016,39 +4417,82 @@
         if (btn) {
           btn.click();
           await sleep(300);
-          // Now try to find and use the file input
-          const input = document.querySelector('input[type="file"]');
-          if (input) {
-            const blob = await dataUrlToBlob(imageData.dataUrl);
-            const file = new File([blob], imageData.name, { type: imageData.type });
-            const dataTransfer = new DataTransfer();
-            dataTransfer.items.add(file);
-            input.files = dataTransfer.files;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
+          const afterClick = findMatchingFileInputFromSelectors(FILE_INPUT_SELECTORS.claude, imageData);
+          if (afterClick.matched) {
+            const file = await createAttachmentFile(imageData);
+            if (!assignFilesToInput(afterClick.matched, [file])) {
+              return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+            }
+            dispatchFileInputEvents(afterClick.matched);
             console.log('[Image Injection] Claude: File input triggered after button click');
-            return true;
+            return createImageInjectionSuccess();
+          }
+          if (afterClick.hadAnyInput && isDocumentAttachmentData(imageData)) {
+            return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
           }
         }
       }
 
+      if (initial.hadAnyInput && isDocumentAttachmentData(imageData)) {
+        return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+      }
+
       console.warn('[Image Injection] Claude: No file input found');
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     } catch (error) {
       console.error('[Image Injection] Claude error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
-  // Gemini-specific image injection
+  // Gemini-specific image & document injection
   async function injectImageToGemini(imageData) {
     try {
+      const isDoc = isDocumentAttachmentData(imageData);
+      const file = await createAttachmentFile(imageData);
+
+      if (isDoc) {
+        // For documents, prefer a real file input (never blindly fire both paste + drop).
+        const findGeminiInput = () => querySelectorAllDeep('input[type="file"]')
+          .find(input => acceptsAttachmentFile(input, imageData)) || null;
+        let fileInput = findGeminiInput();
+        if (!fileInput) {
+          const uploadBtn = findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.gemini);
+          if (uploadBtn) {
+            uploadBtn.click();
+            await sleep(200);
+            fileInput = findGeminiInput();
+          }
+        }
+        if (fileInput) {
+          if (!assignFilesToInput(fileInput, [file])) {
+            return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+          }
+          dispatchFileInputEvents(fileInput);
+          console.log('[Image Injection] Gemini: Document injected via file input');
+          return createImageInjectionSuccess();
+        }
+        // Fallback: single drop sequence on editor/dropzone (no duplicate paste+drop)
+        const editorSelectors = ['.ql-editor', '[contenteditable="true"]', 'div[contenteditable]'];
+        let editor = null;
+        for (const selector of editorSelectors) {
+          editor = querySelectorDeep(selector);
+          if (editor) break;
+        }
+        if (!editor) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+        }
+        dispatchFileDragEvents(editor, file);
+        console.log('[Image Injection] Gemini: Document injected via single drop');
+        return createImageInjectionSuccess();
+      }
+
       console.log('[Image Injection] Gemini: Starting image injection');
 
       // Strategy: Simulate paste event with image
-      // Find the editor (Quill editor or contenteditable)
       const editorSelectors = ['.ql-editor', '[contenteditable="true"]', 'div[contenteditable]'];
       let editor = null;
-      
+
       for (const selector of editorSelectors) {
         editor = querySelectorDeep(selector);
         if (editor) {
@@ -4056,33 +4500,29 @@
           break;
         }
       }
-      
+
       if (!editor) {
         console.warn('[Image Injection] Gemini: Editor not found');
-        return false;
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      // Convert dataUrl to blob
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-      const file = new File([blob], imageData.name, { type: imageData.type });
-      
       // Create DataTransfer for clipboard data
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(file);
-      
+
       // Focus the editor first
       editor.focus();
-      
+
       // Simulate paste event with the image
       const pasteEvent = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
         clipboardData: dataTransfer
       });
-      
+
       editor.dispatchEvent(pasteEvent);
       console.log('[Image Injection] Gemini: Paste event dispatched');
-      
+
       // Also try drag-drop as fallback if paste doesn't work
       await sleep(100);
       const dropEvent = new DragEvent('drop', {
@@ -4092,19 +4532,62 @@
       });
       editor.dispatchEvent(dropEvent);
       console.log('[Image Injection] Gemini: Drop event dispatched');
-      
-      return true;
+
+      return createImageInjectionSuccess();
     } catch (error) {
       console.error('[Image Injection] Gemini error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
-  // Google AI Studio image injection - uses paste on ms-prompt-box [msfilecopypaste] / textarea with file input fallback
+  // Google AI Studio image & document injection
   async function injectImageToAiStudio(imageData) {
     try {
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-      const file = new File([blob], imageData.name, { type: imageData.type });
+      const isDoc = isDocumentAttachmentData(imageData);
+      const file = await createAttachmentFile(imageData);
+
+      if (isDoc) {
+        const direct = findMatchingFileInputFromSelectors(FILE_INPUT_SELECTORS.aistudio, imageData);
+        if (direct.matched) {
+          if (!assignFilesToInput(direct.matched, [file])) {
+            return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+          }
+          dispatchFileInputEvents(direct.matched);
+          console.log('[Image Injection] AI Studio: Document injected via file input');
+          return createImageInjectionSuccess();
+        }
+        if (direct.hadAnyInput) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
+
+        const uploadButton = findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.aistudio) ||
+          findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.aistudio);
+        if (uploadButton) {
+          uploadButton.click();
+          await sleep(150);
+          const afterClick = findMatchingFileInputFromSelectors(FILE_INPUT_SELECTORS.aistudio, imageData);
+          if (afterClick.matched) {
+            if (!assignFilesToInput(afterClick.matched, [file])) {
+              return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+            }
+            dispatchFileInputEvents(afterClick.matched);
+            return createImageInjectionSuccess();
+          }
+          if (afterClick.hadAnyInput) {
+            return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+          }
+        }
+
+        const dropTarget =
+          document.querySelector('ms-prompt-box [msfilecopypaste]') ||
+          document.querySelector('ms-prompt-box .prompt-box-container') ||
+          findProviderInput('aistudio');
+        if (dropTarget) {
+          dispatchFileDragEvents(dropTarget, file);
+          return createImageInjectionSuccess();
+        }
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
 
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(file);
@@ -4155,20 +4638,20 @@
     }
   }
 
-  // Google AI Mode image injection
+  // Google AI Mode image & document injection
   async function injectImageToGoogle(imageData) {
     try {
-      let fileInput = findGoogleFileInput();
+      const isDoc = isDocumentAttachmentData(imageData);
+      let fileInput = findGoogleFileInput(imageData);
       if (!fileInput) {
-        fileInput = await openGoogleImagePicker();
+        fileInput = await openGoogleImagePicker(imageData);
       }
 
       if (fileInput) {
-        const blob = await dataUrlToBlob(imageData.dataUrl);
-        const file = new File([blob], imageData.name, { type: imageData.type });
+        const file = await createAttachmentFile(imageData);
         const assigned = assignFilesToInput(fileInput, [file]);
         if (!assigned) {
-          return false;
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
         }
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         // Close the "+" menu only after the change event: the inputs live in
@@ -4176,23 +4659,28 @@
         await sleep(50);
         closeGoogleComposerMenu();
         console.log('[Image Injection] Google: File input triggered');
-        return true;
+        return createImageInjectionSuccess();
+      }
+      await sleep(50);
+      closeGoogleComposerMenu();
+      if (isDoc && querySelectorAllDeep('input[type="file"]').length > 0) {
+        return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
       }
       console.warn('[Image Injection] Google: No file input found');
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     } catch (error) {
       console.error('[Image Injection] Google error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
   async function injectImageToDoubao(imageData) {
     try {
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-      const file = new File([blob], imageData.name, { type: imageData.type });
+      const isDoc = isDocumentAttachmentData(imageData);
+      const file = await createAttachmentFile(imageData);
 
       for (let attempt = 0; attempt < 3; attempt++) {
-        let fileInput = await waitForDoubaoFileInput(500);
+        let fileInput = await waitForDoubaoFileInput(500, imageData);
 
         if (!fileInput) {
           const uploadButton = findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.doubao) ||
@@ -4201,111 +4689,158 @@
           if (uploadButton) {
             uploadButton.click();
             await sleep(200);
-            fileInput = await waitForDoubaoFileInput(800);
+            if (isDoc) {
+              const fileMenuAction = findVisibleElementByExactText(
+                'button, [role="menuitem"], li',
+                ['Upload File', '上传文件', '添加文件', '文件']
+              );
+              if (fileMenuAction) {
+                fileMenuAction.click();
+                await sleep(150);
+              }
+            }
+            fileInput = await waitForDoubaoFileInput(800, imageData);
           }
         }
 
         if (!fileInput) {
+          if (isDoc && document.querySelectorAll('#input-engine-container input[type="file"], input[type="file"]').length > 0) {
+            return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+          }
           console.warn('[Image Injection] Doubao: No file input found on attempt', attempt + 1);
           continue;
         }
 
+        const previousCount = countDoubaoAttachmentPreviews(imageData.name);
         const assigned = assignFilesToInput(fileInput, [file]);
         if (!assigned) {
           await sleep(200);
           continue;
         }
 
-        fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        dispatchFileInputEvents(fileInput);
 
-        const uploadAccepted = await waitForDoubaoImagePreview(1200);
+        const uploadAccepted = await waitForDoubaoImagePreview(
+          previousCount,
+          imageData.name,
+          isDoc ? DOCUMENT_UPLOAD_PREVIEW_TIMEOUT_MS : 1200
+        );
 
         if (uploadAccepted) {
-          console.log('[Image Injection] Doubao: Image preview detected');
-          return true;
+          console.log('[Image Injection] Doubao: Attachment preview detected');
+          return createImageInjectionSuccess();
         }
 
-        console.warn('[Image Injection] Doubao: Upload did not produce an image preview');
-        return false;
+        console.warn('[Image Injection] Doubao: Upload did not produce a preview');
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
       }
 
       console.warn('[Image Injection] Doubao: Upload did not produce a preview after retries');
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     } catch (error) {
       console.error('[Image Injection] Doubao error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
   async function injectImageToQwen(provider, imageData) {
     try {
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-      const file = new File([blob], imageData.name, { type: imageData.type });
+      const file = await createAttachmentFile(imageData);
 
       if (provider === 'qwen-global') {
-        return await injectImageToQwenGlobal(file);
+        return await injectImageToQwenGlobal(file, imageData);
       }
 
-      return await injectImageToQwenChina(file);
+      return await injectImageToQwenChina(file, imageData);
     } catch (error) {
       console.error('[Image Injection] Qwen error:', provider, error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
-  async function injectImageToQwenChina(file) {
+  async function injectImageToQwenChina(file, attachmentData) {
     const composer = document.querySelector('[data-chat-input-layout="true"]');
     if (!composer) {
       console.warn('[Image Injection] Qwen China composer not found');
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     }
 
-    const previewCount = countQwenImagePreviews('qwen-cn');
-    let fileInput = findQwenFileInput('qwen-cn');
+    const timeoutMs = getPreviewTimeoutMs(attachmentData);
+    const previewCount = countQwenAttachmentPreviews('qwen-cn', attachmentData?.name);
+    let fileInput = findQwenFileInput('qwen-cn', attachmentData);
 
-    // Prefer waking Qwen China's lazy file input without dropping the image.
+    // Prefer waking Qwen China's lazy file input without dropping the file.
     if (!fileInput) {
       dispatchDragEventsToWakeInput(composer, file);
-      fileInput = await waitForQwenFileInput('qwen-cn', 1000);
+      fileInput = await waitForQwenFileInput('qwen-cn', 1000, attachmentData);
     }
 
     if (!fileInput) {
       // The current Qwen China composer can accept the native drop directly
       // without ever mounting a file input. Only its new preview is success.
-      if (countQwenImagePreviews('qwen-cn') <= previewCount) {
+      if (countQwenAttachmentPreviews('qwen-cn', attachmentData?.name) <= previewCount) {
         dispatchFileDragEvents(composer, file);
       }
-      const accepted = await waitForQwenImagePreview('qwen-cn', previewCount, 6000);
+      const accepted = await waitForQwenImagePreview('qwen-cn', previewCount, timeoutMs, attachmentData?.name);
       if (!accepted) {
-        console.warn('[Image Injection] Qwen China image input and preview not found');
+        console.warn('[Image Injection] Qwen China attachment input and preview not found');
       }
-      return accepted;
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
     }
 
     if (!assignFilesToInput(fileInput, [file])) {
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
 
-    fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    dispatchFileInputEvents(fileInput);
 
-    const accepted = await waitForQwenImagePreview('qwen-cn', previewCount, 6000);
+    const accepted = await waitForQwenImagePreview('qwen-cn', previewCount, timeoutMs, attachmentData?.name);
     if (!accepted) {
-      console.warn('[Image Injection] Qwen China upload did not produce an image preview');
+      console.warn('[Image Injection] Qwen China upload did not produce a preview');
     }
-    return accepted;
+    return accepted
+      ? createImageInjectionSuccess()
+      : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
   }
 
-  async function injectImageToQwenGlobal(file) {
+  async function injectImageToQwenGlobal(file, attachmentData) {
+    const isDoc = isDocumentAttachmentData(attachmentData);
+    const timeoutMs = getPreviewTimeoutMs(attachmentData);
+    const previewCount = countQwenAttachmentPreviews('qwen-global', attachmentData?.name);
+
+    if (isDoc) {
+      const fileInput = findQwenFileInput('qwen-global', attachmentData);
+      if (fileInput) {
+        if (!assignFilesToInput(fileInput, [file])) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+        }
+        dispatchFileInputEvents(fileInput);
+        const accepted = await waitForQwenImagePreview('qwen-global', previewCount, timeoutMs, attachmentData?.name);
+        return accepted
+          ? createImageInjectionSuccess()
+          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+      }
+      const dropTarget = document.querySelector('#dropzone-container') ||
+        document.querySelector('.message-input-textarea');
+      if (!dropTarget) {
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+      dispatchFileDragEvents(dropTarget, file);
+      const accepted = await waitForQwenImagePreview('qwen-global', previewCount, timeoutMs, attachmentData?.name);
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+    }
+
     const editor = document.querySelector('.message-input-textarea');
 
     if (!editor) {
       console.warn('[Image Injection] Qwen Global editor not found');
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
     }
 
-    const previewCount = countQwenImagePreviews('qwen-global');
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
 
@@ -4316,11 +4851,13 @@
       clipboardData: dataTransfer
     }));
 
-    const accepted = await waitForQwenImagePreview('qwen-global', previewCount, 6000);
+    const accepted = await waitForQwenImagePreview('qwen-global', previewCount, timeoutMs, attachmentData?.name);
     if (!accepted) {
       console.warn('[Image Injection] Qwen Global upload did not produce an image preview');
     }
-    return accepted;
+    return accepted
+      ? createImageInjectionSuccess()
+      : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
   }
 
   function dispatchFileDragEvents(target, file) {
@@ -4328,26 +4865,39 @@
     dataTransfer.items.add(file);
 
     ['dragenter', 'dragover', 'drop'].forEach(type => {
-      target.dispatchEvent(new DragEvent(type, {
+      const event = new DragEvent(type, {
         bubbles: true,
         cancelable: true,
         dataTransfer
-      }));
+      });
+      if (!event.dataTransfer) {
+        try {
+          Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+        } catch {
+          // Ignore non-configurable native DragEvent property.
+        }
+      }
+      target.dispatchEvent(event);
     });
   }
 
-  function findQwenFileInput(provider) {
+  function findQwenFileInput(provider, attachmentData = null) {
     const selectors = FILE_INPUT_SELECTORS[provider] || [];
-    return selectors
-      .map(selector => document.querySelector(selector))
-      .find(Boolean) || null;
+    for (const selector of selectors) {
+      for (const el of document.querySelectorAll(selector)) {
+        if (acceptsAttachmentFile(el, attachmentData)) {
+          return el;
+        }
+      }
+    }
+    return null;
   }
 
-  async function waitForQwenFileInput(provider, timeoutMs) {
+  async function waitForQwenFileInput(provider, timeoutMs, attachmentData = null) {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      const fileInput = findQwenFileInput(provider);
+      const fileInput = findQwenFileInput(provider, attachmentData);
       if (fileInput) {
         return fileInput;
       }
@@ -4358,19 +4908,27 @@
     return null;
   }
 
-  function countQwenImagePreviews(provider) {
-    const selector = provider === 'qwen-cn'
-      ? '[data-chat-input-layout="true"] img[alt="avatar"]'
-      : '.vision-item-image';
-    return document.querySelectorAll(selector).length;
+  function countQwenAttachmentPreviews(provider, fileName = '') {
+    if (provider === 'qwen-cn') {
+      const composer = document.querySelector('[data-chat-input-layout="true"]') || document;
+      const imgCount = composer.querySelectorAll('img[alt="avatar"]').length;
+      const docCount = fileName ? countFilenamePreviewEvidence(composer, fileName) : 0;
+      return Math.max(imgCount, docCount);
+    }
+    const imgCount = document.querySelectorAll('.vision-item-image').length;
+    const docCardCount = document.querySelectorAll(
+      '[class*="file-item"], [class*="attachment-item"], [data-file-name], [data-filename]'
+    ).length;
+    const filenameCount = fileName ? countFilenamePreviewEvidence(document, fileName) : 0;
+    return Math.max(imgCount, docCardCount, filenameCount);
   }
 
-  async function waitForQwenImagePreview(provider, previousCount, timeoutMs) {
+  async function waitForQwenImagePreview(provider, previousCount, timeoutMs, fileName = '') {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      if (countQwenImagePreviews(provider) > previousCount) {
-        console.log('[Image Injection] Qwen image preview detected for:', provider);
+      if (countQwenAttachmentPreviews(provider, fileName) > previousCount) {
+        console.log('[Image Injection] Qwen attachment preview detected for:', provider);
         return true;
       }
 
@@ -4380,17 +4938,19 @@
     return false;
   }
 
-  function countChatGLMImagePreviews() {
+  function countChatGLMAttachmentPreviews(fileName = '') {
     const previewList = document.querySelector('.file-list-box-content-list');
-    return previewList ? previewList.children.length : 0;
+    const listCount = previewList ? previewList.children.length : 0;
+    const filenameCount = fileName ? countFilenamePreviewEvidence(document, fileName) : 0;
+    return Math.max(listCount, filenameCount);
   }
 
-  async function waitForChatGLMImagePreview(previousCount, timeoutMs) {
+  async function waitForChatGLMImagePreview(previousCount, timeoutMs, fileName = '') {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      if (countChatGLMImagePreviews() > previousCount) {
-        console.log('[Image Injection] ChatGLM image preview detected');
+      if (countChatGLMAttachmentPreviews(fileName) > previousCount) {
+        console.log('[Image Injection] ChatGLM attachment preview detected');
         return true;
       }
 
@@ -4400,16 +4960,20 @@
     return false;
   }
 
-  function findChatGLMFileInput() {
-    return document.querySelector('.upload-popover input.el-upload__input[type="file"]') ||
-      document.querySelector('input.el-upload__input[type="file"]');
+  function findChatGLMFileInput(attachmentData = null) {
+    const candidates = [
+      ...document.querySelectorAll('.upload-popover input.el-upload__input[type="file"]'),
+      ...document.querySelectorAll('input.el-upload__input[type="file"]'),
+      ...document.querySelectorAll('input[type="file"]')
+    ];
+    return candidates.find(input => acceptsAttachmentFile(input, attachmentData)) || null;
   }
 
-  async function waitForChatGLMFileInput(timeoutMs) {
+  async function waitForChatGLMFileInput(timeoutMs, attachmentData = null) {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      const fileInput = findChatGLMFileInput();
+      const fileInput = findChatGLMFileInput(attachmentData);
       if (fileInput) {
         return fileInput;
       }
@@ -4422,53 +4986,68 @@
 
   async function injectImageToChatGLM(imageData) {
     try {
-      let fileInput = findChatGLMFileInput();
+      const isDoc = isDocumentAttachmentData(imageData);
+      let fileInput = findChatGLMFileInput(imageData);
 
       if (!fileInput) {
-        const uploadButton = document.querySelector('.upload-image-btn-container');
+        const triggerSelector = isDoc
+          ? '.upload-file-btn-container, .upload-btn-container, .upload-image-btn-container'
+          : '.upload-image-btn-container';
+        const uploadButton = document.querySelector(triggerSelector);
         if (uploadButton) {
           uploadButton.click();
-          fileInput = await waitForChatGLMFileInput(1000);
+          fileInput = await waitForChatGLMFileInput(1000, imageData);
         }
       }
 
       if (!fileInput) {
-        console.warn('[Image Injection] ChatGLM image input not found');
-        return false;
+        if (isDoc && document.querySelectorAll('input[type="file"]').length > 0) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
+        console.warn('[Image Injection] ChatGLM input not found');
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const previousCount = countChatGLMImagePreviews();
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-      const file = new File([blob], imageData.name, { type: imageData.type });
+      const previousCount = countChatGLMAttachmentPreviews(imageData.name);
+      const file = await createAttachmentFile(imageData);
 
       if (!assignFilesToInput(fileInput, [file])) {
-        return false;
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
 
-      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      dispatchFileInputEvents(fileInput);
 
-      const accepted = await waitForChatGLMImagePreview(previousCount, 6000);
+      const accepted = await waitForChatGLMImagePreview(
+        previousCount,
+        getPreviewTimeoutMs(imageData),
+        imageData.name
+      );
       if (!accepted) {
-        console.warn('[Image Injection] ChatGLM upload did not produce an image preview');
+        console.warn('[Image Injection] ChatGLM upload did not produce a preview');
       }
-      return accepted;
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
     } catch (error) {
       console.error('[Image Injection] ChatGLM error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
-  function countZaiGlobalImagePreviews() {
-    return document.querySelectorAll('.chip-scroll img[data-cy="image"]').length;
+  function countZaiGlobalAttachmentPreviews(fileName = '') {
+    const imgCount = document.querySelectorAll('.chip-scroll img[data-cy="image"]').length;
+    const chipContainer = document.querySelector('.chip-scroll');
+    const chipCount = chipContainer ? chipContainer.children.length : 0;
+    const filenameCount = fileName ? countFilenamePreviewEvidence(document, fileName) : 0;
+    return Math.max(imgCount, chipCount, filenameCount);
   }
 
-  async function waitForZaiGlobalImagePreview(previousCount, timeoutMs) {
+  async function waitForZaiGlobalImagePreview(previousCount, timeoutMs, fileName = '') {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      if (countZaiGlobalImagePreviews() > previousCount) {
-        console.log('[Image Injection] Z.ai Global image preview detected');
+      if (countZaiGlobalAttachmentPreviews(fileName) > previousCount) {
+        console.log('[Image Injection] Z.ai Global attachment preview detected');
         return true;
       }
 
@@ -4480,40 +5059,55 @@
 
   async function injectImageToZaiGlobal(imageData) {
     try {
-      const fileInput = document.querySelector('input[type="file"][multiple][accept*=".png"]');
+      const isDoc = isDocumentAttachmentData(imageData);
+      const allInputs = [...document.querySelectorAll('input[type="file"]')];
+      const fileInput =
+        allInputs.find(input => input.multiple && acceptsAttachmentFile(input, imageData)) ||
+        allInputs.find(input => acceptsAttachmentFile(input, imageData)) ||
+        null;
       if (!fileInput) {
-        console.warn('[Image Injection] Z.ai Global image input not found');
-        return false;
+        if (isDoc && allInputs.length > 0) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
+        console.warn('[Image Injection] Z.ai Global input not found');
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const previousCount = countZaiGlobalImagePreviews();
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-      const file = new File([blob], imageData.name, { type: imageData.type });
+      const previousCount = countZaiGlobalAttachmentPreviews(imageData.name);
+      const file = await createAttachmentFile(imageData);
 
       if (!assignFilesToInput(fileInput, [file])) {
-        return false;
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
 
-      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      dispatchFileInputEvents(fileInput);
 
-      const accepted = await waitForZaiGlobalImagePreview(previousCount, 6000);
+      const accepted = await waitForZaiGlobalImagePreview(
+        previousCount,
+        getPreviewTimeoutMs(imageData),
+        imageData.name
+      );
       if (!accepted) {
-        console.warn('[Image Injection] Z.ai Global upload did not produce an image preview');
+        console.warn('[Image Injection] Z.ai Global upload did not produce a preview');
       }
-      return accepted;
+      return accepted
+        ? createImageInjectionSuccess()
+        : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
     } catch (error) {
       console.error('[Image Injection] Z.ai Global error:', error);
-      return false;
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
     }
   }
 
-  async function waitForDoubaoFileInput(timeoutMs = 800) {
+  async function waitForDoubaoFileInput(timeoutMs = 800, attachmentData = null) {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      const fileInput = document.querySelector('#input-engine-container input[type="file"]') ||
-        document.querySelector('input[type="file"]');
+      const candidates = [
+        ...document.querySelectorAll('#input-engine-container input[type="file"]'),
+        ...document.querySelectorAll('input[type="file"]')
+      ];
+      const fileInput = candidates.find(input => acceptsAttachmentFile(input, attachmentData)) || null;
 
       if (fileInput) {
         return fileInput;
@@ -4525,19 +5119,23 @@
     return null;
   }
 
-  function hasDoubaoImagePreview() {
-    return Boolean(
-      document.querySelector('.semi-image-preview-group') ||
-      document.querySelector('#input-engine-container img[src^="blob:"]') ||
-      document.querySelector('#input-engine-container img[src*="blob:"]')
-    );
+  function countDoubaoAttachmentPreviews(fileName = '') {
+    const groupImages = document.querySelectorAll('.semi-image-preview-group img, .semi-image-preview-group').length;
+    const blobImages = document.querySelectorAll(
+      '#input-engine-container img[src^="blob:"], #input-engine-container img[src*="blob:"]'
+    ).length;
+    const fileCards = document.querySelectorAll(
+      '#input-engine-container [class*="file-card"], #input-engine-container [class*="file-item"], #input-engine-container [class*="attachment-item"]'
+    ).length;
+    const filenameEvidence = fileName ? countFilenamePreviewEvidence(document, fileName) : 0;
+    return Math.max(groupImages, blobImages, fileCards, filenameEvidence);
   }
 
-  async function waitForDoubaoImagePreview(timeoutMs = 1200) {
+  async function waitForDoubaoImagePreview(previousCount = 0, fileName = '', timeoutMs = 1200) {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      if (hasDoubaoImagePreview()) {
+      if (countDoubaoAttachmentPreviews(fileName) > previousCount) {
         return true;
       }
 
@@ -4557,41 +5155,11 @@
         return false;
       }
 
-      // Convert dataUrl to blob
-      const blob = await dataUrlToBlob(imageData.dataUrl);
-
-      // Create File object from blob
-      const file = new File([blob], imageData.name, { type: imageData.type });
-
-      // Create DataTransfer with file
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
+      const file = await createAttachmentFile(imageData);
 
       // Focus the element first
       targetElement.focus();
-
-      // Dispatch drag events sequence
-      const dragEnterEvent = new DragEvent('dragenter', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: dataTransfer
-      });
-
-      const dragOverEvent = new DragEvent('dragover', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: dataTransfer
-      });
-
-      const dropEvent = new DragEvent('drop', {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer: dataTransfer
-      });
-
-      targetElement.dispatchEvent(dragEnterEvent);
-      targetElement.dispatchEvent(dragOverEvent);
-      targetElement.dispatchEvent(dropEvent);
+      dispatchFileDragEvents(targetElement, file);
 
       return true;
     } catch (error) {
@@ -4600,23 +5168,28 @@
     }
   }
 
-  // Fallback: Try to upload image via file input
+  // Fallback: Try to upload attachment via file input
   async function tryFileInputUpload(provider, imageData) {
     try {
       const fileInputSelectors = FILE_INPUT_SELECTORS[provider] || [];
 
-      // First try specific selectors
+      // First try specific selectors matching accept
       let fileInput = null;
       for (const selector of fileInputSelectors) {
-        fileInput = document.querySelector(selector);
+        for (const candidate of document.querySelectorAll(selector)) {
+          if (acceptsAttachmentFile(candidate, imageData)) {
+            fileInput = candidate;
+            break;
+          }
+        }
         if (fileInput) break;
       }
 
-      // If no direct file input, try to find any file input
+      // If no direct file input, try to find any matching file input
       if (!fileInput) {
         const allFileInputs = document.querySelectorAll('input[type="file"]');
         for (const input of allFileInputs) {
-          if (!input.accept || input.accept.includes('image') || input.accept.includes('*')) {
+          if (acceptsAttachmentFile(input, imageData)) {
             fileInput = input;
             break;
           }
@@ -4628,19 +5201,12 @@
         return false;
       }
 
-      // Convert dataUrl to blob
-      const blob = await dataUrlToBlob(imageData.dataUrl);
+      const file = await createAttachmentFile(imageData);
+      if (!assignFilesToInput(fileInput, [file])) {
+        return false;
+      }
 
-      // Create File object
-      const file = new File([blob], imageData.name, { type: imageData.type });
-
-      // Create FileList-like object
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      fileInput.files = dataTransfer.files;
-
-      // Trigger change event
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      dispatchFileInputEvents(fileInput);
 
       return true;
     } catch (error) {
