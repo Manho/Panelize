@@ -123,6 +123,124 @@ test.describe('Issue #118 UI Polish & Standalone postMessage Fix E2E', () => {
     }
   });
 
+  test('composer keeps a usable textarea with a long send status and uses a warm tray with a ghost Clear button', async () => {
+    const extension = await launchExtension({ viewport: { width: 1440, height: 900 } });
+    const consoleErrors = [];
+    const pageErrors = [];
+    try {
+      for (const [pattern, name] of [
+        ['https://chatgpt.com/**', 'ChatGPT'],
+        ['https://claude.ai/**', 'Claude'],
+        ['https://gemini.google.com/**', 'Gemini'],
+      ]) {
+        await extension.context.route(pattern, (route) =>
+          route.fulfill({ contentType: 'text/html', body: renderSimpleProviderHtml(name) })
+        );
+      }
+      await extension.serviceWorker.evaluate(async () => {
+        await chrome.storage.sync.set({ theme: 'light' });
+      });
+
+      const page = await openMultiPanel(extension, {
+        providers: ['chatgpt', 'claude', 'gemini'],
+        layout: '1x3',
+      });
+      page.on('console', (msg) => {
+        if (msg.type() === 'error') {
+          consoleErrors.push(msg.text());
+        }
+      });
+      page.on('pageerror', (err) => pageErrors.push(err.message));
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+      const readComposerColors = () => page.evaluate(() => {
+        const clearStyle = getComputedStyle(document.getElementById('clear-all-btn'));
+        return {
+          trayBackground: getComputedStyle(document.getElementById('input-bar')).backgroundColor,
+          inputBackground: getComputedStyle(document.getElementById('unified-input')).backgroundColor,
+          fillBackground: getComputedStyle(document.getElementById('fill-input-btn')).backgroundColor,
+          clearBackground: clearStyle.backgroundColor,
+          clearBorderColor: clearStyle.borderTopColor,
+        };
+      });
+
+      // Light mode: warm paper tray, white input and Fill, ghost Clear
+      const lightColors = await readComposerColors();
+      expect(lightColors.trayBackground).toBe('rgb(246, 244, 240)');
+      expect(lightColors.inputBackground).toBe('rgb(255, 255, 255)');
+      expect(lightColors.fillBackground).toBe('rgb(255, 255, 255)');
+      expect(lightColors.clearBackground).toBe('rgba(0, 0, 0, 0)');
+      expect(lightColors.clearBorderColor).toBe('rgba(0, 0, 0, 0)');
+
+      const setFailedStatus = () => page.evaluate(() => {
+        const status = document.getElementById('send-status');
+        status.textContent = 'Fill failed: 3/3 panels failed';
+        status.className = 'send-status error';
+      });
+      const readNarrowMetrics = () => page.evaluate(() => {
+        const status = document.getElementById('send-status');
+        const sendBtn = document.getElementById('send-all-btn').getBoundingClientRect();
+        const clearBtn = document.getElementById('clear-all-btn').getBoundingClientRect();
+        return {
+          inputWidth: document.getElementById('unified-input').getBoundingClientRect().width,
+          statusWidth: status.getBoundingClientRect().width,
+          statusTruncated: status.scrollWidth > status.clientWidth,
+          sendRight: sendBtn.right,
+          sendWidth: sendBtn.width,
+          sendHeight: sendBtn.height,
+          clearWidth: clearBtn.width,
+          viewportWidth: window.innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+        };
+      });
+
+      // 390px: a long failure status is capped and must not squeeze the textarea
+      await page.setViewportSize({ width: 390, height: 844 });
+      await setFailedStatus();
+      const at390 = await readNarrowMetrics();
+      expect(at390.statusWidth).toBeGreaterThan(0);
+      expect(at390.statusWidth).toBeLessThanOrEqual(72);
+      expect(at390.statusTruncated).toBe(true);
+      expect(at390.inputWidth).toBeGreaterThanOrEqual(100);
+      expect(at390.sendRight).toBeLessThanOrEqual(at390.viewportWidth);
+      expect(at390.scrollWidth).toBeLessThanOrEqual(at390.viewportWidth);
+      // Icon-only Send matches its 32px siblings below 440px
+      expect(at390.sendWidth).toBe(32);
+      expect(at390.sendHeight).toBe(32);
+      expect(at390.clearWidth).toBe(32);
+
+      // 320px: Send All stays fully inside the viewport with no horizontal overflow
+      await page.setViewportSize({ width: 320, height: 700 });
+      const at320 = await readNarrowMetrics();
+      expect(at320.inputWidth).toBeGreaterThan(0);
+      expect(at320.sendRight).toBeLessThanOrEqual(at320.viewportWidth);
+      expect(at320.scrollWidth).toBeLessThanOrEqual(at320.viewportWidth);
+
+      // Desktop: status is capped well below the textarea width
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const desktop = await readNarrowMetrics();
+      expect(desktop.statusWidth).toBeLessThanOrEqual(220);
+      expect(desktop.inputWidth).toBeGreaterThan(900);
+
+      // Dark mode keeps Clear as a ghost button
+      await extension.serviceWorker.evaluate(async () => {
+        await chrome.storage.sync.set({ theme: 'dark' });
+      });
+      await page.reload();
+      await page.waitForSelector('#unified-input');
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+      const darkColors = await readComposerColors();
+      expect(darkColors.clearBackground).toBe('rgba(0, 0, 0, 0)');
+      expect(darkColors.clearBorderColor).toBe('rgba(0, 0, 0, 0)');
+      expect(darkColors.trayBackground).not.toBe(darkColors.inputBackground);
+
+      expect(consoleErrors).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await extension.close();
+    }
+  });
+
   test('Settings dropdowns, theme switching, and Prompt Library section work seamlessly in Light and Dark themes', async () => {
     const extension = await launchExtension({ viewport: { width: 1280, height: 900 } });
     const consoleErrors = [];
