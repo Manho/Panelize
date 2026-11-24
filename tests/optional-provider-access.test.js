@@ -3,10 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   OPTIONAL_PROVIDER_CONFIGS,
   filterProvidersWithGrantedAccess,
+  hasOptionalProviderCompanionCookiePermission,
+  hasOptionalProviderPermission,
   reconcileOptionalProviderAccess,
+  requestOptionalProviderCompanionCookiePermission,
   requestOptionalProviderPermission,
   syncOptionalProviderAccess,
 } from '../modules/optional-provider-access.js';
+import { toCustomProviderDescriptor } from '../modules/custom-providers.js';
+import { setCustomProviderDescriptors } from '../modules/provider-registry.js';
 
 function installedOptionalFrameRules() {
   return Object.values(OPTIONAL_PROVIDER_CONFIGS)
@@ -301,6 +306,7 @@ describe('optional provider access', () => {
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
+      { id: 'chatglm-cookie-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
       { id: 'aistudio-scripts' },
@@ -333,6 +339,7 @@ describe('optional provider access', () => {
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
+      { id: 'chatglm-cookie-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
       { id: 'aistudio-scripts' },
@@ -352,5 +359,151 @@ describe('optional provider access', () => {
     expect(chrome.scripting.registerContentScripts).not.toHaveBeenCalled();
     expect(chrome.scripting.unregisterContentScripts).not.toHaveBeenCalled();
     expect(chrome.declarativeNetRequest.updateDynamicRules).not.toHaveBeenCalled();
+  });
+
+  it('preserves legacy HTTPS-only grants for chatglm and HTTPS custom web providers on upgrade even when companion http:// is absent or declined', async () => {
+    const legacyCustomRecord = {
+      id: 'custom-1122334455',
+      name: 'Legacy MiMo',
+      url: 'https://aistudio.xiaomimimo.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+    const grantedOrigins = new Set([
+      'https://chatglm.cn/*',
+      'https://aistudio.xiaomimimo.com/*',
+    ]);
+
+    let dynamicRules = [];
+    chrome.runtime.id = 'panelizeupgradetestid';
+    chrome.runtime.getURL = vi.fn(
+      (path = '') => `chrome-extension://panelizeupgradetestid/${String(path).replace(/^\/+/, '')}`
+    );
+    chrome.declarativeNetRequest = {
+      RuleConditionKeys: { TOP_DOMAINS: 'topDomains' },
+      getDynamicRules: vi.fn(() => Promise.resolve(structuredClone(dynamicRules))),
+      updateDynamicRules: vi.fn(({ removeRuleIds = [], addRules = [] } = {}) => {
+        const removeSet = new Set(removeRuleIds);
+        dynamicRules = [
+          ...dynamicRules.filter(({ id }) => !removeSet.has(id)),
+          ...structuredClone(addRules),
+        ];
+        return Promise.resolve();
+      }),
+      getEnabledRulesets: vi.fn(() => Promise.resolve(['bypass_headers'])),
+      updateEnabledRulesets: vi.fn(() => Promise.resolve()),
+    };
+    chrome.permissions = {
+      contains: vi.fn(({ origins = [] } = {}) =>
+        Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+      ),
+      request: vi.fn(() => Promise.resolve(false)),
+    };
+    chrome.storage.sync.get.mockResolvedValue({
+      enabledProviders: ['chatgpt', 'chatglm', legacyCustomRecord.id],
+    });
+    chrome.storage.local.get.mockResolvedValue({
+      customProviders: [legacyCustomRecord],
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve([
+            {
+              id: 1,
+              priority: 1,
+              action: { type: 'modifyHeaders', responseHeaders: [] },
+              condition: { urlFilter: 'https://chatgpt.com/*', resourceTypes: ['sub_frame'] },
+            },
+          ]),
+      })
+    );
+
+    try {
+      setCustomProviderDescriptors([toCustomProviderDescriptor(legacyCustomRecord)]);
+
+      // Core HTTPS-only grants remain valid for framing, scripts, and Multi-Panel eligibility.
+      await expect(hasOptionalProviderPermission('chatglm')).resolves.toBe(true);
+      await expect(hasOptionalProviderPermission(legacyCustomRecord.id)).resolves.toBe(true);
+      await expect(
+        filterProvidersWithGrantedAccess(['chatgpt', 'chatglm', legacyCustomRecord.id])
+      ).resolves.toEqual(['chatgpt', 'chatglm', legacyCustomRecord.id]);
+
+      // Companion http:// permission is reported separately as not yet granted.
+      await expect(hasOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(false);
+      await expect(
+        hasOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
+      ).resolves.toBe(false);
+
+      // Reconcile preserves both providers' framing rules and content scripts.
+      await reconcileOptionalProviderAccess();
+      expect(chrome.scripting.registerContentScripts).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'chatglm-scripts' }),
+          expect.objectContaining({ id: 'chatglm-cookie-scripts' }),
+          expect.objectContaining({ id: `${legacyCustomRecord.id}-scripts` }),
+          expect.objectContaining({ id: `${legacyCustomRecord.id}-cookie-scripts` }),
+        ])
+      );
+      expect(chrome.declarativeNetRequest.updateDynamicRules).toHaveBeenCalledWith(
+        expect.objectContaining({
+          addRules: expect.arrayContaining([
+            expect.objectContaining({ id: 1003 }),
+            expect.objectContaining({ id: 10000 }),
+          ]),
+        })
+      );
+
+      // Requesting permission asks for core + companion origins, and declining companion
+      // origins does not fail access when the legacy https:// grant is already held.
+      await expect(requestOptionalProviderPermission('chatglm')).resolves.toBe(true);
+      expect(chrome.permissions.request).toHaveBeenCalledWith({
+        origins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+      });
+      await expect(requestOptionalProviderPermission(legacyCustomRecord.id)).resolves.toBe(true);
+      expect(chrome.permissions.request).toHaveBeenCalledWith({
+        origins: [
+          'https://aistudio.xiaomimimo.com/*',
+          'https://*.xiaomimimo.com/*',
+          'http://*.xiaomimimo.com/*',
+        ],
+      });
+
+      // Companion-only opt-in requests only the companion cookie-sync origins and preserves
+      // false when declined, or true once granted.
+      await expect(requestOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(false);
+      expect(chrome.permissions.request).toHaveBeenLastCalledWith({
+        origins: ['http://chatglm.cn/*'],
+      });
+      await expect(
+        requestOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
+      ).resolves.toBe(false);
+      expect(chrome.permissions.request).toHaveBeenLastCalledWith({
+        origins: ['https://*.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*'],
+      });
+
+      // Having only legacy http://aistudio.xiaomimimo.com/* is NOT enough for subdomain
+      // parent-domain companion access.
+      grantedOrigins.add('http://aistudio.xiaomimimo.com/*');
+      await expect(
+        hasOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
+      ).resolves.toBe(false);
+
+      // Once companion origins are granted, companion checks flip to true.
+      grantedOrigins.add('http://chatglm.cn/*');
+      grantedOrigins.add('https://*.xiaomimimo.com/*');
+      grantedOrigins.add('http://*.xiaomimimo.com/*');
+      await expect(hasOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(true);
+      await expect(
+        hasOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
+      ).resolves.toBe(true);
+      await expect(requestOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(true);
+    } finally {
+      setCustomProviderDescriptors([]);
+      globalThis.fetch = originalFetch;
+    }
   });
 });

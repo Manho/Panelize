@@ -225,6 +225,206 @@ function isOriginMatchPattern(pattern) {
   return isExactHttpOrigin(originPart);
 }
 
+const LOCAL_OR_INTERNAL_TLDS = new Set([
+  'localhost',
+  'local',
+  'localdomain',
+  'internal',
+  'lan',
+  'arpa',
+  'invalid'
+]);
+
+// Generic second-level labels under any 2-letter ccTLD (e.g. com.co, com.cn,
+// co.uk, ne.jp, org.tw, com.br, com.mx) where eTLD+1 requires 3 labels.
+const GENERIC_CCTLD_SECOND_LEVEL_PATTERN =
+  /^(?:com|co|org|or|net|ne|gov|go|edu|ed|ac|ad|mil|nom|sch|gen|ind|web|id|biz|info|gob|nic|ltd|plc|me)\.[a-z]{2}$/;
+
+// Additional non-generic 2-label ccTLD public suffixes where eTLD+1 requires 3 labels.
+const MULTI_PART_PUBLIC_SUFFIXES = new Set([
+  'gr.jp', 'lg.jp',
+  'asn.au',
+  'idv.hk',
+  'idv.tw',
+  're.kr',
+  'res.in',
+  'govt.nz'
+]);
+
+// Multi-tenant shared hosting and private public suffixes that must never be
+// broadened to a parent wildcard cookie scope.
+const SHARED_HOSTING_PUBLIC_SUFFIXES = [
+  'blogspot.com',
+  'eu.org',
+  'myshopify.com',
+  'wordpress.com',
+  'substack.com',
+  'tumblr.com',
+  'webflow.io',
+  'github.io',
+  'gitlab.io',
+  'bitbucket.io',
+  'pages.dev',
+  'vercel.app',
+  'netlify.app',
+  'workers.dev',
+  'web.app',
+  'firebaseapp.com',
+  'onrender.com',
+  'hf.space',
+  'herokuapp.com',
+  'azurewebsites.net',
+  'azurestaticapps.net',
+  'cloudfront.net',
+  'amazonaws.com',
+  'appspot.com',
+  'storage.googleapis.com',
+  'fly.dev',
+  'railway.app',
+  'replit.app',
+  'repl.co',
+  'glitch.me',
+  'deno.dev',
+  'streamlit.app',
+  'gradio.live',
+  'run.app',
+  'r2.dev',
+  'ngrok.io',
+  'ngrok-free.app',
+  'trycloudflare.com',
+  'surge.sh',
+  'now.sh'
+];
+
+/**
+ * Returns the safe parent registrable domain for a subdomain hostname (e.g.
+ * `aistudio.xiaomimimo.com` -> `xiaomimimo.com`, `app.example.co.uk` ->
+ * `example.co.uk`), or `null` when the hostname is already an apex domain,
+ * an IP literal, `localhost`/local, or under a shared-hosting public suffix.
+ *
+ * @param {string} hostname
+ * @returns {string | null}
+ */
+export function getSafeParentCookieDomain(hostname) {
+  if (typeof hostname !== 'string' || hostname.length === 0) {
+    return null;
+  }
+  const normalized = hostname.toLowerCase();
+  if (!isValidHttpHostname(normalized) || normalized.startsWith('[') || normalized.includes(':')) {
+    return null;
+  }
+  const labels = normalized.split('.');
+  if (labels.length < 3 || labels.some((label) => label.length === 0)) {
+    return null;
+  }
+  const tld = labels[labels.length - 1];
+  // Reject IPv4 literals (all-numeric final label) and local/internal TLDs.
+  if (/^\d+$/.test(tld) || LOCAL_OR_INTERNAL_TLDS.has(tld)) {
+    return null;
+  }
+  for (const suffix of SHARED_HOSTING_PUBLIC_SUFFIXES) {
+    if (normalized === suffix || normalized.endsWith(`.${suffix}`)) {
+      return null;
+    }
+  }
+  const lastTwo = labels.slice(-2).join('.');
+  const isMultiPartSuffix =
+    MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo) || GENERIC_CCTLD_SECOND_LEVEL_PATTERN.test(lastTwo);
+  let candidateParent;
+  if (isMultiPartSuffix) {
+    if (labels.length <= 3) {
+      return null;
+    }
+    candidateParent = labels.slice(-3).join('.');
+  } else {
+    candidateParent = lastTwo;
+  }
+  // Fail closed for country-specific Blogger/Blogspot public suffixes (blogspot.*).
+  if (candidateParent.startsWith('blogspot.')) {
+    return null;
+  }
+  return candidateParent;
+}
+
+/**
+ * Returns additional optional host permission patterns needed alongside a
+ * provider's core HTTPS embedding permission so `chrome.cookies` can read
+ * non-Secure first-party cookies (including parent-domain cookies such as
+ * `.xiaomimimo.com` on subdomain HTTPS providers) and mirror/expire them in
+ * the extension's CHIPS partition.
+ *
+ * Keeping these separate from `descriptor.permissionOrigins` ensures existing
+ * users with legacy HTTPS-only grants never lose framing rules, content
+ * scripts, or Multi-Panel eligibility on upgrade.
+ *
+ * @param {string} origin
+ * @returns {string[]}
+ */
+export function getCompanionCookiePermissionOrigins(origin) {
+  if (!isExactHttpOrigin(origin)) {
+    return [];
+  }
+  const parsed = new URL(origin);
+  if (parsed.protocol !== 'https:') {
+    return [];
+  }
+  const parentDomain = getSafeParentCookieDomain(parsed.hostname);
+  if (parentDomain) {
+    return [
+      `https://*.${parentDomain}/*`,
+      `http://*.${parentDomain}/*`
+    ];
+  }
+  const patterns = [];
+  if (parsed.port !== '') {
+    patterns.push(`https://${parsed.hostname}/*`);
+  }
+  patterns.push(`http://${parsed.hostname}/*`);
+  return patterns;
+}
+
+/**
+ * Returns companion optional cookie-sync permission origins for a provider
+ * descriptor (Zhipu and HTTPS custom web providers), or an empty array for
+ * providers that do not use embedded-frame cookie mirroring.
+ *
+ * @param {object | null | undefined} descriptor
+ * @returns {string[]}
+ */
+export function getProviderCompanionCookieOrigins(descriptor) {
+  if (!descriptor || typeof descriptor !== 'object') {
+    return [];
+  }
+  if (
+    descriptor.id === 'chatglm' ||
+    (descriptor.access === 'custom' && descriptor.customKind !== 'api')
+  ) {
+    return getCompanionCookiePermissionOrigins(descriptor.frameOrigins?.[0]);
+  }
+  return [];
+}
+
+/**
+ * Returns the full deduplicated list of optional host permission origins to
+ * request when enabling/adding a provider (core required `permissionOrigins`
+ * plus any companion cookie-sync origins).
+ *
+ * @param {object | null | undefined} descriptor
+ * @returns {string[]}
+ */
+export function getProviderRequestPermissionOrigins(descriptor) {
+  const origins = [];
+  for (const pattern of [
+    ...(Array.isArray(descriptor?.permissionOrigins) ? descriptor.permissionOrigins : []),
+    ...getProviderCompanionCookieOrigins(descriptor)
+  ]) {
+    if (typeof pattern === 'string' && pattern.length > 0 && !origins.includes(pattern)) {
+      origins.push(pattern);
+    }
+  }
+  return origins;
+}
+
 /**
  * Validates one provider descriptor and returns a list of human-readable errors.
  * An empty array means the descriptor is valid.
