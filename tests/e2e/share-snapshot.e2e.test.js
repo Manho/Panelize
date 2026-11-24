@@ -1572,6 +1572,12 @@ test('Full answers keeps only what joins up when a page jumps to its bottom', as
     expect(chatgpt.length).toBeGreaterThan(0);
     expect(chatgpt.length).toBeLessThan(expected.length);
     expect(chatgpt).toEqual(expected.slice(0, chatgpt.length));
+    // Below where it stopped, the page background continues, not a slab of
+    // the block it was cut in, wherever the cut lands.
+    const scale = getPreviewScale(full);
+    (await readConversationRuns(page, full, 0)).filter(run => run.name.startsWith('block')).forEach(run => {
+      expect(run.length, `${run.name} of ChatGPT`).toBeLessThanOrEqual((CONVERSATION_COLORS.blockHeight + 3) * scale);
+    });
     expect(blockNames(await readConversationRuns(page, full, 1))).toEqual(expected);
   } finally {
     await extension.close();

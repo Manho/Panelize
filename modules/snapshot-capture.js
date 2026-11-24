@@ -335,14 +335,20 @@ function cropPageRect(frame, rect, scale, height = Math.max(1, Math.round(rect.h
   );
 }
 
-function sampleFillColor(bitmap) {
+/**
+ * Dominant color of a band at the bottom (default) or top of `bitmap`.
+ * @param {ImageBitmap | null | undefined} bitmap
+ * @param {{edge?: 'top' | 'bottom'}} [options]
+ */
+function sampleFillColor(bitmap, { edge = 'bottom' } = {}) {
   if (!bitmap) {
     return null;
   }
   const height = Math.min(bitmap.height, FILL_SAMPLE_HEIGHT);
   const canvas = createCanvas(bitmap.width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, bitmap.height - height, bitmap.width, height, 0, 0, bitmap.width, height);
+  const sourceTop = edge === 'top' ? 0 : bitmap.height - height;
+  ctx.drawImage(bitmap, 0, sourceTop, bitmap.width, height, 0, 0, bitmap.width, height);
   return getDominantColor(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
 }
 
@@ -730,6 +736,23 @@ function getStitchedCellHeight(cell) {
   return cell.headHeight + content;
 }
 
+/**
+ * Background to continue below a cell's stitched answer. An answer that
+ * reached its end finishes on page background. One that stopped short (the
+ * page stopped scrolling or answering) ends mid-content, where the bottom
+ * would repeat the color of whatever block it was cut in, so the top of its
+ * first screen, where the latest turn starts, is sampled instead.
+ */
+function getCellFillColor(cell) {
+  const first = cell.segments[0];
+  const last = cell.segments[cell.segments.length - 1];
+  const stoppedShort = Boolean(cell.interrupted || cell.track?.stalled);
+  if (stoppedShort && first) {
+    return sampleFillColor(first.bitmap, { edge: 'top' });
+  }
+  return sampleFillColor(last?.bitmap || cell.head);
+}
+
 function drawStitchedGrid({ cells, rows, area, scale, budget, grid }) {
   // Fit what was actually captured, which can differ from the estimate.
   const rowBudget = budget - STITCH_GRID_PADDING * 2 - STITCH_GRID_GAP * Math.max(0, rows.length - 1);
@@ -770,13 +793,12 @@ function drawStitchedGrid({ cells, rows, area, scale, budget, grid }) {
       const y = px(placed.y);
       const width = px(placed.width);
       const height = px(placed.height);
-      const lastSegment = cell.segments[cell.segments.length - 1];
       ctx.save();
       ctx.beginPath();
       ctx.rect(x, y, width, height);
       ctx.clip();
       // Below shorter answers, continue the page's own background.
-      ctx.fillStyle = sampleFillColor(lastSegment?.bitmap || cell.head) || '#ffffff';
+      ctx.fillStyle = getCellFillColor(cell) || '#ffffff';
       ctx.fillRect(x, y, width, height);
       if (cell.head) {
         ctx.drawImage(cell.head, x, y, width, px(cell.headHeight));
