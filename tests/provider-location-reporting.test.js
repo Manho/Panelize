@@ -90,3 +90,101 @@ describe('provider location reporting content script', () => {
     }));
   });
 });
+
+describe('postToMultiPanelHost frame-origin guard', () => {
+  function runInFrame({ url = 'https://gemini.google.com/u/1/app', topLevel = false, nested = false, ancestorOrigins, parentLocationOrigin } = {}) {
+    const frame = new Window({ url });
+    frame.chrome = globalThis.chrome;
+    const postMessageSpy = vi.fn();
+
+    if (topLevel) {
+      // Standalone top-level browser tab: window.parent === window && window.top === window
+      frame.postMessage = postMessageSpy;
+      if (ancestorOrigins !== undefined) {
+        Object.defineProperty(frame.location, 'ancestorOrigins', {
+          configurable: true,
+          value: ancestorOrigins,
+        });
+      }
+    } else {
+      const parentWin = { postMessage: postMessageSpy };
+      if (parentLocationOrigin !== undefined) {
+        parentWin.location = { origin: parentLocationOrigin };
+      }
+      const topWin = nested ? { postMessage: vi.fn() } : parentWin;
+      Object.defineProperty(frame, 'parent', { configurable: true, value: parentWin });
+      Object.defineProperty(frame, 'top', { configurable: true, value: topWin });
+      if (ancestorOrigins !== undefined) {
+        Object.defineProperty(frame.location, 'ancestorOrigins', {
+          configurable: true,
+          value: ancestorOrigins,
+        });
+      }
+    }
+
+    frame.eval(contentScriptSource);
+    return { frame, postMessageSpy };
+  }
+
+  it('skips postMessage in a standalone top-level provider tab', () => {
+    const { postMessageSpy } = runInFrame({
+      url: 'https://gemini.google.com/u/1/app',
+      topLevel: true,
+      ancestorOrigins: [],
+    });
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips postMessage when framed inside a standalone provider tab (non-extension ancestorOrigins)', () => {
+    const { postMessageSpy } = runInFrame({
+      url: 'https://gemini.google.com/u/1/app',
+      ancestorOrigins: ['https://gemini.google.com'],
+    });
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips postMessage in a nested grandchild iframe inside Multi-Panel', () => {
+    const { postMessageSpy } = runInFrame({
+      url: 'https://gemini.google.com/u/1/app',
+      nested: true,
+      ancestorOrigins: ['https://gemini.google.com', EXTENSION_ORIGIN],
+    });
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips postMessage when framed by a different extension origin', () => {
+    const { postMessageSpy } = runInFrame({
+      url: 'https://gemini.google.com/u/1/app',
+      ancestorOrigins: ['chrome-extension://different-extension-id'],
+    });
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips postMessage when ancestorOrigins is unavailable and parent is same-origin web page', () => {
+    const { postMessageSpy } = runInFrame({
+      url: 'https://gemini.google.com/u/1/app',
+      parentLocationOrigin: 'https://gemini.google.com',
+    });
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('posts to EXTENSION_ORIGIN when directly embedded by the Multi-Panel host', () => {
+    const { postMessageSpy } = runInFrame({
+      url: 'https://gemini.google.com/u/1/app',
+      ancestorOrigins: [EXTENSION_ORIGIN],
+    });
+
+    const reports = getLocationReports(postMessageSpy);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      provider: 'gemini',
+      url: 'https://gemini.google.com/u/1/app',
+    });
+    expect(postMessageSpy.mock.calls.every(call => call[1] === EXTENSION_ORIGIN)).toBe(true);
+  });
+});
