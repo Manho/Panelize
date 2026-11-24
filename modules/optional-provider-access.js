@@ -139,6 +139,25 @@ export async function hasOptionalProviderCompanionCookiePermission(providerId) {
   }
 }
 
+export function requestOptionalProviderCompanionCookiePermission(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  const companionOrigins = getProviderCompanionCookieOrigins(descriptor);
+  if (companionOrigins.length === 0) {
+    return Promise.resolve(true);
+  }
+  if (!chrome.permissions?.request) {
+    return Promise.resolve(false);
+  }
+  return Promise.resolve(chrome.permissions.request({ origins: companionOrigins })).then(
+    async (granted) => {
+      if (granted) {
+        return true;
+      }
+      return hasOptionalProviderCompanionCookiePermission(providerId);
+    }
+  );
+}
+
 export function requestOptionalProviderPermission(providerId) {
   const descriptor = getProviderDescriptor(providerId);
   if (descriptor?.access === 'custom') {

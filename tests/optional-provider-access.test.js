@@ -6,6 +6,7 @@ import {
   hasOptionalProviderCompanionCookiePermission,
   hasOptionalProviderPermission,
   reconcileOptionalProviderAccess,
+  requestOptionalProviderCompanionCookiePermission,
   requestOptionalProviderPermission,
   syncOptionalProviderAccess,
 } from '../modules/optional-provider-access.js';
@@ -467,6 +468,19 @@ describe('optional provider access', () => {
         origins: ['https://aistudio.xiaomimimo.com/*', 'http://aistudio.xiaomimimo.com/*'],
       });
 
+      // Companion-only opt-in requests only the companion http:// origin and preserves
+      // false when declined, or true once granted.
+      await expect(requestOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(false);
+      expect(chrome.permissions.request).toHaveBeenLastCalledWith({
+        origins: ['http://chatglm.cn/*'],
+      });
+      await expect(
+        requestOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
+      ).resolves.toBe(false);
+      expect(chrome.permissions.request).toHaveBeenLastCalledWith({
+        origins: ['http://aistudio.xiaomimimo.com/*'],
+      });
+
       // Once companion http:// is granted, companion checks flip to true.
       grantedOrigins.add('http://chatglm.cn/*');
       grantedOrigins.add('http://aistudio.xiaomimimo.com/*');
@@ -474,6 +488,7 @@ describe('optional provider access', () => {
       await expect(
         hasOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
       ).resolves.toBe(true);
+      await expect(requestOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(true);
     } finally {
       setCustomProviderDescriptors([]);
       globalThis.fetch = originalFetch;

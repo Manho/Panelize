@@ -40,7 +40,9 @@ import {
 } from '../modules/provider-order.js';
 import {
   OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION,
+  hasOptionalProviderCompanionCookiePermission,
   hasOptionalProviderPermission,
+  requestOptionalProviderCompanionCookiePermission,
   requestOptionalProviderPermission,
   supportsScopedFrameRules
 } from '../modules/optional-provider-access.js';
@@ -3051,7 +3053,7 @@ function createCustomProviderDeleteControlElement(provider) {
 
 function createProviderListItemElement(
   provider,
-  { isEnabledPreference, hasAccess, googleProviderMode, descriptor }
+  { isEnabledPreference, hasAccess, hasCompanionCookieAccess = true, googleProviderMode, descriptor }
 ) {
   const isCustom = descriptor?.access === 'custom';
   const isEnabled = isEnabledPreference && hasAccess;
@@ -3067,6 +3069,7 @@ function createProviderListItemElement(
   item.dataset.providerId = provider.id;
   item.dataset.enabledPreference = String(isEnabledPreference);
   item.dataset.hasAccess = String(hasAccess);
+  item.dataset.hasCompanionCookieAccess = String(hasCompanionCookieAccess);
   if (isCustom) {
     item.dataset.customProvider = 'true';
     if (isRowEditing) {
@@ -3161,7 +3164,10 @@ export async function renderProviderList() {
   const scopedRulesSupported = supportsScopedFrameRules();
   const providerAccessEntries = await Promise.all(providers.map(async (provider) => [
     provider.id,
-    await hasOptionalProviderPermission(provider.id)
+    {
+      hasAccess: await hasOptionalProviderPermission(provider.id),
+      hasCompanionCookieAccess: await hasOptionalProviderCompanionCookiePermission(provider.id)
+    }
   ]));
   const providerAccess = new Map(providerAccessEntries);
 
@@ -3196,10 +3202,13 @@ export async function renderProviderList() {
   const providerItems = sortedProviders.map((provider) => {
     const descriptor = getProviderDescriptor(provider.id);
     const isCustom = descriptor?.access === 'custom';
-    const rawAccess = providerAccess.get(provider.id) !== false;
+    const accessState = providerAccess.get(provider.id);
+    const rawAccess = accessState?.hasAccess !== false;
+    const hasCompanionCookieAccess = accessState?.hasCompanionCookieAccess !== false;
     return createProviderListItemElement(provider, {
       isEnabledPreference: enabledProviders.includes(provider.id),
       hasAccess: isCustom ? (scopedRulesSupported && rawAccess) : rawAccess,
+      hasCompanionCookieAccess,
       googleProviderMode,
       descriptor
     });
@@ -3252,6 +3261,7 @@ export async function renderProviderList() {
       const descriptor = getProviderDescriptor(providerId);
       const isCustom = descriptor?.access === 'custom';
       const hasAccess = providerItem?.dataset.hasAccess !== 'false';
+      const hasCompanionCookieAccess = providerItem?.dataset.hasCompanionCookieAccess !== 'false';
       const isEnabledPreference = providerItem?.dataset.enabledPreference === 'true';
 
       if (isCustom && !supportsScopedFrameRules() && (!isEnabledPreference || !hasAccess)) {
@@ -3259,22 +3269,35 @@ export async function renderProviderList() {
         return;
       }
 
-      if (!hasAccess && (provider?.optionalOrigins || isCustom)) {
+      // Legacy HTTPS-only users enabling a provider with companion http://
+      // cookie-mirroring origins get a synchronous user-gesture opt-in prompt.
+      // Declining preserves legacy HTTPS-only embedding without blocking enable.
+      const needsCompanionCookieOptIn =
+        hasAccess &&
+        !isEnabledPreference &&
+        !hasCompanionCookieAccess &&
+        getProviderCompanionCookieOrigins(descriptor).length > 0;
+
+      if ((!hasAccess && (provider?.optionalOrigins || isCustom)) || needsCompanionCookieOptIn) {
         try {
-          const permissionGranted = await requestOptionalProviderPermission(providerId);
-          if (!permissionGranted) {
+          const permissionGranted = needsCompanionCookieOptIn
+            ? await requestOptionalProviderCompanionCookiePermission(providerId)
+            : await requestOptionalProviderPermission(providerId);
+          if (!needsCompanionCookieOptIn && !permissionGranted) {
             showStatus('error', t('msgProviderPermissionRequired', provider.name));
             return;
           }
         } catch (error) {
           console.error(`Failed to request site access for ${providerId}:`, error);
-          showStatus('error', t('msgProviderPermissionRequestFailed', provider.name));
-          return;
+          if (!needsCompanionCookieOptIn) {
+            showStatus('error', t('msgProviderPermissionRequestFailed', provider.name));
+            return;
+          }
         }
 
         // A synced preference can already be enabled while this device still
         // needs permission. Granting access should activate it, not toggle it off.
-        if (isEnabledPreference) {
+        if (!needsCompanionCookieOptIn && isEnabledPreference) {
           await renderProviderList();
           showStatus('success', t('msgProviderSettingsUpdated'));
           return;

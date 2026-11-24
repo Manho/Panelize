@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CUSTOM_PROVIDERS_STORAGE_KEY,
@@ -11,7 +13,9 @@ import {
   computeCookieValueDigest,
   cookieMatchesHostname,
   createEmbeddedFrameCookieReconcileScheduler,
+  getEmbeddedFrameCookieSyncOrigin,
   getExtensionPartitionKey,
+  hasPendingEmbeddedCookieCleanupForProvider,
   isEmbeddedFrameTopLevelCookieChange,
   reconcileEmbeddedFrameCookies,
   requiresEmbeddedFrameCookieSync,
@@ -89,6 +93,10 @@ function installStatefulCookieEnv({
         return false;
       }
     } else if (cookie.partitionKey) {
+      return false;
+    }
+
+    if (filter.storeId && (cookie.storeId || '0') !== filter.storeId) {
       return false;
     }
 
@@ -189,6 +197,12 @@ function installStatefulCookieEnv({
           )
       );
 
+      // Match Chromium CookieMonster behavior: an expirationDate in the past expires
+      // only that exact canonical cookie and resolves to null without inserting it.
+      if (typeof details.expirationDate === 'number' && details.expirationDate * 1000 <= Date.now()) {
+        return Promise.resolve(null);
+      }
+
       const saved = {
         name: details.name,
         value: details.value,
@@ -214,6 +228,10 @@ function installStatefulCookieEnv({
       state.cookies.push(saved);
       return Promise.resolve(structuredClone(saved));
     }),
+    // Match Chromium's real CookieDeletionInfo bug (cookies_api.cc:747 ->
+    // cookie_deletion_info.cc:114 -> cookie_monster.cc:951): chrome.cookies.remove
+    // with partitionKey leaves partitioned_state_only unset, so it ALSO deletes
+    // matching unpartitioned cookies and any same-name cookies whose path prefixes url.
     remove: vi.fn((details) => {
       if (!hasHostAccessForUrl(details.url)) {
         return Promise.reject(new Error(`No host permissions for cookies at url: ${details.url}`));
@@ -221,15 +239,19 @@ function installStatefulCookieEnv({
       const parsedUrl = new URL(details.url);
       const partitionTop = details.partitionKey?.topLevelSite || null;
       const before = state.cookies.length;
-      state.cookies = state.cookies.filter(
-        (existing) =>
-          !(
-            existing.name === details.name &&
-            cookieMatchesHostname(existing.domain, Boolean(existing.hostOnly), parsedUrl.hostname) &&
-            (existing.path || '/') === (parsedUrl.pathname || '/') &&
-            (existing.partitionKey?.topLevelSite || null) === partitionTop
-          )
-      );
+      state.cookies = state.cookies.filter((existing) => {
+        const existingPartition = existing.partitionKey?.topLevelSite || null;
+        const partitionMatches =
+          existingPartition === partitionTop || (partitionTop !== null && existingPartition === null);
+        const existingPath = existing.path || '/';
+        const pathMatches = (parsedUrl.pathname || '/').startsWith(existingPath);
+        return !(
+          existing.name === details.name &&
+          cookieMatchesHostname(existing.domain, Boolean(existing.hostOnly), parsedUrl.hostname) &&
+          pathMatches &&
+          partitionMatches
+        );
+      });
       if (state.cookies.length === before) {
         return Promise.resolve(null);
       }
@@ -738,9 +760,9 @@ describe('modules/embedded-frame-cookies.js', () => {
     ).toBe('session-B-panel-rotated');
     expect(state.localStorage[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]).toEqual({});
 
-    // 5. Re-establish mirrored session-A -> panel rotates to session-B -> top-level actively logs
-    //    into brand-new session-C (new digest != last mirrored digest) -> mirrors session-C!
-    state.cookies = state.cookies.filter((c) => !c.partitionKey);
+    // 5. Re-establish mirrored session-A -> when panel STILL holds mirrored session-A and
+    //    top-level actively changes to session-C -> mirrors session-C.
+    state.cookies = [];
     state.cookies.push({
       name: 'xiaomichatbot_ph',
       value: 'session-A',
@@ -753,11 +775,6 @@ describe('modules/embedded-frame-cookies.js', () => {
       storeId: '0',
     });
     await reconcileEmbeddedFrameCookies();
-    state.cookies = state.cookies.map((c) =>
-      c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE && c.name === 'xiaomichatbot_ph'
-        ? { ...c, value: 'session-B-panel-rotated' }
-        : c
-    );
     state.cookies = state.cookies.map((c) =>
       !c.partitionKey && c.name === 'xiaomichatbot_ph'
         ? { ...c, value: 'session-C-top-new-account' }
@@ -781,6 +798,269 @@ describe('modules/embedded-frame-cookies.js', () => {
         computeCookieValueDigest('session-C-top-new-account'),
       ]),
     ]);
+
+    // 6. If panel now diverges to session-D while top-level changes to session-E, panel-owned
+    //    session-D is still preserved and mirror tracking is relinquished.
+    state.cookies = state.cookies.map((c) =>
+      c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE && c.name === 'xiaomichatbot_ph'
+        ? { ...c, value: 'session-D-panel-owned' }
+        : c
+    );
+    state.cookies = state.cookies.map((c) =>
+      !c.partitionKey && c.name === 'xiaomichatbot_ph'
+        ? { ...c, value: 'session-E-top-refreshed' }
+        : c
+    );
+    chrome.cookies.set.mockClear();
+    await reconcileEmbeddedFrameCookies();
+    expect(chrome.cookies.set).not.toHaveBeenCalled();
+    expect(
+      state.cookies.find(
+        (c) => c.name === 'xiaomichatbot_ph' && c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )?.value
+    ).toBe('session-D-panel-owned');
+    expect(state.localStorage[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]).toEqual({});
+  });
+
+  it('never overwrites or adopts pre-existing panel-owned cookies when mirror tracking storage is empty (upgrade / fresh storage)', async () => {
+    // Case A: empty tracking + pre-existing panel cookie B != top-level A -> preserve B untouched
+    const stateA = installStatefulCookieEnv({
+      enabledProviders: ['chatglm'],
+      grantedOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+      initialMirrored: {},
+      initialCookies: [
+        {
+          name: 'chatglm_token',
+          value: 'top-level-A',
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+          storeId: '0',
+        },
+        {
+          name: 'chatglm_token',
+          value: 'panel-owned-B',
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'no_restriction',
+          storeId: '0',
+          partitionKey: { topLevelSite: EXTENSION_TOP_SITE, hasCrossSiteAncestor: true },
+        },
+      ],
+    });
+
+    await reconcileEmbeddedFrameCookies();
+    expect(chrome.cookies.set).not.toHaveBeenCalled();
+    expect(
+      stateA.cookies.find(
+        (c) => c.name === 'chatglm_token' && c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )?.value
+    ).toBe('panel-owned-B');
+    expect(stateA.localStorage[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]).toEqual({});
+
+    // Case B: empty tracking + pre-existing panel cookie A == top-level A -> do NOT adopt ownership,
+    // so a subsequent top-level logout does NOT delete the panel-owned cookie!
+    const stateB = installStatefulCookieEnv({
+      enabledProviders: ['chatglm'],
+      grantedOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+      initialMirrored: {},
+      initialCookies: [
+        {
+          name: 'chatglm_token',
+          value: 'shared-value-A',
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+          storeId: '0',
+        },
+        {
+          name: 'chatglm_token',
+          value: 'shared-value-A',
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'no_restriction',
+          storeId: '0',
+          partitionKey: { topLevelSite: EXTENSION_TOP_SITE, hasCrossSiteAncestor: true },
+        },
+      ],
+    });
+
+    await reconcileEmbeddedFrameCookies();
+    expect(chrome.cookies.set).not.toHaveBeenCalled();
+    expect(stateB.localStorage[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]).toEqual({});
+
+    // Top-level logs out -> pre-existing panel cookie A MUST survive because we never wrote/adopted it
+    stateB.cookies = stateB.cookies.filter(
+      (c) => !(c.name === 'chatglm_token' && !c.partitionKey)
+    );
+    await reconcileEmbeddedFrameCookies();
+    expect(chrome.cookies.set).not.toHaveBeenCalled();
+    expect(chrome.cookies.remove).not.toHaveBeenCalled();
+    expect(
+      stateB.cookies.find(
+        (c) => c.name === 'chatglm_token' && c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )?.value
+    ).toBe('shared-value-A');
+  });
+
+  it('expires mirrored CHIPS cookies via exact-identity cookies.set (never cookies.remove), preserving top-level cookies, other-path cookies, and hostOnly vs domain distinctions', async () => {
+    const state = installStatefulCookieEnv({
+      enabledProviders: ['chatglm'],
+      grantedOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+      initialCookies: [
+        // Host-only top-level cookie at /chat
+        {
+          name: 'chatglm_token',
+          value: 'host-chat-token',
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/chat',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+          storeId: '0',
+        },
+        // Domain-scoped top-level cookie at /
+        {
+          name: 'chatglm_domain_cookie',
+          value: 'domain-root-token',
+          domain: '.chatglm.cn',
+          hostOnly: false,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+          storeId: '0',
+        },
+        // Pre-existing panel-only CHIPS cookie with same name on parent path '/' (must NOT be touched!)
+        {
+          name: 'chatglm_token',
+          value: 'panel-root-path-session',
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'no_restriction',
+          storeId: '0',
+          partitionKey: { topLevelSite: EXTENSION_TOP_SITE, hasCrossSiteAncestor: true },
+        },
+      ],
+    });
+
+    await reconcileEmbeddedFrameCookies();
+
+    // Verify both host-only (/chat) and domain-scoped (.chatglm.cn /) mirrors were created
+    expect(
+      state.cookies.find(
+        (c) =>
+          c.name === 'chatglm_token' &&
+          c.path === '/chat' &&
+          c.hostOnly === true &&
+          c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )?.value
+    ).toBe('host-chat-token');
+    expect(
+      state.cookies.find(
+        (c) =>
+          c.name === 'chatglm_domain_cookie' &&
+          c.domain === '.chatglm.cn' &&
+          c.hostOnly === false &&
+          c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )?.value
+    ).toBe('domain-root-token');
+
+    // Disable provider while top-level cookies are STILL present -> cleanup runs!
+    chrome.cookies.set.mockClear();
+    chrome.cookies.remove.mockClear();
+    state.enabledProviders = [];
+    const cleanupResult = await reconcileEmbeddedFrameCookies();
+    expect(cleanupResult).toEqual({
+      ok: true,
+      success: true,
+      hasPendingCleanup: false,
+      pendingCleanupCount: 0,
+      pendingCleanupsByOrigin: {},
+    });
+
+    // CRITICAL: chrome.cookies.remove MUST NEVER be called (Chromium bug deletes top-level cookies!)
+    expect(chrome.cookies.remove).not.toHaveBeenCalled();
+
+    // Verify exact-identity expiration calls: hostOnly omits domain, domain cookie passes domain
+    const expireCalls = chrome.cookies.set.mock.calls.map(([details]) => details);
+    expect(expireCalls).toHaveLength(2);
+    const hostExpire = expireCalls.find((d) => d.name === 'chatglm_token');
+    const domainExpire = expireCalls.find((d) => d.name === 'chatglm_domain_cookie');
+    expect(hostExpire).toMatchObject({
+      url: 'https://chatglm.cn/chat',
+      name: 'chatglm_token',
+      value: '',
+      path: '/chat',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'no_restriction',
+      expirationDate: 1,
+      partitionKey: { topLevelSite: EXTENSION_TOP_SITE },
+    });
+    expect('domain' in hostExpire).toBe(false);
+
+    expect(domainExpire).toMatchObject({
+      url: 'https://chatglm.cn/',
+      domain: '.chatglm.cn',
+      name: 'chatglm_domain_cookie',
+      value: '',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'no_restriction',
+      expirationDate: 1,
+      partitionKey: { topLevelSite: EXTENSION_TOP_SITE },
+    });
+
+    // Both mirrored CHIPS cookies are gone
+    expect(
+      state.cookies.some(
+        (c) =>
+          c.name === 'chatglm_token' &&
+          c.path === '/chat' &&
+          c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )
+    ).toBe(false);
+    expect(
+      state.cookies.some(
+        (c) =>
+          c.name === 'chatglm_domain_cookie' &&
+          c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )
+    ).toBe(false);
+
+    // Unpartitioned top-level cookies AND the other-path CHIPS cookie are ALL STILL INTACT!
+    expect(
+      state.cookies.find((c) => c.name === 'chatglm_token' && !c.partitionKey)?.value
+    ).toBe('host-chat-token');
+    expect(
+      state.cookies.find((c) => c.name === 'chatglm_domain_cookie' && !c.partitionKey)?.value
+    ).toBe('domain-root-token');
+    expect(
+      state.cookies.find(
+        (c) =>
+          c.name === 'chatglm_token' &&
+          c.path === '/' &&
+          c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
+      )?.value
+    ).toBe('panel-root-path-session');
   });
 
   it('removes unmodified mirrored CHIPS cookies on top-level logout while preserving panel-only CHIPS consent cookies', async () => {
@@ -831,11 +1111,12 @@ describe('modules/embedded-frame-cookies.js', () => {
         .sort()
     ).toEqual(['cookie_consent_choice', 'xiaomichatbot_ph']);
 
-    // Top-level logout deletes unpartitioned xiaomichatbot_ph; mirror digest still matches -> removed
+    // Top-level logout deletes unpartitioned xiaomichatbot_ph; mirror digest still matches -> expired
     state.cookies = state.cookies.filter(
       (c) => !(c.name === 'xiaomichatbot_ph' && !c.partitionKey)
     );
     await reconcileEmbeddedFrameCookies();
+    expect(chrome.cookies.remove).not.toHaveBeenCalled();
 
     const remainingPartitioned = state.cookies.filter(
       (c) => c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE
@@ -875,9 +1156,16 @@ describe('modules/embedded-frame-cookies.js', () => {
     // 2. User revokes chatglm.cn externally in chrome://extensions while mirror stays in CHIPS
     state.grantedOrigins.delete('https://chatglm.cn/*');
     state.grantedOrigins.delete('http://chatglm.cn/*');
-    await reconcileEmbeddedFrameCookies();
+    const revokeResult = await reconcileEmbeddedFrameCookies();
+    expect(revokeResult).toEqual({
+      ok: false,
+      success: false,
+      hasPendingCleanup: true,
+      pendingCleanupCount: 1,
+      pendingCleanupsByOrigin: { [CHATGLM_ORIGIN]: 1 },
+    });
 
-    // Stale cookie still sits in CHIPS (could not be removed without host permission),
+    // Stale cookie still sits in CHIPS (could not be expired without host permission),
     // and its identity + digest MUST be retained in pendingEmbeddedFrameCookieCleanups!
     expect(
       state.cookies.find(
@@ -904,10 +1192,17 @@ describe('modules/embedded-frame-cookies.js', () => {
     );
 
     // 4. User regrants permission -> reconcile flushes pending cleanup BEFORE panel startup,
-    //    deleting the stale mirrored token cleanly!
+    //    expiring the stale mirrored token cleanly!
     state.grantedOrigins.add('https://chatglm.cn/*');
     state.grantedOrigins.add('http://chatglm.cn/*');
-    await reconcileEmbeddedFrameCookies();
+    const regrantResult = await reconcileEmbeddedFrameCookies();
+    expect(regrantResult).toEqual({
+      ok: true,
+      success: true,
+      hasPendingCleanup: false,
+      pendingCleanupCount: 0,
+      pendingCleanupsByOrigin: {},
+    });
 
     expect(
       state.cookies.some(
@@ -916,8 +1211,8 @@ describe('modules/embedded-frame-cookies.js', () => {
     ).toBe(false);
     expect(state.localStorage[PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY]).toEqual({});
 
-    // 5. Repeat revocation flow when cookies.remove fails transiently, AND verify that if the
-    //    panel cookie changed to a newer value before flush, flush preserves the newer value.
+    // 5. Repeat revocation flow when cookies.set expiration fails transiently, AND verify that
+    //    if the panel cookie changed to a newer value before flush, flush preserves the newer value.
     state.cookies.push({
       name: 'chatglm_token',
       value: userJwt,
@@ -931,10 +1226,17 @@ describe('modules/embedded-frame-cookies.js', () => {
     });
     await reconcileEmbeddedFrameCookies();
 
-    // Disable provider while cookies.remove fails -> retained in pending cleanup
+    // Disable provider while cookies.set expiration fails -> retained in pending cleanup and reports ok: false
     state.enabledProviders = [];
-    chrome.cookies.remove.mockRejectedValueOnce(new Error('Transient remove failure'));
-    await reconcileEmbeddedFrameCookies();
+    chrome.cookies.set.mockRejectedValueOnce(new Error('Transient expire failure'));
+    const failedDisableResult = await reconcileEmbeddedFrameCookies();
+    expect(failedDisableResult).toEqual({
+      ok: false,
+      success: false,
+      hasPendingCleanup: true,
+      pendingCleanupCount: 1,
+      pendingCleanupsByOrigin: { [CHATGLM_ORIGIN]: 1 },
+    });
     expect(
       state.localStorage[PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY][CHATGLM_ORIGIN]
     ).toHaveLength(1);
@@ -945,7 +1247,14 @@ describe('modules/embedded-frame-cookies.js', () => {
         ? { ...c, value: 'fresh-panel-owned-token' }
         : c
     );
-    await reconcileEmbeddedFrameCookies();
+    const settledResult = await reconcileEmbeddedFrameCookies();
+    expect(settledResult).toEqual({
+      ok: true,
+      success: true,
+      hasPendingCleanup: false,
+      pendingCleanupCount: 0,
+      pendingCleanupsByOrigin: {},
+    });
 
     // Pending cleanup settles without deleting the fresh panel-owned token
     expect(
@@ -954,6 +1263,186 @@ describe('modules/embedded-frame-cookies.js', () => {
       )?.value
     ).toBe('fresh-panel-owned-token');
     expect(state.localStorage[PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY]).toEqual({});
+  });
+
+  it('reports ok: false and hasPendingCleanup: true when pending cleanup retry still fails on regrant/startup, and blocks Multi-Panel iframe navigation until cleanup succeeds', async () => {
+    const staleJwt = createJwt({ uid: 'stale-logged-out-user', is_guest: false });
+    const mimoRecord = {
+      id: 'custom-aabbccddee',
+      name: 'Xiaomi MiMo',
+      url: 'https://aistudio.xiaomimimo.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+
+    const state = installStatefulCookieEnv({
+      enabledProviders: ['chatglm', mimoRecord.id],
+      customRecords: [mimoRecord],
+      grantedOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+      initialCookies: [
+        {
+          name: 'chatglm_token',
+          value: staleJwt,
+          domain: 'chatglm.cn',
+          hostOnly: true,
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          sameSite: 'no_restriction',
+          storeId: '0',
+          partitionKey: { topLevelSite: EXTENSION_TOP_SITE, hasCrossSiteAncestor: true },
+        },
+      ],
+      initialPendingCleanups: {
+        [CHATGLM_ORIGIN]: [
+          JSON.stringify([
+            '0',
+            1,
+            'chatglm.cn',
+            '/',
+            'chatglm_token',
+            computeCookieValueDigest(staleJwt),
+          ]),
+        ],
+      },
+    });
+
+    const schedule = createEmbeddedFrameCookieReconcileScheduler(reconcileEmbeddedFrameCookies);
+
+    // Retry fails on regrant/panel startup -> scheduler MUST NOT report ok: true!
+    chrome.cookies.set.mockRejectedValueOnce(new Error('Persistent expire failure'));
+    const failedStartupSync = await schedule();
+    expect(failedStartupSync).toEqual({
+      ok: false,
+      success: false,
+      hasPendingCleanup: true,
+      pendingCleanupCount: 1,
+      pendingCleanupsByOrigin: { [CHATGLM_ORIGIN]: 1 },
+    });
+    expect(getEmbeddedFrameCookieSyncOrigin('chatglm')).toBe(CHATGLM_ORIGIN);
+    expect(hasPendingEmbeddedCookieCleanupForProvider('chatglm', failedStartupSync)).toBe(true);
+    expect(hasPendingEmbeddedCookieCleanupForProvider(mimoRecord.id, failedStartupSync)).toBe(false);
+    expect(
+      hasPendingEmbeddedCookieCleanupForProvider('chatglm', {
+        ok: false,
+        hasPendingCleanup: true,
+        pendingCleanupCount: 1,
+      })
+    ).toBe(true);
+
+    // Now boot real multi-panel/multi-panel.js in jsdom and verify it blocks Zhipu iframe
+    // navigation when sync returns pending cleanup, then loads cleanly once refresh succeeds.
+    const multiPanelHtml = readFileSync(
+      resolve(process.cwd(), 'multi-panel/multi-panel.html'),
+      'utf8'
+    );
+    const bodyHtml = multiPanelHtml
+      .match(/<body[^>]*>([\s\S]*?)<\/body>/i)[1]
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+
+    vi.resetModules();
+    document.body.innerHTML = bodyHtml;
+
+    const cleanupListeners = [];
+    const origWinAdd = window.addEventListener.bind(window);
+    const origWinRemove = window.removeEventListener.bind(window);
+    const origDocAdd = document.addEventListener.bind(document);
+    const origDocRemove = document.removeEventListener.bind(document);
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+      cleanupListeners.push(() => origWinRemove(type, listener, options));
+      return origWinAdd(type, listener, options);
+    });
+    vi.spyOn(document, 'addEventListener').mockImplementation((type, listener, options) => {
+      cleanupListeners.push(() => origDocRemove(type, listener, options));
+      return origDocAdd(type, listener, options);
+    });
+
+    chrome.permissions = {
+      contains: vi.fn(() => Promise.resolve(true)),
+      request: vi.fn(() => Promise.resolve(true)),
+    };
+    chrome.windows = {
+      getCurrent: vi.fn(() => Promise.resolve({ type: 'normal' })),
+      create: vi.fn(() => Promise.resolve({ id: 1 })),
+    };
+    chrome.storage.session = {
+      get: vi.fn(() => Promise.resolve({})),
+      set: vi.fn(() => Promise.resolve()),
+      remove: vi.fn(() => Promise.resolve()),
+    };
+    chrome.storage.local.get.mockImplementation((keys) =>
+      Promise.resolve(
+        typeof keys === 'object' && keys !== null && !Array.isArray(keys) ? { ...keys } : {}
+      )
+    );
+    chrome.storage.local.set.mockResolvedValue();
+    chrome.storage.local.remove.mockResolvedValue();
+    chrome.storage.sync.get.mockImplementation((defaults) =>
+      Promise.resolve({
+        ...(typeof defaults === 'object' && defaults !== null && !Array.isArray(defaults)
+          ? defaults
+          : {}),
+        theme: 'light',
+        language: 'en',
+        multiPanelLayout: '1x1',
+        enabledProviders: ['chatglm'],
+        providerOrder: ['chatglm'],
+        multiPanelProviders: ['chatglm'],
+      })
+    );
+    chrome.storage.sync.set.mockResolvedValue();
+
+    let nextCookieSyncResponse = failedStartupSync;
+    chrome.runtime.sendMessage.mockImplementation((msg, callback) => {
+      const response =
+        msg?.action === EMBEDDED_FRAME_COOKIE_SYNC_ACTION
+          ? nextCookieSyncResponse
+          : { success: true };
+      if (callback) callback(response);
+      return Promise.resolve(response);
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+    );
+
+    try {
+      await import('../multi-panel/multi-panel.js');
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('#panel-grid .panel-item')).toHaveLength(1);
+      });
+
+      const panelEl = document.querySelector('#panel-grid .panel-item');
+      const iframe = panelEl.querySelector('iframe');
+      const loadingEl = panelEl.querySelector('.panel-loading');
+
+      // Iframe MUST NOT navigate to chatglm.cn while pending cleanup remains unresolved
+      expect(iframe.getAttribute('src')).toBeNull();
+      expect(loadingEl.classList.contains('hidden')).toBe(false);
+      expect(loadingEl.dataset.blockedReason).toBe('pending-cookie-cleanup');
+      expect(loadingEl.textContent).toContain('Failed to clear previous');
+
+      // Clicking Refresh once cleanup succeeds clears the blocked state and navigates cleanly
+      nextCookieSyncResponse = {
+        ok: true,
+        success: true,
+        hasPendingCleanup: false,
+        pendingCleanupCount: 0,
+        pendingCleanupsByOrigin: {},
+      };
+      panelEl.querySelector('.refresh-panel-btn').click();
+      await vi.waitFor(() => {
+        expect(iframe.getAttribute('src')).toBe('https://chatglm.cn/');
+      });
+      expect(loadingEl.dataset.blockedReason).toBeUndefined();
+    } finally {
+      for (const cleanup of cleanupListeners.splice(0)) {
+        cleanup();
+      }
+      globalThis.fetch = originalFetch;
+      document.body.innerHTML = '';
+    }
   });
 
   it('coalesces burst reconcile calls in createEmbeddedFrameCookieReconcileScheduler', async () => {

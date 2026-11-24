@@ -32,6 +32,7 @@ import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
 import {
   EMBEDDED_FRAME_COOKIE_SYNC_ACTION,
+  hasPendingEmbeddedCookieCleanupForProvider,
   requiresEmbeddedFrameCookieSync
 } from '../modules/embedded-frame-cookies.js';
 import { OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION } from '../modules/optional-provider-access.js';
@@ -444,15 +445,20 @@ async function requestGrokWebSocketCookieSync() {
 
 async function requestEmbeddedFrameCookieSync() {
   if (!chrome?.runtime?.sendMessage) {
-    return;
+    return null;
   }
   try {
     const response = await chrome.runtime.sendMessage({ action: EMBEDDED_FRAME_COOKIE_SYNC_ACTION });
-    if (response && response.success === false) {
-      console.warn('[Multi-Panel] Embedded frame cookie sync failed:', response.error);
+    if (response && (response.success === false || response.ok === false)) {
+      console.warn(
+        '[Multi-Panel] Embedded frame cookie sync incomplete:',
+        response.error || `pending cleanups: ${response.pendingCleanupCount || 0}`
+      );
     }
+    return response || null;
   } catch (error) {
     console.warn('[Multi-Panel] Embedded frame cookie sync failed:', error);
+    return null;
   }
 }
 
@@ -677,8 +683,24 @@ function showPanelLoadingState(panelEl, provider) {
     return;
   }
 
+  delete loadingEl.dataset.blockedReason;
   loadingEl.classList.remove('hidden');
   renderPanelLoadingContent(loadingEl, provider, `Loading ${provider.name}...`);
+}
+
+function showPanelPendingCleanupBlockedState(panelEl, provider) {
+  const loadingEl = panelEl?.querySelector('.panel-loading');
+  if (!loadingEl || !provider) {
+    return;
+  }
+
+  loadingEl.classList.remove('hidden');
+  loadingEl.dataset.blockedReason = 'pending-cookie-cleanup';
+  renderPanelLoadingContent(
+    loadingEl,
+    provider,
+    `Failed to clear previous ${provider.name} session cookies. Refresh panel to retry.`
+  );
 }
 
 function reloadPanelIframe(panel, overrideUrl = null, { isRecoveryReload = false } = {}) {
@@ -697,6 +719,7 @@ function reloadPanelIframe(panel, overrideUrl = null, { isRecoveryReload = false
   const nextUrl = overrideUrl || getProviderFrameUrl(panel.providerId);
   showPanelLoadingState(panelEl, provider);
   loadingPanelIds.add(panel.id);
+  panel.state = 'loading';
   panel.currentUrl = null;
   panel.iframe = iframe;
   customSwRecoveryController?.notifyNavigationStart(panel, nextUrl, { isRecoveryReload });
@@ -741,7 +764,16 @@ function bindPanelHeaderActions(panelId) {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
       if (requiresEmbeddedFrameCookieSync(panel.providerId)) {
-        await requestEmbeddedFrameCookieSync();
+        const cookieSyncResult = await requestEmbeddedFrameCookieSync();
+        if (hasPendingEmbeddedCookieCleanupForProvider(panel.providerId, cookieSyncResult)) {
+          panel.state = 'blocked';
+          loadingPanelIds.delete(panel.id);
+          const currentProvider = getProviderById(panel.providerId);
+          if (currentProvider) {
+            showPanelPendingCleanupBlockedState(panelEl, currentProvider);
+          }
+          return;
+        }
       }
       reloadPanelIframe(panel);
     });
@@ -1793,8 +1825,10 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   if (providerId === 'grok') {
     await requestGrokWebSocketCookieSync();
   }
+  let cookieSyncBlocked = false;
   if (requiresEmbeddedFrameCookieSync(providerId)) {
-    await requestEmbeddedFrameCookieSync();
+    const cookieSyncResult = await requestEmbeddedFrameCookieSync();
+    cookieSyncBlocked = hasPendingEmbeddedCookieCleanupForProvider(providerId, cookieSyncResult);
   }
 
   if (panels.length >= MAX_PANELS) {
@@ -1874,20 +1908,22 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
     providerId,
     iframe,
     currentUrl: null,
-    state: 'loading',
+    state: cookieSyncBlocked ? 'blocked' : 'loading',
     pageNeededWidth: 0,
     fit: createPanelFitState()
   };
   panels.push(panel);
-  customSwRecoveryController?.notifyNavigationStart(panel, initialFrameUrl);
 
   // Handle iframe load
   // Grace period after load to catch AI pages that auto-focus after JS init
   const LOAD_GRACE_PERIOD = 3000;
-  loadingPanelIds.add(panelId);
   iframe.addEventListener('load', () => {
     const currentPanel = panels.find(p => p.id === panelId);
+    if (currentPanel?.state === 'blocked') {
+      return;
+    }
     const finishLoad = () => {
+      delete loadingEl.dataset.blockedReason;
       loadingEl.classList.add('hidden');
       const livePanel = panels.find(p => p.id === panelId);
       if (isTemporaryChatModeEnabled && livePanel && requiresTemporaryChatActivationRetry(livePanel.providerId)) {
@@ -1917,9 +1953,17 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
     loadingPanelIds.delete(panelId);
   });
 
-  iframe.setAttribute('src', initialFrameUrl);
-  iframeContainerEl.append(loadingEl, iframe);
-  panelEl.append(headerEl, iframeContainerEl);
+  if (cookieSyncBlocked) {
+    iframeContainerEl.append(loadingEl, iframe);
+    panelEl.append(headerEl, iframeContainerEl);
+    showPanelPendingCleanupBlockedState(panelEl, provider);
+  } else {
+    customSwRecoveryController?.notifyNavigationStart(panel, initialFrameUrl);
+    loadingPanelIds.add(panelId);
+    iframe.setAttribute('src', initialFrameUrl);
+    iframeContainerEl.append(loadingEl, iframe);
+    panelEl.append(headerEl, iframeContainerEl);
+  }
 
   panelGrid.appendChild(panelEl);
   panelFitObserver?.observe(iframe.parentElement);
@@ -2011,8 +2055,10 @@ async function switchPanelProvider(panelId, newProviderId) {
   if (newProviderId === 'grok') {
     await requestGrokWebSocketCookieSync();
   }
+  let cookieSyncBlocked = false;
   if (requiresEmbeddedFrameCookieSync(newProviderId)) {
-    await requestEmbeddedFrameCookieSync();
+    const cookieSyncResult = await requestEmbeddedFrameCookieSync();
+    cookieSyncBlocked = hasPendingEmbeddedCookieCleanupForProvider(newProviderId, cookieSyncResult);
   }
 
   // Update panel header
@@ -2037,7 +2083,16 @@ async function switchPanelProvider(panelId, newProviderId) {
   panel.pageNeededWidth = 0;
   updatePanelFit(panel);
   bindPanelHeaderActions(panelId);
-  reloadPanelIframe(panel);
+  if (cookieSyncBlocked) {
+    panel.state = 'blocked';
+    loadingPanelIds.delete(panelId);
+    if (iframe) {
+      iframe.src = 'about:blank';
+    }
+    showPanelPendingCleanupBlockedState(panelEl, provider);
+  } else {
+    reloadPanelIframe(panel);
+  }
 
   // Update selectors and save
   updatePanelSelectors();

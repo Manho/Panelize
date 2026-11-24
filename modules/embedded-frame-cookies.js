@@ -39,19 +39,44 @@ export function getExtensionPartitionKey() {
   return { topLevelSite: `chrome-extension://${chrome.runtime.id}` };
 }
 
-export function requiresEmbeddedFrameCookieSync(providerId) {
+export function getEmbeddedFrameCookieSyncOrigin(providerId) {
   if (providerId === CHATGLM_PROVIDER_ID) {
-    return true;
+    return CHATGLM_ORIGIN;
   }
   if (!isCustomProviderId(providerId)) {
-    return false;
+    return null;
   }
   const descriptor = getProviderDescriptor(providerId);
-  return Boolean(
+  if (
     descriptor?.access === 'custom' &&
     descriptor.customKind !== 'api' &&
     typeof descriptor.frameOrigins?.[0] === 'string' &&
     descriptor.frameOrigins[0].startsWith('https://')
+  ) {
+    return descriptor.frameOrigins[0];
+  }
+  return null;
+}
+
+export function requiresEmbeddedFrameCookieSync(providerId) {
+  return getEmbeddedFrameCookieSyncOrigin(providerId) !== null;
+}
+
+export function hasPendingEmbeddedCookieCleanupForProvider(providerId, syncResult) {
+  if (!syncResult || typeof syncResult !== 'object') {
+    return false;
+  }
+  const origin = getEmbeddedFrameCookieSyncOrigin(providerId);
+  if (
+    origin &&
+    syncResult.pendingCleanupsByOrigin &&
+    typeof syncResult.pendingCleanupsByOrigin === 'object'
+  ) {
+    return Number(syncResult.pendingCleanupsByOrigin[origin]) > 0;
+  }
+  return Boolean(
+    syncResult.hasPendingCleanup ||
+    (syncResult.ok === false && Number(syncResult.pendingCleanupCount) > 0)
   );
 }
 
@@ -304,29 +329,75 @@ async function setPartitionedMirrorCookie(sourceCookie, hostname, partitionKey) 
   }
 }
 
-async function removePartitionedCookieByKey(serializedKey, hostname, partitionKey) {
-  if (!chrome?.cookies?.remove) {
+/**
+ * Expires one exact CHIPS partitioned cookie via `chrome.cookies.set` instead
+ * of `chrome.cookies.remove`.
+ *
+ * In Chromium, `chrome.cookies.remove({ url, name, partitionKey })` leaves
+ * `partitioned_state_only` unset in `CookieDeletionInfo`, so `CookieMonster`
+ * also visits the unpartitioned store and deletes matching top-level browser
+ * cookies (as well as other same-name cookies whose path prefixes `url`).
+ * Writing an exact-identity expired cookie (`expirationDate: 1`) scoped to the
+ * extension's `partitionKey` only deletes that exact canonical CHIPS cookie.
+ */
+async function expirePartitionedCookieByKey(serializedKey, hostname, partitionKey) {
+  if (!chrome?.cookies?.set || !chrome?.cookies?.getAll) {
     return false;
   }
   const parsed = parseCookieIdentityKey(serializedKey);
   if (!parsed) {
     return false;
   }
-  const cleanHost = hostname || parsed.domain.replace(/^\.+/, '');
+  const cleanHost = parsed.hostOnly
+    ? (parsed.domain || hostname || '').replace(/^\.+/, '')
+    : (hostname || parsed.domain.replace(/^\.+/, ''));
   if (!cleanHost) {
     return false;
   }
+  const normalizedPath = parsed.path.startsWith('/') ? parsed.path : `/${parsed.path}`;
   const details = {
-    url: `https://${cleanHost}${parsed.path}`,
+    url: `https://${cleanHost}${normalizedPath}`,
     name: parsed.name,
+    value: '',
+    path: normalizedPath,
+    secure: true,
+    httpOnly: false,
+    sameSite: 'no_restriction',
+    expirationDate: 1,
     partitionKey
   };
+  if (
+    !parsed.hostOnly &&
+    parsed.domain &&
+    !/^\s*__Host-/i.test(parsed.name)
+  ) {
+    details.domain = parsed.domain;
+  }
   if (parsed.storeId) {
     details.storeId = parsed.storeId;
   }
   try {
-    const removed = await chrome.cookies.remove(details);
-    return Boolean(removed);
+    await chrome.cookies.set(details);
+  } catch {
+    return false;
+  }
+
+  try {
+    const verifyFilter = {
+      url: `https://${cleanHost}${normalizedPath}`,
+      name: parsed.name,
+      partitionKey
+    };
+    if (parsed.storeId) {
+      verifyFilter.storeId = parsed.storeId;
+    }
+    const remaining = await chrome.cookies.getAll(verifyFilter);
+    const stillPresent = (Array.isArray(remaining) ? remaining : []).some(
+      (cookie) =>
+        isSamePartitionKey(cookie.partitionKey, partitionKey) &&
+        cookieIdentityKey(cookie, cleanHost) === parsed.identityKey
+    );
+    return !stillPresent;
   } catch {
     return false;
   }
@@ -470,8 +541,8 @@ async function collectActiveEmbeddedHttpsOrigins(enabledProviderIds, { includeCu
  * Cleans up stale mirrored partitioned cookies for an origin, verifying that
  * host permission is currently held and that each cookie's current digest still
  * matches the last mirrored digest (never deleting fresh panel-owned sessions).
- * Records whose removal cannot be verified (e.g., permission revoked externally
- * or `chrome.cookies.remove` failure) are returned as `remainingPending`.
+ * Records whose expiration cannot be verified (e.g., permission revoked
+ * externally or `chrome.cookies.set` failure) are returned as `remainingPending`.
  */
 async function cleanupStalePartitionedRecords(
   records,
@@ -521,8 +592,8 @@ async function cleanupStalePartitionedRecords(
       // Partitioned cookie was rotated/replaced inside the panel -> preserve panel-owned session.
       continue;
     }
-    const removed = await removePartitionedCookieByKey(record, hostname, partitionKey);
-    if (removed) {
+    const expired = await expirePartitionedCookieByKey(record, hostname, partitionKey);
+    if (expired) {
       removedIdentityKeys.add(parsed.identityKey);
       partByIdentity.delete(parsed.identityKey);
     } else {
@@ -533,14 +604,33 @@ async function cleanupStalePartitionedRecords(
   return { remainingPending, removedIdentityKeys };
 }
 
+function buildReconcileResult(nextPendingCleanups = {}) {
+  const pendingCleanupsByOrigin = {};
+  let pendingCleanupCount = 0;
+  for (const [origin, records] of Object.entries(nextPendingCleanups)) {
+    if (Array.isArray(records) && records.length > 0) {
+      pendingCleanupsByOrigin[origin] = records.length;
+      pendingCleanupCount += records.length;
+    }
+  }
+  const hasPendingCleanup = pendingCleanupCount > 0;
+  return {
+    ok: !hasPendingCleanup,
+    success: !hasPendingCleanup,
+    hasPendingCleanup,
+    pendingCleanupCount,
+    pendingCleanupsByOrigin
+  };
+}
+
 export async function reconcileEmbeddedFrameCookies() {
   if (typeof chrome === 'undefined' || !chrome?.cookies?.getAll || !chrome?.cookies?.set) {
-    return;
+    return buildReconcileResult();
   }
 
   const partitionKey = getExtensionPartitionKey();
   if (!partitionKey) {
-    return;
+    return buildReconcileResult();
   }
 
   const hydration = await loadCustomProviders();
@@ -647,14 +737,17 @@ export async function reconcileEmbeddedFrameCookies() {
       const existingMirrorKey = existingMirror
         ? cookieIdentityKey(existingMirror, hostname)
         : null;
+      const existingMirrorPreviousEntry = existingMirrorKey
+        ? previousByIdentity.get(existingMirrorKey) || null
+        : null;
       const previousEntry =
-        (existingMirrorKey && previousByIdentity.get(existingMirrorKey)) ||
+        existingMirrorPreviousEntry ||
         previousByIdentity.get(exactKey) ||
         previousByIdentity.get(hostFallbackIdentityKey) ||
         null;
 
       const sourceDigest = computeCookieValueDigest(sourceCookie.value);
-      const lastMirroredDigest = previousEntry?.parsed?.valueDigest || null;
+      const lastMirroredDigest = existingMirrorPreviousEntry?.parsed?.valueDigest || null;
       const existingMirrorDigest = existingMirror
         ? computeCookieValueDigest(existingMirror.value)
         : null;
@@ -663,27 +756,27 @@ export async function reconcileEmbeddedFrameCookies() {
         continue;
       }
 
-      // Preserve fresh panel-owned sessions: if the partitioned cookie diverged
-      // from our last mirror while the top-level cookie has not changed, keep
-      // the panel's cookie and retain the last mirrored digest for future checks.
-      if (
-        existingMirror &&
-        lastMirroredDigest !== null &&
-        sourceDigest === lastMirroredDigest &&
-        existingMirrorDigest !== lastMirroredDigest
-      ) {
-        handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
-        nextRecords.push(previousEntry.raw);
-        continue;
-      }
-
-      if (existingMirror && isUpToDatePartitionedMirror(sourceCookie, existingMirror)) {
-        if (previousEntry && previousEntry.parsed.identityKey === existingMirrorKey) {
-          handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
+      if (existingMirror) {
+        // Only maintain or overwrite a pre-existing partitioned cookie when we
+        // already hold a verified mirror record whose digest matches it. When
+        // tracking is empty (e.g., upgrade/fresh storage) or the panel rotated
+        // the cookie to a different value, leave the panel-owned cookie
+        // untouched and never adopt ownership of it.
+        const ownedByMirror =
+          lastMirroredDigest !== null && existingMirrorDigest === lastMirroredDigest;
+        if (!ownedByMirror) {
+          if (existingMirrorPreviousEntry) {
+            handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
+          }
+          continue;
         }
-        nextRecords.push(serializeMirroredCookieRecord(existingMirror, hostname, sourceDigest));
-        overwrittenIdentityKeys.add(existingMirrorKey);
-        continue;
+
+        if (isUpToDatePartitionedMirror(sourceCookie, existingMirror)) {
+          handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
+          nextRecords.push(serializeMirroredCookieRecord(existingMirror, hostname, sourceDigest));
+          overwrittenIdentityKeys.add(existingMirrorKey);
+          continue;
+        }
       }
 
       const written = await setPartitionedMirrorCookie(sourceCookie, hostname, partitionKey);
@@ -694,10 +787,10 @@ export async function reconcileEmbeddedFrameCookies() {
         }
         nextRecords.push(serializeMirroredCookieRecord(written, hostname, sourceDigest));
         overwrittenIdentityKeys.add(writtenIdentityKey);
-      } else if (previousEntry) {
+      } else if (existingMirrorPreviousEntry) {
         // Write failed: do not record the unwritten digest; retain the last verified mirror record.
-        handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
-        nextRecords.push(previousEntry.raw);
+        handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
+        nextRecords.push(existingMirrorPreviousEntry.raw);
       }
     }
 
@@ -778,6 +871,8 @@ export async function reconcileEmbeddedFrameCookies() {
     mirrored: nextMirrored,
     pendingCleanups: nextPendingCleanups
   });
+
+  return buildReconcileResult(nextPendingCleanups);
 }
 
 export function createEmbeddedFrameCookieReconcileScheduler(reconcile, onError = () => {}) {
@@ -795,10 +890,36 @@ export function createEmbeddedFrameCookieReconcileScheduler(reconcile, onError =
         return reconcile();
       })
       .then(
-        () => ({ success: true }),
+        (result) => {
+          if (result && typeof result === 'object') {
+            const pendingCleanupCount =
+              typeof result.pendingCleanupCount === 'number' ? result.pendingCleanupCount : 0;
+            const hasPendingCleanup = Boolean(result.hasPendingCleanup || pendingCleanupCount > 0);
+            const ok = result.ok !== undefined ? Boolean(result.ok) : !hasPendingCleanup;
+            return {
+              ...result,
+              ok,
+              success: result.success !== undefined ? Boolean(result.success) : ok,
+              hasPendingCleanup,
+              pendingCleanupCount,
+              pendingCleanupsByOrigin:
+                result.pendingCleanupsByOrigin && typeof result.pendingCleanupsByOrigin === 'object'
+                  ? result.pendingCleanupsByOrigin
+                  : {}
+            };
+          }
+          return { success: true };
+        },
         (error) => {
           onError(error);
-          return { success: false, error: error?.message || String(error) };
+          return {
+            ok: false,
+            success: false,
+            hasPendingCleanup: false,
+            pendingCleanupCount: 0,
+            pendingCleanupsByOrigin: {},
+            error: error?.message || String(error)
+          };
         }
       );
     tail = pendingRun;

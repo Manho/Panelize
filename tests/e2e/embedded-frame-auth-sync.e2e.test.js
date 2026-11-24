@@ -632,4 +632,166 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
       await server.close();
     }
   });
+
+  test('provider cleanup expires only CHIPS partitioned mirrors and preserves top-level browser login cookies in real Chromium', async () => {
+    const server = await startAuthTlsFixtureServer();
+    const extensionCopy = await createPatchedExtensionCopy((manifest) => {
+      manifest.host_permissions.push(
+        ...OPTIONAL_PROVIDER_CONFIGS.chatglm.origins,
+        `http://${CHATGLM_HOST}/*`,
+        `https://${MIMO_HOST}/*`,
+        `http://${MIMO_HOST}/*`
+      );
+    });
+
+    const hostRules = [
+      `MAP ${CHATGLM_HOST} 127.0.0.1:${server.port}`,
+      `MAP ${MIMO_HOST} 127.0.0.1:${server.port}`,
+    ].join(', ');
+
+    const extension = await launchExtension({
+      extensionPath: extensionCopy.extensionPath,
+      viewport: { width: 1280, height: 800 },
+      args: [
+        '--ignore-certificate-errors',
+        '--proxy-bypass-list=*',
+        `--host-resolver-rules=${hostRules}`,
+      ],
+    });
+
+    try {
+      const pageErrors = [];
+      extension.context.on('page', (p) => p.on('pageerror', (err) => pageErrors.push(err.message)));
+
+      // 1. Log in on top-level browser tabs for both Zhipu and Xiaomi MiMo
+      const zhipuTab = await extension.context.newPage();
+      await zhipuTab.goto(`https://${CHATGLM_HOST}/?doLogin=1`);
+      await expect(zhipuTab.locator('#chatglm-auth-state')).toHaveText(
+        'Logged in: ZhipuLoggedInUser'
+      );
+      await zhipuTab.close();
+
+      const mimoTab = await extension.context.newPage();
+      await mimoTab.goto(`https://${MIMO_HOST}/sts-login`);
+      await expect(mimoTab.locator('#sts-done')).toHaveText('STS Login Complete');
+      await mimoTab.goto(`https://${MIMO_HOST}/`);
+      await expect(mimoTab.locator('#mimo-auth-state')).toHaveText('Logged in: MiMoUser');
+      await mimoTab.close();
+
+      // 2. Register MiMo custom provider and open Multi-Panel so cookies mirror into CHIPS
+      await extension.serviceWorker.evaluate(
+        async ({ customId, ruleId, mimoUrl }) => {
+          await chrome.storage.local.set({
+            customProviders: [
+              {
+                id: customId,
+                name: 'Xiaomi MiMo',
+                url: mimoUrl,
+                frameRuleId: ruleId,
+                createdAt: 1700000000000,
+              },
+            ],
+          });
+        },
+        {
+          customId: CUSTOM_MIMO_ID,
+          ruleId: CUSTOM_MIMO_RULE_ID,
+          mimoUrl: `https://${MIMO_HOST}/`,
+        }
+      );
+
+      const mpPage = await openMultiPanel(extension, {
+        providers: ['chatglm', CUSTOM_MIMO_ID],
+        layout: '1x2',
+      });
+
+      const panelFrames = mpPage.locator('#panel-grid iframe');
+      await expect(panelFrames).toHaveCount(2);
+      await expect(panelFrames.nth(0).contentFrame().locator('#chatglm-auth-state')).toHaveText(
+        'Logged in: ZhipuLoggedInUser'
+      );
+      await expect(panelFrames.nth(1).contentFrame().locator('#mimo-auth-state')).toHaveText(
+        'Logged in: MiMoUser'
+      );
+
+      // Verify CHIPS partitioned mirrors exist before disabling providers
+      const beforeCleanup = await extension.serviceWorker.evaluate(
+        async ({ glmHost, mimoHost }) => {
+          const partitionKey = { topLevelSite: `chrome-extension://${chrome.runtime.id}` };
+          const [glmPart, mimoPart] = await Promise.all([
+            chrome.cookies.getAll({ url: `https://${glmHost}/`, partitionKey }),
+            chrome.cookies.getAll({ url: `https://${mimoHost}/`, partitionKey }),
+          ]);
+          return {
+            glmPartNames: glmPart.map((c) => c.name).sort(),
+            mimoPartNames: mimoPart.map((c) => c.name).sort(),
+          };
+        },
+        { glmHost: CHATGLM_HOST, mimoHost: MIMO_HOST }
+      );
+      expect(beforeCleanup.glmPartNames).toEqual(['chatglm_refresh_token', 'chatglm_token']);
+      expect(beforeCleanup.mimoPartNames).toEqual(['xiaomichatbot_ph']);
+
+      // 3. Disable both providers (keeping host permissions) and trigger cleanup reconciliation
+      await mpPage.evaluate(async () => {
+        await chrome.storage.sync.set({ enabledProviders: ['chatgpt'] });
+        await chrome.runtime.sendMessage({ action: 'syncOptionalProviderAccess' });
+      });
+
+      // 4. Assert (a) CHIPS partitioned mirrors are completely GONE,
+      //    AND (b) unpartitioned top-level browser cookies are STILL PRESENT AND INTACT!
+      const afterCleanup = await extension.serviceWorker.evaluate(
+        async ({ glmHost, mimoHost }) => {
+          const partitionKey = { topLevelSite: `chrome-extension://${chrome.runtime.id}` };
+          const [glmPart, mimoPart, glmTop, mimoTop, stored] = await Promise.all([
+            chrome.cookies.getAll({ url: `https://${glmHost}/`, partitionKey }),
+            chrome.cookies.getAll({ url: `https://${mimoHost}/`, partitionKey }),
+            chrome.cookies.getAll({ url: `https://${glmHost}/` }),
+            chrome.cookies.getAll({ url: `https://${mimoHost}/` }),
+            chrome.storage.local.get([
+              'mirroredEmbeddedFrameCookies',
+              'pendingEmbeddedFrameCookieCleanups',
+            ]),
+          ]);
+          return {
+            glmPartNames: glmPart.map((c) => c.name),
+            mimoPartNames: mimoPart.map((c) => c.name),
+            glmTopNames: glmTop.filter((c) => !c.partitionKey).map((c) => c.name).sort(),
+            mimoTopNames: mimoTop.filter((c) => !c.partitionKey).map((c) => c.name).sort(),
+            mirrored: stored.mirroredEmbeddedFrameCookies || {},
+            pending: stored.pendingEmbeddedFrameCookieCleanups || {},
+          };
+        },
+        { glmHost: CHATGLM_HOST, mimoHost: MIMO_HOST }
+      );
+
+      expect(afterCleanup.glmPartNames).toEqual([]);
+      expect(afterCleanup.mimoPartNames).toEqual([]);
+      expect(afterCleanup.mirrored).toEqual({});
+      expect(afterCleanup.pending).toEqual({});
+      expect(afterCleanup.glmTopNames).toEqual(['chatglm_refresh_token', 'chatglm_token']);
+      expect(afterCleanup.mimoTopNames).toEqual(['serviceToken', 'xiaomichatbot_ph']);
+
+      // 5. Verify in real top-level browser tabs that both sites are STILL logged in!
+      server.observed.chatglmGuestCalls = 0;
+      const verifyZhipuTopTab = await extension.context.newPage();
+      await verifyZhipuTopTab.goto(`https://${CHATGLM_HOST}/`);
+      await expect(verifyZhipuTopTab.locator('#chatglm-auth-state')).toHaveText(
+        'Logged in: ZhipuLoggedInUser'
+      );
+      expect(server.observed.chatglmGuestCalls).toBe(0);
+      await verifyZhipuTopTab.close();
+
+      const verifyMimoTopTab = await extension.context.newPage();
+      await verifyMimoTopTab.goto(`https://${MIMO_HOST}/`);
+      await expect(verifyMimoTopTab.locator('#mimo-auth-state')).toHaveText('Logged in: MiMoUser');
+      await verifyMimoTopTab.close();
+
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await extension.close();
+      await extensionCopy.cleanup();
+      await server.close();
+    }
+  });
 });

@@ -900,4 +900,110 @@ describe('B3.2 custom web providers in Options', () => {
       'permissions.remove:https://migrated-b.example.com/*,http://migrated-b.example.com/*'
     );
   });
+
+  it('lets legacy HTTPS-only Zhipu users opt into companion http://chatglm.cn/* from the provider toggle while keeping Zhipu enabled if declined', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const grantedOrigins = new Set(['https://chatglm.cn/*']);
+    const { areas } = installChromeEnv({
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', 'chatglm'],
+      },
+      grantedOrigins: [...grantedOrigins],
+    });
+
+    chrome.permissions.contains.mockImplementation(({ origins = [] } = {}) =>
+      Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+    );
+    chrome.runtime.sendMessage.mockResolvedValue({ success: true });
+
+    await import('../options/options.js');
+    await vi.waitFor(() => {
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row).not.toBeNull();
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('false');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(true);
+    });
+
+    // 1) Toggling OFF must NOT prompt for companion permission.
+    chrome.permissions.request.mockClear();
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toEqual(['chatgpt']);
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row.dataset.enabledPreference).toBe('false');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(false);
+    });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+
+    // 2) Toggling ON synchronously requests companion http://chatglm.cn/* in the user gesture.
+    //    If declined, Zhipu still becomes enabled with legacy HTTPS-only access.
+    let microtaskTicked = false;
+    let calledSynchronously = false;
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      calledSynchronously = !microtaskTicked;
+      expect(origins).toEqual(['http://chatglm.cn/*']);
+      return Promise.resolve(false);
+    });
+    Promise.resolve().then(() => {
+      microtaskTicked = true;
+    });
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    expect(chrome.permissions.request).toHaveBeenCalledTimes(1);
+    expect(calledSynchronously).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toContain('chatglm');
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row.dataset.enabledPreference).toBe('true');
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('false');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(true);
+    });
+
+    // 3) Toggle OFF then ON again and APPROVE companion grant -> both origins granted,
+    //    syncOptionalProviderAccess activates cookie sync, and companion flag flips to true.
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toEqual(['chatgpt']);
+    });
+
+    chrome.runtime.sendMessage.mockClear();
+    chrome.permissions.request.mockClear();
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      expect(origins).toEqual(['http://chatglm.cn/*']);
+      origins.forEach((origin) => grantedOrigins.add(origin));
+      return Promise.resolve(true);
+    });
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toContain('chatglm');
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('true');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(true);
+    });
+    expect(grantedOrigins.has('https://chatglm.cn/*')).toBe(true);
+    expect(grantedOrigins.has('http://chatglm.cn/*')).toBe(true);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      action: 'syncOptionalProviderAccess',
+    });
+
+    // 4) Once companion permission is granted, toggling OFF then ON does not re-prompt.
+    chrome.permissions.request.mockClear();
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toEqual(['chatgpt']);
+    });
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toContain('chatglm');
+    });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+  });
 });
