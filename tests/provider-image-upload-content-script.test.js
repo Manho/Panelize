@@ -943,4 +943,94 @@ describe('provider image upload adapters', () => {
       succeededImageIds: ['sample-one-id'],
     }, EXTENSION_ORIGIN);
   });
+
+  it('uploads a Gemini Hydrogen image via Upload & tools -> accept-matched hidden-file-input without clicking Open sidebar', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <header>
+        <button
+          id="gemini-sidebar-decoy"
+          type="button"
+          aria-label="Open sidebar"
+          data-test-id="side-nav-sparkle-button"
+        >
+          <mat-icon fonticon="menu"></mat-icon>
+        </button>
+      </header>
+      <input-container>
+        <div class="input-area-container">
+          <div id="gemini-image-previews"></div>
+          <div class="input-area">
+            <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          </div>
+          <uploader>
+            <button id="gemini-upload-tools" type="button" aria-label="Upload & tools">
+              <mat-icon fonticon="add"></mat-icon>
+            </button>
+          </uploader>
+        </div>
+      </input-container>
+    `;
+    const sidebarBtn = document.getElementById('gemini-sidebar-decoy');
+    const uploadToolsBtn = document.getElementById('gemini-upload-tools');
+    [sidebarBtn, uploadToolsBtn].forEach(markVisible);
+
+    const sidebarClickSpy = vi.fn();
+    sidebarBtn.addEventListener('click', sidebarClickSpy);
+    const uploadedImages = [];
+    uploadToolsBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      const imgInput = document.createElement('input');
+      imgInput.type = 'file';
+      imgInput.multiple = true;
+      imgInput.className = 'hidden-file-input ng-star-inserted';
+      imgInput.accept = 'image/*,video/*';
+      imgInput.addEventListener('change', () => {
+        const file = imgInput.files[0];
+        uploadedImages.push(file.name);
+        const preview = document.createElement('uploader-file-preview');
+        preview.className = 'file-preview-chip ng-star-inserted';
+        preview.innerHTML = `<img src="blob:https://gemini.google.com/${encodeURIComponent(file.name)}" />`;
+        document.getElementById('gemini-image-previews').append(preview);
+      });
+      overlay.append(docInput, imgInput);
+      document.body.append(overlay);
+    });
+
+    const onEscape = (event) => {
+      if (event.key === 'Escape') {
+        document.querySelector('.cdk-overlay-pane')?.remove();
+      }
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      dispatchImageInjection({
+        images: SAMPLE_IMAGES.slice(0, 1),
+        requestId: 'gemini-hydrogen-image-only',
+      });
+      await finishSuccessfulInjection();
+
+      expect(sidebarClickSpy).not.toHaveBeenCalled();
+      expect(uploadedImages).toEqual(['sample-one.png']);
+      expect(document.querySelector('.cdk-overlay-pane')).toBeNull();
+      expect(window.parent.postMessage).toHaveBeenCalledWith({
+        type: 'PANELIZE_ACTION_RESULT',
+        context: 'multi-panel-action-result',
+        requestId: 'gemini-hydrogen-image-only',
+        provider: 'gemini',
+        action: 'fill',
+        status: 'succeeded',
+        succeededImageIds: ['sample-one-id'],
+      }, EXTENSION_ORIGIN);
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
 });
