@@ -673,7 +673,8 @@ export function getAttachmentBadge(attachment) {
  * @returns {boolean}
  */
 export function matchesInputAccept(inputOrAccept, fileOrMeta) {
-  if (!inputOrAccept || !fileOrMeta) {
+  // An empty accept string is valid and means "any file", as for <input accept="">.
+  if (inputOrAccept === null || inputOrAccept === undefined || !fileOrMeta) {
     return false;
   }
 

@@ -2124,5 +2124,28 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       apiPanel.destroy();
       bridge.dispose();
     });
+    it('stages an empty-MIME PNG from the local picker as a data:image/png URL', async () => {
+      const { childDoc, bridge, apiPanel } = createWiredPanelAndBridge({
+        streamImpl: vi.fn(async () => ({ content: '', reasoning: '', finishReason: 'stop' })),
+      });
+
+      const pngBytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+        (c) => c.charCodeAt(0)
+      );
+      const emptyMimePng = new File([pngBytes], 'clipboard.png', { type: '' });
+      const fileInput = childDoc.getElementById('image-file-input');
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [emptyMimePng] });
+      fileInput.dispatchEvent(new Event('change'));
+
+      await vi.waitFor(() => {
+        expect(childDoc.querySelectorAll('#staged-images .staged-image-item img')).toHaveLength(1);
+      });
+      expect(childDoc.querySelector('#staged-images .staged-image-item img').getAttribute('src'))
+        .toMatch(/^data:image\/png;base64,/);
+
+      apiPanel.destroy();
+      bridge.dispose();
+    });
   });
 });

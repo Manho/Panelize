@@ -373,6 +373,43 @@ export function getFillTargetPanels(panels, failedPanelIds) {
   return panels.filter(panel => failedPanelIds.has(panel.id));
 }
 
+function getPanelSetKey(panels) {
+  return (panels || [])
+    .map(panel => panel?.id)
+    .filter(id => typeof id === 'string')
+    .sort()
+    .join('\u0000');
+}
+
+/**
+ * Retains each panel's latest fill outcome for one payload revision so that
+ * `Retry Failed` (which only re-targets failed panels) still summarizes and
+ * decides draft clearing from the complete set of panel outcomes.
+ *
+ * The retained map is discarded whenever the payload revision or the panel
+ * set differs from the previous state.
+ *
+ * @param {{revision: number, panelKey: string, outcomes: Map<string, object>} | null} previousState
+ * @param {{revision: number, panels: Array<object>, results: Array<object>}} update
+ * @returns {{revision: number, panelKey: string, outcomes: Map<string, object>}}
+ */
+export function mergePanelFillOutcomes(previousState, { revision, panels = [], results = [] } = {}) {
+  const panelKey = getPanelSetKey(panels);
+  const outcomes = previousState &&
+    previousState.revision === revision &&
+    previousState.panelKey === panelKey &&
+    previousState.outcomes instanceof Map
+    ? new Map(previousState.outcomes)
+    : new Map();
+  const currentPanelIds = new Set(panels.map(panel => panel?.id));
+  (results || []).forEach(result => {
+    if (result?.panelId && currentPanelIds.has(result.panelId)) {
+      outcomes.set(result.panelId, result);
+    }
+  });
+  return { revision, panelKey, outcomes };
+}
+
 /**
  * Summarizes the current overall tri-state fill state (`succeeded`, `skipped`, `failed`).
  *

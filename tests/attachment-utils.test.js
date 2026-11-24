@@ -221,6 +221,16 @@ describe('matchesInputAccept', () => {
     expect(matchesInputAccept('*/*', { name: 'report.pdf', type: 'application/pdf' })).toBe(true);
   });
 
+  it('treats a raw empty or whitespace-only accept string like the DOM-element overload', () => {
+    const pdf = { name: 'report.pdf', type: 'application/pdf' };
+    expect(matchesInputAccept('', pdf)).toBe(true);
+    expect(matchesInputAccept('   ', pdf)).toBe(true);
+    expect(matchesInputAccept({ getAttribute: () => '' }, pdf)).toBe(true);
+    expect(matchesInputAccept(null, pdf)).toBe(false);
+    expect(matchesInputAccept(undefined, pdf)).toBe(false);
+    expect(matchesInputAccept('', null)).toBe(false);
+  });
+
   it('rejects PDF on image-only inputs and accepts PDF on pdf/document inputs', () => {
     const imgInput = { getAttribute: () => 'image/*' };
     expect(matchesInputAccept(imgInput, { name: 'report.pdf', type: 'application/pdf' })).toBe(false);

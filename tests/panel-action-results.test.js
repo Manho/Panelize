@@ -11,6 +11,7 @@ import {
   getPanelActionResultTimeoutMs,
   getPanelBroadcastActionParams,
   isMatchingPanelActionResult,
+  mergePanelFillOutcomes,
   normalizeSucceededImageIds,
   shouldClearFillPayload,
   summarizeFillResults,
@@ -474,5 +475,51 @@ describe('getPanelBroadcastActionParams & determinePanelMessageType', () => {
       waitForActionResult: true,
     });
     expect(determinePanelMessageType({ isFillAction: params.isFillAction })).toBe('INJECT_TEXT_WITH_IMAGES');
+  });
+});
+
+describe('mergePanelFillOutcomes', () => {
+  const panels = [{ id: 'a' }, { id: 'b' }];
+  const skippedA = { ok: true, skipped: true, panelId: 'a', reason: 'unsupported' };
+  const failedB = { ok: false, panelId: 'b', reason: 'control-not-found' };
+  const skippedB = { ok: true, skipped: true, panelId: 'b', reason: 'type-not-accepted' };
+
+  it('merges retry results by panel ID so earlier skips still count toward the summary and clearing', () => {
+    const round1 = mergePanelFillOutcomes(null, { revision: 3, panels, results: [skippedA, failedB] });
+    const retry = mergePanelFillOutcomes(round1, { revision: 3, panels, results: [skippedB] });
+    const merged = [...retry.outcomes.values()];
+
+    expect(merged).toEqual([skippedA, skippedB]);
+    const summary = summarizeFillResults(panels, merged, new Set(['b']));
+    expect(summary).toMatchObject({ successfulCount: 0, skippedCount: 2, failedCount: 0, allSkipped: true });
+    expect(shouldClearFillPayload(summary, { hasText: false })).toBe(false);
+
+    // Summarizing only the retried panel was the bug: it reported 1/2 filled and cleared.
+    const retryOnly = summarizeFillResults(panels, [skippedB], new Set(['b']));
+    expect(retryOnly.successfulCount).toBe(1);
+    expect(shouldClearFillPayload(retryOnly, { hasText: false })).toBe(true);
+  });
+
+  it('discards retained outcomes when the payload revision or the panel set changes', () => {
+    const round1 = mergePanelFillOutcomes(null, { revision: 1, panels, results: [skippedA, failedB] });
+
+    const nextRevision = mergePanelFillOutcomes(round1, { revision: 2, panels, results: [skippedB] });
+    expect([...nextRevision.outcomes.keys()]).toEqual(['b']);
+
+    const changedPanels = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    const nextPanels = mergePanelFillOutcomes(round1, { revision: 1, panels: changedPanels, results: [skippedB] });
+    expect([...nextPanels.outcomes.keys()]).toEqual(['b']);
+
+    const reordered = mergePanelFillOutcomes(round1, { revision: 1, panels: [{ id: 'b' }, { id: 'a' }], results: [] });
+    expect([...reordered.outcomes.keys()]).toEqual(['a', 'b']);
+  });
+
+  it('ignores results for panels outside the current panel set', () => {
+    const state = mergePanelFillOutcomes(null, {
+      revision: 1,
+      panels,
+      results: [skippedA, { ok: true, panelId: 'gone' }, null],
+    });
+    expect([...state.outcomes.keys()]).toEqual(['a']);
   });
 });

@@ -1080,7 +1080,12 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
           continue;
         }
         if (validation.kind === 'image') {
-          const dataUrl = await readFileAsDataUrl(file);
+          // Read through a Blob carrying the normalized MIME so an empty or
+          // non-canonical file.type still yields a `data:image/...` URL.
+          const imageBlob = file.type === validation.mimeType
+            ? file
+            : file.slice(0, file.size, validation.mimeType);
+          const dataUrl = await readFileAsDataUrl(imageBlob);
           const item = {
             id: `local-img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             kind: 'image',

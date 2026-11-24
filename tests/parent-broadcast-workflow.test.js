@@ -86,6 +86,25 @@ describe('parent page sendToPanel & broadcastMessage production implementation w
       });
     });
 
+    it('keeps fanning out to every allowed origin even when a stale reported URL names one of them', async () => {
+      const chatgptFrame = { contentWindow: { postMessage: vi.fn() } };
+      // The frame last reported chatgpt.com but has since redirected to chat.openai.com.
+      const chatgptPanel = {
+        id: 'panel-2b',
+        providerId: 'chatgpt',
+        iframe: chatgptFrame,
+        lastReportedAllowedUrl: 'https://chatgpt.com/c/stale-thread',
+      };
+
+      await sendToPanel(chatgptPanel, 'Redirected prompt', [], true, 'send-focus-stale-origin', false, 8000, {
+        isFillAction: false,
+        waitForActionResult: false,
+      });
+
+      expect(chatgptFrame.contentWindow.postMessage.mock.calls.map((call) => call[1]))
+        .toEqual(['https://chatgpt.com', 'https://chat.openai.com']);
+    });
+
     it('posts nothing to a panel whose provider has no known origin', async () => {
       const unknownFrame = { contentWindow: { postMessage: vi.fn() } };
       await sendToPanel({ id: 'panel-3', providerId: 'unknown', iframe: unknownFrame }, 'Prompt', [], true,

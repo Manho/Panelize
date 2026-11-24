@@ -105,6 +105,7 @@ import {
   getFillTargetPanels,
   getPanelActionResultTimeoutMs,
   getPanelBroadcastActionParams,
+  mergePanelFillOutcomes,
   normalizePanelResults,
   shouldClearFillPayload,
   summarizeFillResults
@@ -172,6 +173,8 @@ let pendingFillAttachmentIdsByPanel = new Map();
 const broadcastGate = createBroadcastGate();
 let fillActionRequestCounter = 0;
 let fillPayloadRevision = 0;
+// Latest fill outcome per panel for the current payload revision and panel set.
+let fillOutcomeState = null;
 let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
 let focusRestoreGeneration = 0; // Bumped on every cancel so queued refocus frames are dropped
@@ -498,9 +501,8 @@ function getPanelProviderMode(panel) {
 }
 
 /**
- * Posts a message to a panel's provider page on its known allowed origin
- * (falling back to each allowed origin when the frame has not yet reported
- * its URL), never to '*': a frame that navigated elsewhere receives nothing.
+ * Posts a message to a panel's provider page on each origin it may be on,
+ * never to '*': a frame that navigated elsewhere receives nothing.
  */
 function postToPanelFrame(panel, message) {
   const target = panel?.iframe?.contentWindow;
@@ -510,19 +512,10 @@ function postToPanelFrame(panel, message) {
   const payload = getProviderDescriptor(panel.providerId)?.access === 'custom'
     ? { ...message, providerId: panel.providerId }
     : message;
-  const allowedOrigins = getProviderFrameOrigins(panel.providerId);
-  let targetOrigins = allowedOrigins;
-  if (allowedOrigins.length > 1 && typeof panel.lastReportedAllowedUrl === 'string' && panel.lastReportedAllowedUrl) {
-    try {
-      const reportedOrigin = new URL(panel.lastReportedAllowedUrl).origin;
-      if (allowedOrigins.includes(reportedOrigin)) {
-        targetOrigins = [reportedOrigin];
-      }
-    } catch {
-      // Fall back to all allowed origins for this provider.
-    }
-  }
-  targetOrigins.forEach((origin) => {
+  // Post to every configured origin: a cached reported URL can outlive a
+  // redirect (e.g. chatgpt.com <-> chat.openai.com), and the browser drops
+  // copies whose target origin does not match the frame's current origin.
+  getProviderFrameOrigins(panel.providerId).forEach((origin) => {
     target.postMessage(payload, origin);
   });
 }
@@ -2389,6 +2382,7 @@ function updateFillRetryButton() {
 function resetFillRetryState() {
   fillPayloadRevision += 1;
   pendingFillAttachmentIdsByPanel = new Map();
+  fillOutcomeState = null;
   if (failedFillPanelIds.size === 0) {
     updateFillRetryButton();
     return;
@@ -2666,7 +2660,15 @@ export async function broadcastMessage(text, autoSubmit = true) {
         }
       });
 
-      const summary = summarizeFillResults(panels, normalizedResults, previousFailedPanelIds);
+      // Retry Failed re-targets only failed panels; summarize and decide
+      // clearing from every panel's latest outcome for this payload revision.
+      fillOutcomeState = mergePanelFillOutcomes(fillOutcomeState, {
+        revision: fillPayloadRevision,
+        panels,
+        results: normalizedResults
+      });
+      const mergedResults = [...fillOutcomeState.outcomes.values()];
+      const summary = summarizeFillResults(panels, mergedResults, previousFailedPanelIds);
       const totalCount = panels.length;
       const { successfulCount, skippedCount, failedCount } = summary;
       const hasText = Boolean(text.trim());
@@ -2726,7 +2728,7 @@ export async function broadcastMessage(text, autoSubmit = true) {
 
       if (failedCount > 0) {
         const resultsByPanelId = new Map(
-          normalizedResults.map(result => [result.panelId, result])
+          mergedResults.map(result => [result.panelId, result])
         );
         const failedPanels = panels
           .filter(panel => summary.failedPanelIds.has(panel.id))
@@ -3712,7 +3714,12 @@ async function addAttachment(file) {
     const attachmentId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 11);
 
     if (validation.kind === 'image') {
-      const dataUrl = await fileToDataUrl(file);
+      // Read through a Blob carrying the normalized MIME so an empty or
+      // non-canonical file.type still yields a `data:image/...` URL.
+      const imageBlob = file.type === validation.mimeType
+        ? file
+        : file.slice(0, file.size, validation.mimeType);
+      const dataUrl = await fileToDataUrl(imageBlob);
       uploadedAttachments.push({
         id: attachmentId,
         kind: 'image',
