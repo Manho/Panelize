@@ -3208,11 +3208,7 @@
     if (provider === 'grok') return getGrokComposer();
     if (provider === 'yuanbao') return getYuanbaoComposer();
     if (provider === 'gemini') return getGeminiComposerRoot(input);
-    if (provider === 'qwen-global') {
-      return input?.closest?.('form, #dropzone-container, .message-input-container') ||
-        input?.parentElement ||
-        null;
-    }
+    if (provider === 'qwen-global') return getQwenGlobalComposerRoot(input);
     return input?.closest?.('form, ms-prompt-box, .input-area-container, .chat-editor, #chat-box') ||
       input?.parentElement ||
       null;
@@ -3233,8 +3229,12 @@
     }
 
     const composerRoot = getComposerRootForAttachmentCheck(provider, input);
+    // Gemini and Qwen Global run their own rejection-filtered checks below, so an
+    // "Upload failed: paper.pdf" alert is never mistaken for a staged attachment.
+    const usesFilteredPreviewCheck = provider === 'gemini' || provider === 'qwen-global';
     if (
       composerRoot &&
+      !usesFilteredPreviewCheck &&
       (candidateImages || []).some(img => img?.name && countFilenamePreviewEvidence(composerRoot, img.name) > 0)
     ) {
       return false;
@@ -3299,6 +3299,31 @@
     }
 
     return true;
+  }
+
+  /**
+   * On a Gemini retry with an empty editor, splits fallback attachments into the
+   * ones still staged as composer chips and the ones that must be re-delivered.
+   * Returns null when the regular all-or-nothing retry decision applies.
+   */
+  function getGeminiPartialRetryPlan(fallbackAttachments) {
+    const input = findProviderInput('gemini');
+    if (!input) {
+      return null;
+    }
+    const isFormControl = input.tagName === 'TEXTAREA' || input.tagName === 'INPUT';
+    const currentText = isFormControl ? (input.value || '') : (input.textContent || '');
+    if (currentText.trim().length > 0) {
+      return null;
+    }
+    const { chipCount, retained, missing } = reconcileGeminiRetainedAttachments(
+      getGeminiComposerRoot(input),
+      fallbackAttachments
+    );
+    if (chipCount === 0 || missing.length === 0) {
+      return null;
+    }
+    return { retained, missing };
   }
 
   // Handle image & document injection message
@@ -3387,11 +3412,24 @@
       normalizedFallbackAttachments.length > 0 &&
       isProviderComposerCleared(provider, normalizedFallbackAttachments, providerMode)
     );
-    const effectiveAttachments = composerClearedOnRetry ? normalizedFallbackAttachments : incomingAttachments;
-    const effectiveRetry = composerClearedOnRetry ? false : retry;
+    // Gemini: retained chips are reconciled one-to-one with fallback attachments, so
+    // a single surviving chip never acknowledges attachments that are no longer staged.
+    const partialRetryPlan = Boolean(
+      retry &&
+      !composerClearedOnRetry &&
+      provider === 'gemini' &&
+      normalizedFallbackAttachments.length > 0
+    )
+      ? getGeminiPartialRetryPlan(normalizedFallbackAttachments)
+      : null;
+    const toAttachmentIds = (items) => items.map(att => att?.id).filter(id => typeof id === 'string');
+    const effectiveAttachments = composerClearedOnRetry
+      ? normalizedFallbackAttachments
+      : (partialRetryPlan ? partialRetryPlan.missing : incomingAttachments);
+    const effectiveRetry = composerClearedOnRetry || partialRetryPlan ? false : retry;
     const failureAttemptedIds = composerClearedOnRetry
-      ? effectiveAttachments.map(att => att?.id).filter(id => typeof id === 'string')
-      : undefined;
+      ? toAttachmentIds(effectiveAttachments)
+      : (partialRetryPlan ? fallbackSucceededIds : undefined);
 
     if (!effectiveAttachments || effectiveAttachments.length === 0) {
       if (retry && text && text.trim()) {
@@ -3436,7 +3474,7 @@
         startChatgptSendTracking(requestId, provider);
       }
 
-      const succeededAttachmentIds = [];
+      const succeededAttachmentIds = partialRetryPlan ? toAttachmentIds(partialRetryPlan.retained) : [];
       const skippedAttachments = [];
       const attachmentResults = [];
 
@@ -3461,6 +3499,9 @@
         }
         // Wait a bit between attachments
         await sleep(200);
+      }
+      if (partialRetryPlan) {
+        succeededAttachmentIds.sort((a, b) => fallbackSucceededIds.indexOf(a) - fallbackSucceededIds.indexOf(b));
       }
 
       const firstFailure = attachmentResults.find(result => !result.ok && !result.skipped);
@@ -3923,6 +3964,26 @@
     return trimmed.slice(0, dotIdx).trim();
   }
 
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * Matches a filename stem only as a standalone token, so the stem "a" of
+   * "a.pdf" never matches inside words such as "failed".
+   */
+  function createFileNameTokenRegExp(token, flags = 'u') {
+    if (!token) {
+      return null;
+    }
+    return new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(token)}(?![\\p{L}\\p{N}_])`, flags);
+  }
+
+  function containsFileNameToken(text, token) {
+    const re = createFileNameTokenRegExp(token);
+    return Boolean(re && text && re.test(text));
+  }
+
   /**
    * True when an element is page-level rejection UI (alerts, status toasts,
    * snackbars) or carries failure wording beyond the file name itself, so an
@@ -3939,8 +4000,9 @@
     ].join(' ');
     let withoutName = normalizedName ? ownText.split(normalizedName).join(' ') : ownText;
     const normalizedStem = normalizedName ? getAttachmentFileNameStem(normalizedName).toLowerCase() : '';
-    if (normalizedStem) {
-      withoutName = withoutName.split(normalizedStem).join(' ');
+    const stemRe = createFileNameTokenRegExp(normalizedStem, 'gu');
+    if (stemRe) {
+      withoutName = withoutName.replace(stemRe, ' ');
     }
     return REJECTION_TEXT_RE.test(withoutName);
   }
@@ -4979,6 +5041,18 @@
   const GEMINI_DISALLOWED_TRIGGER_LABEL_RE =
     /\b(?:open|close|toggle)\s+sidebar\b|\bsidebar\b|\bside\s*nav\b|\bmain\s+menu\b|\bnavigation\b|\bsend\b|侧边栏|导航|发送/i;
 
+  const GEMINI_SIDEBAR_ANCESTOR_SELECTOR = 'nav, aside, header, side-navigation, bard-sidenav, mat-sidenav';
+  const GEMINI_PREVIEW_CHIP_ANCESTOR_SELECTOR =
+    'uploader-file-preview, .file-preview-chip, mat-basic-chip, [data-test-id="file-preview"], [data-test-id="image-preview"]';
+  const GEMINI_REMOVE_CONTROL_LABEL_RE = /^(?:close|remove|delete)\b/i;
+  const GEMINI_UPLOAD_MENU_SURFACE_SELECTORS = [
+    '.cdk-overlay-container',
+    '.cdk-overlay-pane',
+    'mat-menu',
+    '.mat-mdc-menu-panel',
+    '[role="menu"]'
+  ];
+
   function getGeminiComposerRoot(editor = null) {
     const resolvedEditor = editor || querySelectorDeep('.ql-editor') || querySelectorDeep('[contenteditable="true"]');
     return (
@@ -4997,7 +5071,14 @@
     if (!element || element.disabled || element.getAttribute?.('aria-disabled') === 'true') {
       return true;
     }
-    if (element.closest?.('nav, aside, header, side-navigation, bard-sidenav, mat-sidenav')) {
+    if (element.closest?.(GEMINI_SIDEBAR_ANCESTOR_SELECTOR)) {
+      return true;
+    }
+    // Never treat an attachment chip's own controls (e.g. "close upload plan") as the uploader.
+    if (element.closest?.(GEMINI_PREVIEW_CHIP_ANCESTOR_SELECTOR)) {
+      return true;
+    }
+    if (GEMINI_REMOVE_CONTROL_LABEL_RE.test((element.getAttribute?.('aria-label') || '').trim())) {
       return true;
     }
     const testId = (
@@ -5020,16 +5101,18 @@
     if (composerRoot) {
       const scopedSelectors = [
         'button[aria-label="Upload & tools"]',
-        'uploader button[aria-label*="Upload" i]',
         'button[aria-label="Open upload file menu"]',
         'button[aria-label="Upload file"]',
         'button[mattooltip="Upload file"]',
         'button[aria-label="Add files"]',
         'button[aria-label="上传和工具"]',
+        'button[data-test-id*="upload" i]',
+        '[data-test-id*="uploader" i] button',
+        'uploader button[aria-label*="Upload" i]',
+        'uploader button',
+        'button.upload-card-button',
         'button[aria-label*="Upload" i]',
         'button[aria-label*="上传"]',
-        'button.upload-card-button',
-        'uploader button',
         '.add-button',
         'button:has(mat-icon[fonticon="add"])',
         'button:has(mat-icon[fonticon="plus"])'
@@ -5050,8 +5133,30 @@
     return findDeepFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.gemini, (el) => !isGeminiDisallowedUploadTrigger(el));
   }
 
-  function findGeminiMatchingFileInput(attachmentData) {
-    const candidates = querySelectorAllDeep('input[type="file"]').filter((input) =>
+  /**
+   * File inputs Gemini exposes for the active composer: inputs inside the
+   * composer itself plus inputs mounted in its opened upload menu overlay.
+   * Unrelated inputs elsewhere on the page (sidebars, other widgets) are ignored.
+   */
+  function getGeminiScopedFileInputs(composerRoot = null) {
+    const scopeRoots = [composerRoot || document];
+    GEMINI_UPLOAD_MENU_SURFACE_SELECTORS.forEach((selector) => {
+      querySelectorAllDeep(selector).forEach((surface) => scopeRoots.push(surface));
+    });
+    // Sidebar chrome is excluded even when the composer root degrades to the page body.
+    const inputs = new Set();
+    scopeRoots.forEach((root) => {
+      querySelectorAllDeep('input[type="file"]', root).forEach((input) => {
+        if (!input.closest?.(GEMINI_SIDEBAR_ANCESTOR_SELECTOR)) {
+          inputs.add(input);
+        }
+      });
+    });
+    return [...inputs];
+  }
+
+  function findGeminiMatchingFileInput(attachmentData, composerRoot = null) {
+    const candidates = getGeminiScopedFileInputs(composerRoot).filter((input) =>
       acceptsAttachmentFile(input, attachmentData)
     );
     if (candidates.length === 0) {
@@ -5067,15 +5172,158 @@
   }
 
   function closeGeminiUploadMenu(uploadBtn = null) {
+    // Target the opened menu first: a comma-joined selector would return the outer pane in DOM order.
     const overlayTarget =
-      document.querySelector('.cdk-overlay-pane [role="menu"], .cdk-overlay-pane .mat-mdc-menu-panel, .cdk-overlay-pane, [role="menu"]') ||
+      document.querySelector('.mat-mdc-menu-panel') ||
+      document.querySelector('[role="menu"]') ||
+      document.querySelector('.cdk-overlay-pane') ||
       uploadBtn ||
-      document.body;
+      document;
     if (!overlayTarget) {
       return;
     }
     const escapeInit = { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true };
     overlayTarget.dispatchEvent(new KeyboardEvent('keydown', escapeInit));
+  }
+
+  const GEMINI_PREVIEW_CHIP_SELECTOR =
+    'uploader-file-preview, .file-preview-chip, [data-test-id="file-preview"], [data-test-id="image-preview"]';
+
+  function isInvalidGeminiPreviewContainer(element, normalizedName = '', excludeRejectionUi = true) {
+    if (!element) return true;
+    if (element.closest?.('textarea, input, [contenteditable="true"], .cdk-describedby-message-container, .cdk-visually-hidden')) {
+      return true;
+    }
+    if (element.matches?.('.error, .failed, [data-status="error"], [aria-invalid="true"]')) {
+      return true;
+    }
+    return excludeRejectionUi && isRejectionUiElement(element, normalizedName);
+  }
+
+  /**
+   * Collects the distinct, non-rejected attachment chips currently staged in
+   * Gemini's composer (named chips, label-only chips and bare blob previews).
+   */
+  function collectGeminiRetainedPreviewChips(root) {
+    const searchRoot = root || document;
+    const chips = new Set();
+    const addCanonical = (element) => {
+      const canonical = element.closest?.('uploader-file-preview, .file-preview-chip') || element;
+      if (!isInvalidGeminiPreviewContainer(element) && !isInvalidGeminiPreviewContainer(canonical)) {
+        chips.add(canonical);
+      }
+    };
+    querySelectorAllDeep(GEMINI_PREVIEW_CHIP_SELECTOR, searchRoot).forEach(addCanonical);
+    querySelectorAllDeep('.gem-attachment-text', searchRoot).forEach(addCanonical);
+    querySelectorAllDeep('img[src^="blob:"], img[src^="data:image/"]', searchRoot).forEach((img) => {
+      if (!img.closest?.('nav, aside, header')) {
+        addCanonical(img);
+      }
+    });
+    return [...chips];
+  }
+
+  const GEMINI_TYPE_BADGE_FAMILIES = {
+    pdf: 'pdf',
+    doc: 'doc',
+    docx: 'doc',
+    word: 'doc',
+    txt: 'txt',
+    text: 'txt',
+    md: 'md',
+    markdown: 'md',
+    csv: 'csv',
+    json: 'json',
+    xls: 'xls',
+    xlsx: 'xls',
+    ppt: 'ppt',
+    pptx: 'ppt'
+  };
+
+  function getGeminiAttachmentTypeFamily(attachmentData) {
+    const name = (attachmentData?.name || '').trim();
+    const ext = (getAttachmentFileNameStem(name)
+      ? name.slice(name.lastIndexOf('.') + 1)
+      : (attachmentData?.ext || '').replace(/^\./, '')
+    ).toLowerCase();
+    return GEMINI_TYPE_BADGE_FAMILIES[ext] || ext;
+  }
+
+  /**
+   * Reconciles staged Gemini chips one-to-one with retry fallback attachments.
+   * A chip satisfies at most one attachment; a chip's visible type badge
+   * (PDF/DOCX/...) must agree with the attachment's type when present.
+   * Returns the retained attachments and the ones still missing from the composer.
+   */
+  function reconcileGeminiRetainedAttachments(composerRoot, attachments) {
+    const chips = collectGeminiRetainedPreviewChips(composerRoot).map((chip) => {
+      const parts = [
+        (chip.getAttribute?.('data-file-name') || '').trim().toLowerCase(),
+        (chip.getAttribute?.('data-filename') || '').trim().toLowerCase(),
+        getElementAccessibleText(chip)
+      ];
+      chip.querySelectorAll?.('.gem-attachment-text, [aria-label], [title], img[alt]').forEach((child) => {
+        parts.push(
+          (child.textContent || '').trim().toLowerCase(),
+          (child.getAttribute?.('aria-label') || '').trim().toLowerCase(),
+          (child.getAttribute?.('title') || '').trim().toLowerCase(),
+          (child.getAttribute?.('alt') || '').trim().toLowerCase()
+        );
+      });
+      chip.querySelectorAll?.('span, div').forEach((child) => {
+        if (child.children.length === 0) {
+          parts.push((child.textContent || '').trim().toLowerCase());
+        }
+      });
+      const filtered = parts.filter(Boolean);
+      const badgeFamilies = new Set();
+      filtered.forEach((part) => {
+        const family = GEMINI_TYPE_BADGE_FAMILIES[part];
+        if (family) badgeFamilies.add(family);
+      });
+      return {
+        parts: filtered,
+        combined: filtered.join(' '),
+        badgeFamilies,
+        hasImageMedia: Boolean(chip.matches?.('img') || chip.querySelector?.('img, canvas'))
+      };
+    });
+
+    const claimed = new Set();
+    const assignments = new Map();
+    const matchesName = (chip, attachment) => {
+      const name = (attachment?.name || '').trim().toLowerCase();
+      if (!name) return false;
+      if (chip.combined.includes(name)) return 'full';
+      const stem = getAttachmentFileNameStem(name).toLowerCase();
+      return stem && chip.parts.some(part => containsFileNameToken(part, stem)) ? 'stem' : false;
+    };
+    const tryAssign = (accept) => {
+      attachments.forEach((attachment, attachmentIndex) => {
+        if (assignments.has(attachmentIndex)) return;
+        const chipIndex = chips.findIndex((chip, index) => !claimed.has(index) && accept(chip, attachment));
+        if (chipIndex >= 0) {
+          claimed.add(chipIndex);
+          assignments.set(attachmentIndex, chipIndex);
+        }
+      });
+    };
+    const badgeAgrees = (chip, attachment) =>
+      chip.badgeFamilies.size === 0 || chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment));
+
+    // Strongest evidence first so weaker chips never steal a better-matching attachment.
+    tryAssign((chip, attachment) => matchesName(chip, attachment) === 'full');
+    tryAssign((chip, attachment) =>
+      matchesName(chip, attachment) === 'stem' && chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment)));
+    tryAssign((chip, attachment) => matchesName(chip, attachment) === 'stem' && badgeAgrees(chip, attachment));
+    tryAssign((chip, attachment) => !isDocumentAttachmentData(attachment) && chip.hasImageMedia);
+
+    const retained = [];
+    const missing = [];
+    attachments.forEach((attachment, index) => {
+      (assignments.has(index) ? retained : missing).push(attachment);
+    });
+    return { chipCount: chips.length, retained, missing };
   }
 
   function countGeminiAttachmentPreviews(root, attachmentData = null, { excludeRejectionUi = true } = {}) {
@@ -5109,24 +5357,13 @@
       if (combined.includes(normalizedName)) {
         return true;
       }
-      return Boolean(normalizedStem && combined.includes(normalizedStem));
+      return Boolean(normalizedStem && parts.some(part => containsFileNameToken(part, normalizedStem)));
     };
 
-    const isInvalidPreviewContainer = (element) => {
-      if (!element) return true;
-      if (element.closest?.('textarea, input, [contenteditable="true"], .cdk-describedby-message-container, .cdk-visually-hidden')) {
-        return true;
-      }
-      if (element.matches?.('.error, .failed, [data-status="error"], [aria-invalid="true"]')) {
-        return true;
-      }
-      return excludeRejectionUi && isRejectionUiElement(element, normalizedName);
-    };
+    const isInvalidPreviewContainer = (element) =>
+      isInvalidGeminiPreviewContainer(element, normalizedName, excludeRejectionUi);
 
-    const chipElements = querySelectorAllDeep(
-      'uploader-file-preview, .file-preview-chip, [data-test-id="file-preview"], [data-test-id="image-preview"]',
-      searchRoot
-    );
+    const chipElements = querySelectorAllDeep(GEMINI_PREVIEW_CHIP_SELECTOR, searchRoot);
     for (const chip of chipElements) {
       if (isInvalidPreviewContainer(chip)) {
         continue;
@@ -5154,7 +5391,7 @@
       if (
         !normalizedName ||
         text.includes(normalizedName) ||
-        (normalizedStem && text.includes(normalizedStem))
+        (normalizedStem && containsFileNameToken(text, normalizedStem))
       ) {
         matchedChips.add(canonicalChip);
       }
@@ -5178,6 +5415,8 @@
     return Math.max(matchedChips.size, filenameEvidence);
   }
 
+  const GEMINI_CLASSIC_PASTE_PREVIEW_PROBE_MS = 300;
+
   // Gemini-specific image & document injection
   async function injectImageToGemini(imageData) {
     try {
@@ -5196,7 +5435,7 @@
         querySelectorDeep('input-container, uploader')
       );
 
-      let fileInput = findGeminiMatchingFileInput(imageData);
+      let fileInput = findGeminiMatchingFileInput(imageData, composerRoot);
       let openedUploadMenu = false;
       let clickedUploadBtn = null;
 
@@ -5206,7 +5445,7 @@
           clickedUploadBtn = uploadBtn;
           uploadBtn.click();
           openedUploadMenu = true;
-          fileInput = await waitForFileInput(() => findGeminiMatchingFileInput(imageData), 600);
+          fileInput = await waitForFileInput(() => findGeminiMatchingFileInput(imageData, composerRoot), 600);
         }
       }
 
@@ -5253,7 +5492,7 @@
       }
 
       if (openedUploadMenu) {
-        const hadIncompatibleInputs = isDoc && querySelectorAllDeep('input[type="file"]').length > 0;
+        const hadIncompatibleInputs = isDoc && getGeminiScopedFileInputs(composerRoot).length > 0;
         await sleep(50);
         closeGeminiUploadMenu(clickedUploadBtn);
         if (hadIncompatibleInputs) {
@@ -5303,11 +5542,28 @@
         clipboardData: dataTransfer
       });
 
+      const pastePreviewScope = composerRoot || document;
+      const previousPastePreviewCount = countGeminiAttachmentPreviews(pastePreviewScope, imageData, {
+        excludeRejectionUi: true
+      });
       editor.dispatchEvent(pasteEvent);
       console.log('[Image Injection] Gemini: Paste event dispatched');
 
-      // Also try drag-drop as fallback if paste doesn't work
-      await sleep(100);
+      // A consumed paste (or one that already produced a preview) is the upload;
+      // a second drop would hand the same image to another upload handler.
+      if (pasteEvent.defaultPrevented) {
+        return createImageInjectionSuccess();
+      }
+      const pastePreviewed = await waitForPreviewIncrease(
+        () => countGeminiAttachmentPreviews(pastePreviewScope, imageData, { excludeRejectionUi: true }),
+        previousPastePreviewCount,
+        GEMINI_CLASSIC_PASTE_PREVIEW_PROBE_MS
+      );
+      if (pastePreviewed) {
+        return createImageInjectionSuccess();
+      }
+
+      // Paste went unhandled: use drop as the transport, on the outer dropzone when present.
       const dropTarget = dropzone || editor;
       const dropEvent = new DragEvent('drop', {
         bubbles: true,
@@ -5612,10 +5868,35 @@
     );
   }
 
+  /**
+   * Outer Qwen Global composer boundary: the dropzone form/container that wraps
+   * .message-input-container, where Qwen attaches image and file previews.
+   */
+  function getQwenGlobalComposerRoot(input = null) {
+    const textarea = input || document.querySelector('.message-input-textarea') || findProviderInput('qwen-global');
+    if (!textarea) {
+      return document.querySelector('#dropzone-container') || null;
+    }
+    // Resolve one selector at a time: a combined closest() returns the nearest
+    // match and could stop at an inner wrapper inside the outer dropzone form.
+    for (const selector of ['form#dropzone-container', 'form', '#dropzone-container', '[class*="dropzone"]']) {
+      const outer = textarea.closest?.(selector);
+      if (outer) {
+        return outer;
+      }
+    }
+    const container = textarea.closest?.('.message-input-container');
+    const dropTarget = findQwenGlobalDropTarget();
+    if (container && dropTarget && dropTarget !== container && dropTarget.contains(container)) {
+      return dropTarget;
+    }
+    return container || dropTarget || textarea.parentElement || null;
+  }
+
   async function injectImageToQwenGlobal(file, attachmentData) {
     const isDoc = isDocumentAttachmentData(attachmentData);
     const timeoutMs = getPreviewTimeoutMs(attachmentData);
-    const previewCount = countQwenAttachmentPreviews('qwen-global', attachmentData?.name);
+    const previewCount = getQwenGlobalPreviewEvidence(attachmentData?.name);
 
     if (isDoc) {
       const dropTarget = findQwenGlobalDropTarget();
@@ -5628,17 +5909,22 @@
       // while DragEvent drop on the composer form/wrapper immediately uploads documents.
       // Try drop first with a bounded probe window when #filesUpload also exists so we
       // avoid both duplicate uploads and burning the full 10s timeout on an unresponsive input.
+      // A drop the page consumed (preventDefault) is an upload in progress: wait out
+      // the full preview timeout rather than re-sending the file through #filesUpload.
       const dropProbeWindowMs = fileInput ? Math.min(1000, timeoutMs) : timeoutMs;
       if (dropTarget) {
-        dispatchFileDragEvents(dropTarget, file);
+        const dropConsumed = dispatchFileDragEvents(dropTarget, file);
         const dropAccepted = await waitForQwenImagePreview(
           'qwen-global',
           previewCount,
-          dropProbeWindowMs,
+          dropConsumed ? timeoutMs : dropProbeWindowMs,
           attachmentData?.name
         );
         if (dropAccepted) {
           return createImageInjectionSuccess();
+        }
+        if (dropConsumed) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
         }
       }
 
@@ -5707,9 +5993,14 @@
     );
   }
 
+  /**
+   * Dispatches dragenter/dragover/drop with the file and returns true when a
+   * page handler consumed the drop (called preventDefault()).
+   */
   function dispatchFileDragEvents(target, file) {
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
+    let dropConsumed = false;
 
     ['dragenter', 'dragover', 'drop'].forEach(type => {
       const event = new DragEvent(type, {
@@ -5725,7 +6016,11 @@
         }
       }
       target.dispatchEvent(event);
+      if (type === 'drop') {
+        dropConsumed = event.defaultPrevented;
+      }
     });
+    return dropConsumed;
   }
 
   function findQwenFileInput(provider, attachmentData = null) {
@@ -5762,7 +6057,17 @@
       const docCount = fileName ? countFilenamePreviewEvidence(composer, fileName, { excludeRejectionUi: true }) : 0;
       return Math.max(imgCount, docCount);
     }
-    const searchRoot = root || document;
+    const evidence = getQwenGlobalPreviewEvidence(fileName, { root });
+    return Math.max(evidence.images, evidence.cards, evidence.filenames, evidence.composerFilenames);
+  }
+
+  /**
+   * Qwen Global preview evidence split by kind, scoped to the outer composer.
+   * Each kind is compared against its own baseline so an existing document card
+   * can never mask a newly pasted image preview (or vice versa).
+   */
+  function getQwenGlobalPreviewEvidence(fileName = '', { root = null } = {}) {
+    const searchRoot = root || getQwenGlobalComposerRoot() || document;
     const normalizedName = (fileName || '').trim().toLowerCase();
     const imgCount = [...searchRoot.querySelectorAll('.vision-item-image')]
       .filter((el) => !isRejectionUiElement(el, normalizedName)).length;
@@ -5776,32 +6081,42 @@
       : 0;
     let composerFilenameCount = 0;
     if (normalizedName) {
-      const composer = root || findQwenGlobalDropTarget();
-      if (composer) {
-        const evidence = new Set();
-        composer.querySelectorAll('span, div, p, li, button, [role="listitem"]').forEach((el) => {
-          if (el.closest('textarea, input, [contenteditable="true"]') || isRejectionUiElement(el, normalizedName)) {
-            return;
-          }
-          if (el.children.length > 0) {
-            return;
-          }
-          const text = (el.textContent || '').trim().toLowerCase();
-          if (text && text.length <= 240 && text.includes(normalizedName)) {
-            evidence.add(el.parentElement && el.parentElement !== composer ? el.parentElement : el);
-          }
-        });
-        composerFilenameCount = evidence.size;
-      }
+      const evidence = new Set();
+      searchRoot.querySelectorAll('span, div, p, li, button, [role="listitem"]').forEach((el) => {
+        if (el.closest('textarea, input, [contenteditable="true"]') || isRejectionUiElement(el, normalizedName)) {
+          return;
+        }
+        if (el.children.length > 0) {
+          return;
+        }
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (text && text.length <= 240 && text.includes(normalizedName)) {
+          evidence.add(el.parentElement && el.parentElement !== searchRoot ? el.parentElement : el);
+        }
+      });
+      composerFilenameCount = evidence.size;
     }
-    return Math.max(imgCount, docCardCount, filenameCount, composerFilenameCount);
+    return {
+      images: imgCount,
+      cards: docCardCount,
+      filenames: filenameCount,
+      composerFilenames: composerFilenameCount
+    };
+  }
+
+  function hasQwenPreviewIncrease(provider, previous, fileName = '') {
+    if (provider === 'qwen-global' && previous && typeof previous === 'object') {
+      const current = getQwenGlobalPreviewEvidence(fileName);
+      return Object.keys(current).some((key) => current[key] > (previous[key] || 0));
+    }
+    return countQwenAttachmentPreviews(provider, fileName) > previous;
   }
 
   async function waitForQwenImagePreview(provider, previousCount, timeoutMs, fileName = '') {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      if (countQwenAttachmentPreviews(provider, fileName) > previousCount) {
+      if (hasQwenPreviewIncrease(provider, previousCount, fileName)) {
         console.log('[Image Injection] Qwen attachment preview detected for:', provider);
         return true;
       }

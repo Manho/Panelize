@@ -1033,4 +1033,145 @@ describe('provider image upload adapters', () => {
       document.removeEventListener('keydown', onEscape);
     }
   });
+
+  // ===== Item #16 regression guards: Gemini classic + Qwen Global image routing =====
+
+  const getLastActionResult = () =>
+    window.parent.postMessage.mock.calls
+      .map(([msg]) => msg)
+      .filter((msg) => msg?.type === 'PANELIZE_ACTION_RESULT')
+      .at(-1);
+
+  it('Qwen Global: an existing document card never masks a newly pasted image preview', async () => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = `
+      <form>
+        <textarea class="message-input-textarea"></textarea>
+        <div class="file-card">paper.pdf</div>
+      </form>
+    `;
+    const form = document.querySelector('form');
+    document.querySelector('textarea').addEventListener('paste', () => {
+      form.insertAdjacentHTML('beforeend', '<img class="vision-item-image" alt="sample-one.png" />');
+    });
+
+    dispatchImageInjection({ requestId: 'qwen-global-card-plus-image' });
+    await finishTimedOutInjection();
+
+    expect(form.querySelectorAll('img.vision-item-image')).toHaveLength(1);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'qwen-global-card-plus-image',
+        status: 'succeeded',
+        succeededImageIds: ['sample-one-id'],
+      })
+    );
+  });
+
+  it('Qwen Global: retry sees an image preview attached directly to form#dropzone-container', async () => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = `
+      <form id="dropzone-container">
+        <div class="message-input-container">
+          <textarea class="message-input-textarea"></textarea>
+          <input type="file" id="filesUpload" multiple />
+        </div>
+        <img class="vision-item-image" alt="sample-one.png" />
+      </form>
+    `;
+    const dropzone = document.getElementById('dropzone-container');
+    const pasteSpy = vi.fn(() => {
+      dropzone.insertAdjacentHTML('beforeend', '<img class="vision-item-image" alt="sample-one.png" />');
+    });
+    document.querySelector('textarea').addEventListener('paste', pasteSpy);
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      fallbackImages: SAMPLE_IMAGES.slice(0, 1),
+      text: 'Retry prompt',
+      autoSubmit: false,
+      retry: true,
+      requestId: 'qwen-global-retry-outer-preview',
+    });
+    await finishSuccessfulInjection();
+
+    expect(pasteSpy).not.toHaveBeenCalled();
+    expect(dropzone.querySelectorAll('img.vision-item-image')).toHaveLength(1);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'qwen-global-retry-outer-preview',
+        status: 'succeeded',
+        succeededImageIds: ['sample-one-id'],
+      })
+    );
+  });
+
+  it('Gemini classic: a consumed .ql-editor paste is never followed by a second drop on the outer dropzone', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <div class="xap-uploader-dropzone" file-drop-zone>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+      </div>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const calls = [];
+    editor.addEventListener('paste', (event) => {
+      event.preventDefault();
+      calls.push('paste');
+    });
+    editor.addEventListener('drop', (event) => event.stopPropagation());
+    document.querySelector('[file-drop-zone]').addEventListener('drop', () => calls.push('outer-drop'));
+
+    dispatchImageInjection({ requestId: 'gemini-classic-paste-consumed' });
+    await finishSuccessfulInjection();
+
+    expect(calls).toEqual(['paste']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededImageIds: ['sample-one-id'] })
+    );
+  });
+
+  it('Gemini classic: falls back to a single outer dropzone drop only when paste is neither consumed nor previewed', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <div class="xap-uploader-dropzone" file-drop-zone>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+      </div>
+    `;
+    const calls = [];
+    document.querySelector('.ql-editor').addEventListener('paste', () => calls.push('paste'));
+    document.querySelector('[file-drop-zone]').addEventListener('drop', () => calls.push('outer-drop'));
+
+    dispatchImageInjection({ requestId: 'gemini-classic-paste-ignored' });
+    await finishSuccessfulInjection();
+
+    expect(calls).toEqual(['paste', 'outer-drop']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededImageIds: ['sample-one-id'] })
+    );
+  });
+
+  it('Gemini classic: an unrelated <aside> image input never preempts the editor paste path', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <aside><input type="file" accept="image/*" /></aside>
+      <div class="ql-editor" contenteditable="true" role="textbox"></div>
+    `;
+    const calls = [];
+    document.querySelector('aside input').addEventListener('change', () => calls.push('aside'));
+    document.querySelector('.ql-editor').addEventListener('paste', (event) => {
+      event.preventDefault();
+      calls.push('paste');
+    });
+
+    dispatchImageInjection({ requestId: 'gemini-classic-aside-image' });
+    await finishSuccessfulInjection();
+
+    expect(calls).toEqual(['paste']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededImageIds: ['sample-one-id'] })
+    );
+  });
 });
