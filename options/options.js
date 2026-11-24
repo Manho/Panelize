@@ -1,7 +1,11 @@
 // T050-T064: Settings Page Implementation
 import { listProviders, getProviderIcon } from '../modules/providers.js';
 import {
+  getCompanionCookiePermissionOrigins,
+  getProviderCompanionCookieOrigins,
   getProviderDescriptor,
+  getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain,
   hasProviderDescriptor,
   listProviderDescriptors
 } from '../modules/provider-registry.js';
@@ -37,7 +41,9 @@ import {
 } from '../modules/provider-order.js';
 import {
   OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION,
+  hasOptionalProviderCompanionCookiePermission,
   hasOptionalProviderPermission,
+  requestOptionalProviderCompanionCookiePermission,
   requestOptionalProviderPermission,
   supportsScopedFrameRules
 } from '../modules/optional-provider-access.js';
@@ -316,6 +322,124 @@ export function isOriginUsedByAnyProvider(origin, { excludeProviderId = null } =
     }
     return false;
   });
+}
+
+function getCustomRequestPermissionOrigins(origin, isApiKind) {
+  if (isApiKind) {
+    return [`${origin}/*`];
+  }
+  return [`${origin}/*`, ...getCompanionCookiePermissionOrigins(origin)];
+}
+
+function originPatternCovers(broadPattern, narrowPattern) {
+  if (broadPattern === narrowPattern) {
+    return true;
+  }
+  const broadMatch = /^(https?):\/\/\*\.([^/]+)\/\*$/.exec(broadPattern);
+  if (!broadMatch) {
+    return false;
+  }
+  const [, broadScheme, broadDomain] = broadMatch;
+  const narrowMatch = /^(https?):\/\/(?:\*\.)?([^/:]+)(?::\d+)?\/\*$/.exec(narrowPattern);
+  if (!narrowMatch) {
+    return false;
+  }
+  const [, narrowScheme, narrowHost] = narrowMatch;
+  if (broadScheme !== narrowScheme) {
+    return false;
+  }
+  const lowerBroad = broadDomain.toLowerCase();
+  const lowerNarrow = narrowHost.toLowerCase();
+  return lowerNarrow === lowerBroad || lowerNarrow.endsWith(`.${lowerBroad}`);
+}
+
+function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) {
+  if (!Array.isArray(origins) || origins.length === 0) {
+    return [];
+  }
+  const usedPatterns = new Set();
+  for (const descriptor of listProviderDescriptors()) {
+    if (excludeProviderId && descriptor.id === excludeProviderId) {
+      continue;
+    }
+    for (const frameOrigin of descriptor.frameOrigins || []) {
+      usedPatterns.add(`${frameOrigin}/*`);
+    }
+    for (const pattern of descriptor.permissionOrigins || []) {
+      usedPatterns.add(pattern);
+    }
+    for (const pattern of getProviderCompanionCookieOrigins(descriptor)) {
+      usedPatterns.add(pattern);
+    }
+  }
+  const usedList = [...usedPatterns];
+  return origins.filter(
+    (pattern) => !usedList.some((usedPattern) => originPatternCovers(pattern, usedPattern))
+  );
+}
+
+function getCandidateParentWildcardOrigins(origin) {
+  if (typeof origin !== 'string' || origin.length === 0) {
+    return [];
+  }
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return [];
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return [];
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  const parentDomain =
+    getSafeParentCookieDomain(hostname) ||
+    (getSafeParentCookieDomain(`sub.${hostname}`) === hostname ? hostname : null);
+  if (!parentDomain) {
+    return [];
+  }
+  return [`https://*.${parentDomain}/*`, `http://*.${parentDomain}/*`];
+}
+
+async function filterGrantedPermissionOrigins(origins) {
+  if (!Array.isArray(origins) || origins.length === 0 || !chrome?.permissions?.contains) {
+    return [];
+  }
+  const granted = [];
+  for (const pattern of origins) {
+    const hasGrant = await chrome.permissions.contains({ origins: [pattern] }).catch(() => false);
+    if (hasGrant) {
+      granted.push(pattern);
+    }
+  }
+  return granted;
+}
+
+async function resolvePermissionOriginsToRevoke(
+  origins,
+  { origin = null, excludeProviderId = null } = {}
+) {
+  const unusedDirectOrigins = getUnusedPermissionOrigins(origins, { excludeProviderId });
+  const originStillUsed = Boolean(
+    origin && isOriginUsedByAnyProvider(origin, { excludeProviderId })
+  );
+  const resolved = originStillUsed
+    ? await filterGrantedPermissionOrigins(unusedDirectOrigins)
+    : [...unusedDirectOrigins];
+
+  const candidateWildcards = getUnusedPermissionOrigins(
+    getCandidateParentWildcardOrigins(origin).filter((pattern) => !resolved.includes(pattern)),
+    { excludeProviderId }
+  );
+  if (candidateWildcards.length > 0) {
+    const grantedWildcards = await filterGrantedPermissionOrigins(candidateWildcards);
+    for (const pattern of grantedWildcards) {
+      if (!resolved.includes(pattern)) {
+        resolved.push(pattern);
+      }
+    }
+  }
+  return resolved;
 }
 
 async function withTemporaryOriginStripSessionRule(origin, fn) {
@@ -1880,7 +2004,7 @@ async function handleInlineEditSubmit(event, inlineState) {
     }
   }
 
-  const permissionOrigin = `${urlCheck.origin}/*`;
+  const permissionOrigins = getCustomRequestPermissionOrigins(urlCheck.origin, isApiKind);
   inlineState.clearError();
   inlineState.modelCombobox?.closeListbox();
   isSubmittingInlineEdit = true;
@@ -1891,7 +2015,7 @@ async function handleInlineEditSubmit(event, inlineState) {
   let permissionPromise;
   try {
     permissionPromise = chrome?.permissions?.request
-      ? chrome.permissions.request({ origins: [permissionOrigin] })
+      ? chrome.permissions.request({ origins: permissionOrigins })
       : Promise.resolve(false);
   } catch {
     isSubmittingInlineEdit = false;
@@ -1913,6 +2037,14 @@ async function handleInlineEditSubmit(event, inlineState) {
       return;
     }
 
+    if (!granted && chrome?.permissions?.contains) {
+      // Preserve legacy HTTPS-only grants when the user declines only the
+      // companion non-Secure cookie permission.
+      granted = Boolean(
+        await chrome.permissions.contains({ origins: [`${urlCheck.origin}/*`] }).catch(() => false)
+      );
+    }
+
     if (!granted) {
       const message = t('msgCustomProviderPermissionDenied', urlCheck.origin);
       inlineState.setError(message);
@@ -1922,6 +2054,7 @@ async function handleInlineEditSubmit(event, inlineState) {
 
     const targetId = editingDescriptor.id;
     const previousOrigin = getCustomProviderOrigin(editingDescriptor);
+    const previousPermissionOrigins = getProviderRequestPermissionOrigins(editingDescriptor);
     const previousEndpointUrl = editingDescriptor.apiConfig?.endpointUrl || null;
     const sameOriginAsSaved = Boolean(previousOrigin && previousOrigin === urlCheck.origin);
     let previousSecret = null;
@@ -1972,19 +2105,26 @@ async function handleInlineEditSubmit(event, inlineState) {
       );
       providerRecordPersisted = true;
 
+      // Run optional access and mirrored-cookie cleanup BEFORE revoking the
+      // previous origin's host permission so cookies.remove still succeeds.
+      await requestOptionalProviderAccessSync();
+
       if (
         previousOrigin &&
         previousOrigin !== urlCheck.origin &&
-        !isOriginUsedByAnyProvider(previousOrigin) &&
         chrome?.permissions?.remove
       ) {
-        await chrome.permissions.remove({ origins: [`${previousOrigin}/*`] }).catch((error) => {
-          console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
+        const originsToRevoke = await resolvePermissionOriginsToRevoke(previousPermissionOrigins, {
+          origin: previousOrigin
         });
+        if (originsToRevoke.length > 0) {
+          await chrome.permissions.remove({ origins: originsToRevoke }).catch((error) => {
+            console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
+          });
+        }
       }
 
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
-      await requestOptionalProviderAccessSync();
 
       editingCustomProviderId = null;
       if (activeInlineEditState === inlineState) {
@@ -2014,7 +2154,10 @@ async function handleInlineEditSubmit(event, inlineState) {
           !isOriginUsedByAnyProvider(urlCheck.origin) &&
           chrome?.permissions?.remove
         ) {
-          await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+          const originsToRevoke = getUnusedPermissionOrigins(permissionOrigins);
+          if (originsToRevoke.length > 0) {
+            await chrome.permissions.remove({ origins: originsToRevoke }).catch(() => {});
+          }
         }
       }
       const message =
@@ -2185,7 +2328,7 @@ export async function handleCustomProviderFormSubmit(event) {
   }
 
   const createdAt = Date.now();
-  const permissionOrigin = `${urlCheck.origin}/*`;
+  const permissionOrigins = getCustomRequestPermissionOrigins(urlCheck.origin, isApiKind);
 
   clearCustomProviderFormError();
   addFormModelCombobox?.closeListbox();
@@ -2197,7 +2340,7 @@ export async function handleCustomProviderFormSubmit(event) {
   let permissionPromise;
   try {
     permissionPromise = chrome?.permissions?.request
-      ? chrome.permissions.request({ origins: [permissionOrigin] })
+      ? chrome.permissions.request({ origins: permissionOrigins })
       : Promise.resolve(false);
   } catch {
     isSubmittingCustomProvider = false;
@@ -2217,6 +2360,12 @@ export async function handleCustomProviderFormSubmit(event) {
       setCustomProviderFormError(message);
       showStatus('error', message);
       return;
+    }
+
+    if (!granted && chrome?.permissions?.contains) {
+      granted = Boolean(
+        await chrome.permissions.contains({ origins: [`${urlCheck.origin}/*`] }).catch(() => false)
+      );
     }
 
     if (!granted) {
@@ -2311,7 +2460,12 @@ export async function handleCustomProviderFormSubmit(event) {
         !isOriginUsedByAnyProvider(urlCheck.origin, { excludeProviderId: id }) &&
         chrome?.permissions?.remove
       ) {
-        await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+        const originsToRevoke = getUnusedPermissionOrigins(permissionOrigins, {
+          excludeProviderId: id
+        });
+        if (originsToRevoke.length > 0) {
+          await chrome.permissions.remove({ origins: originsToRevoke }).catch(() => {});
+        }
       }
       const message = persistError?.reason && CUSTOM_URL_REASON_MESSAGE_KEYS[persistError.reason]
         ? getCustomProviderUrlErrorMessage(persistError.reason)
@@ -2332,6 +2486,7 @@ export async function deleteCustomProviderEntry(providerId) {
   }
 
   const origin = getCustomProviderOrigin(descriptor);
+  const removedPermissionOrigins = getProviderRequestPermissionOrigins(descriptor);
   const providerName = descriptor.name;
 
   if (editingCustomProviderId === providerId) {
@@ -2363,10 +2518,15 @@ export async function deleteCustomProviderEntry(providerId) {
   await chrome.storage.sync.set(syncUpdates);
   await requestOptionalProviderAccessSync();
 
-  if (origin && !isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
-    await chrome.permissions.remove({ origins: [`${origin}/*`] }).catch((error) => {
-      console.warn(`Failed to revoke permission for ${origin}:`, error);
+  if (origin && chrome?.permissions?.remove) {
+    const originsToRevoke = await resolvePermissionOriginsToRevoke(removedPermissionOrigins, {
+      origin
     });
+    if (originsToRevoke.length > 0) {
+      await chrome.permissions.remove({ origins: originsToRevoke }).catch((error) => {
+        console.warn(`Failed to revoke permission for ${origin}:`, error);
+      });
+    }
   }
 
   await renderProviderList();
@@ -2991,7 +3151,7 @@ function createCustomProviderDeleteControlElement(provider) {
 
 function createProviderListItemElement(
   provider,
-  { isEnabledPreference, hasAccess, googleProviderMode, descriptor }
+  { isEnabledPreference, hasAccess, hasCompanionCookieAccess = true, googleProviderMode, descriptor }
 ) {
   const isCustom = descriptor?.access === 'custom';
   const isEnabled = isEnabledPreference && hasAccess;
@@ -3007,6 +3167,7 @@ function createProviderListItemElement(
   item.dataset.providerId = provider.id;
   item.dataset.enabledPreference = String(isEnabledPreference);
   item.dataset.hasAccess = String(hasAccess);
+  item.dataset.hasCompanionCookieAccess = String(hasCompanionCookieAccess);
   if (isCustom) {
     item.dataset.customProvider = 'true';
     if (isRowEditing) {
@@ -3101,7 +3262,10 @@ export async function renderProviderList() {
   const scopedRulesSupported = supportsScopedFrameRules();
   const providerAccessEntries = await Promise.all(providers.map(async (provider) => [
     provider.id,
-    await hasOptionalProviderPermission(provider.id)
+    {
+      hasAccess: await hasOptionalProviderPermission(provider.id),
+      hasCompanionCookieAccess: await hasOptionalProviderCompanionCookiePermission(provider.id)
+    }
   ]));
   const providerAccess = new Map(providerAccessEntries);
 
@@ -3136,10 +3300,13 @@ export async function renderProviderList() {
   const providerItems = sortedProviders.map((provider) => {
     const descriptor = getProviderDescriptor(provider.id);
     const isCustom = descriptor?.access === 'custom';
-    const rawAccess = providerAccess.get(provider.id) !== false;
+    const accessState = providerAccess.get(provider.id);
+    const rawAccess = accessState?.hasAccess !== false;
+    const hasCompanionCookieAccess = accessState?.hasCompanionCookieAccess !== false;
     return createProviderListItemElement(provider, {
       isEnabledPreference: enabledProviders.includes(provider.id),
       hasAccess: isCustom ? (scopedRulesSupported && rawAccess) : rawAccess,
+      hasCompanionCookieAccess,
       googleProviderMode,
       descriptor
     });
@@ -3192,6 +3359,7 @@ export async function renderProviderList() {
       const descriptor = getProviderDescriptor(providerId);
       const isCustom = descriptor?.access === 'custom';
       const hasAccess = providerItem?.dataset.hasAccess !== 'false';
+      const hasCompanionCookieAccess = providerItem?.dataset.hasCompanionCookieAccess !== 'false';
       const isEnabledPreference = providerItem?.dataset.enabledPreference === 'true';
 
       if (isCustom && !supportsScopedFrameRules() && (!isEnabledPreference || !hasAccess)) {
@@ -3199,22 +3367,35 @@ export async function renderProviderList() {
         return;
       }
 
-      if (!hasAccess && (provider?.optionalOrigins || isCustom)) {
+      // Legacy HTTPS-only users enabling a provider with companion http://
+      // cookie-mirroring origins get a synchronous user-gesture opt-in prompt.
+      // Declining preserves legacy HTTPS-only embedding without blocking enable.
+      const needsCompanionCookieOptIn =
+        hasAccess &&
+        !isEnabledPreference &&
+        !hasCompanionCookieAccess &&
+        getProviderCompanionCookieOrigins(descriptor).length > 0;
+
+      if ((!hasAccess && (provider?.optionalOrigins || isCustom)) || needsCompanionCookieOptIn) {
         try {
-          const permissionGranted = await requestOptionalProviderPermission(providerId);
-          if (!permissionGranted) {
+          const permissionGranted = needsCompanionCookieOptIn
+            ? await requestOptionalProviderCompanionCookiePermission(providerId)
+            : await requestOptionalProviderPermission(providerId);
+          if (!needsCompanionCookieOptIn && !permissionGranted) {
             showStatus('error', t('msgProviderPermissionRequired', provider.name));
             return;
           }
         } catch (error) {
           console.error(`Failed to request site access for ${providerId}:`, error);
-          showStatus('error', t('msgProviderPermissionRequestFailed', provider.name));
-          return;
+          if (!needsCompanionCookieOptIn) {
+            showStatus('error', t('msgProviderPermissionRequestFailed', provider.name));
+            return;
+          }
         }
 
         // A synced preference can already be enabled while this device still
         // needs permission. Granting access should activate it, not toggle it off.
-        if (isEnabledPreference) {
+        if (!needsCompanionCookieOptIn && isEnabledPreference) {
           await renderProviderList();
           showStatus('success', t('msgProviderSettingsUpdated'));
           return;
@@ -3400,6 +3581,7 @@ export async function toggleProvider(providerId) {
   );
 
   await saveSettings({ enabledProviders, providerOrder });
+  await requestOptionalProviderAccessSync();
   await renderProviderList();
   showStatus('success', t('msgProviderSettingsUpdated'));
 }

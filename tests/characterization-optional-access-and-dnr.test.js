@@ -244,8 +244,12 @@ describe('characterization: optional provider configs, scripting registrations, 
         });
 
         await expect(requestOptionalProviderPermission(providerId)).resolves.toBe(true);
+        const expectedRequestOrigins =
+          providerId === 'chatglm'
+            ? ['https://chatglm.cn/*', 'http://chatglm.cn/*']
+            : expected.origins;
         expect(chrome.permissions.request).toHaveBeenLastCalledWith({
-          origins: expected.origins,
+          origins: expectedRequestOrigins,
         });
       }
     });
@@ -319,9 +323,18 @@ describe('characterization: optional provider configs, scripting registrations, 
       const scopedState = installStatefulDnr({ topDomainsSupported: true });
       await syncOptionalProviderAccess(allSixIds);
 
-      expect(chrome.scripting.registerContentScripts).toHaveBeenCalledWith(
-        allSixIds.map((id) => EXPECTED_OPTIONAL_CONFIGS[id].contentScript)
-      );
+      expect(chrome.scripting.registerContentScripts).toHaveBeenCalledWith([
+        ...allSixIds.map((id) => EXPECTED_OPTIONAL_CONFIGS[id].contentScript),
+        {
+          id: 'chatglm-cookie-scripts',
+          matches: ['https://chatglm.cn/*'],
+          js: ['content-scripts/custom-provider-cookie-consent.js'],
+          allFrames: true,
+          persistAcrossSessions: true,
+          world: 'MAIN',
+          runAt: 'document_start',
+        },
+      ]);
       expect(scopedState.dynamicRules.map(({ id }) => id)).toEqual([
         3001,
         3007,
@@ -339,9 +352,10 @@ describe('characterization: optional provider configs, scripting registrations, 
       expect(scopedState.staticEnabled).toBe(false);
 
       // 2) Unscoped fallback (topDomains unsupported)
-      chrome.scripting.getRegisteredContentScripts.mockResolvedValue(
-        allSixIds.map((id) => ({ id: `${id}-scripts` }))
-      );
+      chrome.scripting.getRegisteredContentScripts.mockResolvedValue([
+        ...allSixIds.map((id) => ({ id: `${id}-scripts` })),
+        { id: 'chatglm-cookie-scripts' },
+      ]);
       const unscopedState = installStatefulDnr({
         topDomainsSupported: false,
         staticEnabled: false,
@@ -351,7 +365,7 @@ describe('characterization: optional provider configs, scripting registrations, 
       await syncOptionalProviderAccess(['qwen-global', 'zai-global', 'yuanbao']);
 
       expect(chrome.scripting.unregisterContentScripts).toHaveBeenCalledWith({
-        ids: ['qwen-cn-scripts', 'chatglm-scripts', 'aistudio-scripts'],
+        ids: ['qwen-cn-scripts', 'chatglm-scripts', 'aistudio-scripts', 'chatglm-cookie-scripts'],
       });
       expect(unscopedState.staticEnabled).toBe(true);
       expect(unscopedState.dynamicRules).toEqual([

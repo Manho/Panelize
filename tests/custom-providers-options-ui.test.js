@@ -459,7 +459,11 @@ describe('B3.2 custom web providers in Options', () => {
 
     await vi.waitFor(() => {
       expect(chrome.permissions.remove).toHaveBeenCalledWith({
-        origins: ['https://rollback.example.com/*'],
+        origins: [
+          'https://rollback.example.com/*',
+          'https://*.example.com/*',
+          'http://*.example.com/*',
+        ],
       });
     });
     expect(errorEl.textContent).toBe(EN_MESSAGES.errCustomProviderSaveFailed.message);
@@ -792,5 +796,409 @@ describe('B3.2 custom web providers in Options', () => {
     expect(importResult.skipped).toContain('multiPanelProviders');
     expect(areas.sync.multiPanelProviders).toBeUndefined();
     expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toEqual([customRecord]);
+  });
+
+  it('runs optional-access/cookie cleanup BEFORE revoking host permissions on delete and origin-changing inline edit, and preserves legacy HTTPS-only grants when companion http:// is declined', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const customRecord = {
+      id: 'custom-1234567890',
+      name: 'Legacy HTTPS AI',
+      url: 'https://legacy-a.example.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+
+    const callOrder = [];
+    const grantedOrigins = new Set(['https://legacy-a.example.com/*']);
+
+    installChromeEnv({
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [customRecord],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', customRecord.id],
+      },
+      grantedOrigins: [...grantedOrigins],
+    });
+
+    chrome.permissions.contains.mockImplementation(({ origins = [] } = {}) =>
+      Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+    );
+    chrome.runtime.sendMessage.mockImplementation((msg) => {
+      if (msg?.action === 'syncOptionalProviderAccess') {
+        callOrder.push('syncOptionalProviderAccess');
+      }
+      return Promise.resolve({ success: true });
+    });
+    chrome.permissions.remove.mockImplementation(({ origins = [] } = {}) => {
+      callOrder.push(`permissions.remove:${origins.join(',')}`);
+      for (const origin of origins) {
+        grantedOrigins.delete(origin);
+      }
+      return Promise.resolve(true);
+    });
+
+    const optionsMod = await import('../options/options.js');
+    await vi.waitFor(() => {
+      expect(document.querySelector(`[data-provider-id="${customRecord.id}"]`)).not.toBeNull();
+    });
+
+    // 1) Legacy HTTPS-only user edits name on same origin and declines companion http:// request ->
+    //    core https:// grant preserves the edit without error.
+    const row = document.querySelector(`[data-provider-id="${customRecord.id}"]`);
+    row.querySelector('[data-action="edit-custom-provider"]').click();
+    await vi.waitFor(() => {
+      expect(document.querySelector('.custom-provider-inline-edit')).not.toBeNull();
+    });
+    const inlineForm = document.querySelector('.custom-provider-inline-edit');
+    inlineForm.querySelector(`#inline-edit-${customRecord.id}-name`).value = 'Legacy HTTPS AI Renamed';
+    chrome.permissions.request.mockResolvedValueOnce(false);
+    inlineForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector(`[data-provider-id="${customRecord.id}"] .provider-name`)?.textContent
+      ).toBe('Legacy HTTPS AI Renamed');
+    });
+    expect(chrome.permissions.request).toHaveBeenCalledWith({
+      origins: [
+        'https://legacy-a.example.com/*',
+        'https://*.example.com/*',
+        'http://*.example.com/*',
+      ],
+    });
+
+    // 2) Changing origin via inline edit runs syncOptionalProviderAccess BEFORE chrome.permissions.remove
+    //    so mirrored cookies on the old origin are cleaned up while host permission is still held.
+    //    Because migrated-b.example.com shares the *.example.com parent-domain companion origins,
+    //    only https://legacy-a.example.com/* is revoked on edit.
+    callOrder.length = 0;
+    document
+      .querySelector(`[data-provider-id="${customRecord.id}"] [data-action="edit-custom-provider"]`)
+      .click();
+    await vi.waitFor(() => {
+      expect(document.querySelector('.custom-provider-inline-edit')).not.toBeNull();
+    });
+    const inlineForm2 = document.querySelector('.custom-provider-inline-edit');
+    inlineForm2.querySelector(`#inline-edit-${customRecord.id}-url`).value =
+      'https://migrated-b.example.com/';
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      for (const origin of origins) {
+        grantedOrigins.add(origin);
+      }
+      return Promise.resolve(true);
+    });
+    inlineForm2.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(callOrder.some((entry) => entry.startsWith('permissions.remove:'))).toBe(true);
+    });
+    expect(callOrder[0]).toBe('syncOptionalProviderAccess');
+    expect(callOrder[1]).toBe('permissions.remove:https://legacy-a.example.com/*');
+
+    // 3) Deleting custom provider also runs syncOptionalProviderAccess BEFORE chrome.permissions.remove
+    //    and now revokes both the origin and its unused *.example.com companion patterns.
+    callOrder.length = 0;
+    await optionsMod.deleteCustomProviderEntry(customRecord.id);
+    expect(callOrder[0]).toBe('syncOptionalProviderAccess');
+    expect(callOrder[1]).toBe(
+      'permissions.remove:https://migrated-b.example.com/*,https://*.example.com/*,http://*.example.com/*'
+    );
+  });
+
+  it('preserves shared parent-domain companion permissions when deleting one subdomain provider and prompts legacy subdomain toggles to opt into *.parentDomain', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const mimoStudioRecord = {
+      id: 'custom-1111111111',
+      name: 'MiMo Studio',
+      url: 'https://aistudio.xiaomimimo.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+    const mimoChatRecord = {
+      id: 'custom-2222222222',
+      name: 'MiMo Chat',
+      url: 'https://chat.xiaomimimo.com/',
+      frameRuleId: 10001,
+      createdAt: 1700000001000,
+    };
+    const mimoApiRecord = {
+      id: 'custom-3333333333',
+      kind: 'api',
+      name: 'MiMo API',
+      endpointUrl: 'https://api.xiaomimimo.com/v1/chat/completions',
+      model: 'mimo-v1',
+      hasApiKey: false,
+      frameRuleId: 10002,
+      createdAt: 1700000002000,
+    };
+
+    // Start with only legacy per-host origins on MiMo Studio + MiMo Chat + MiMo API
+    const grantedOrigins = new Set([
+      'https://aistudio.xiaomimimo.com/*',
+      'http://aistudio.xiaomimimo.com/*',
+      'https://chat.xiaomimimo.com/*',
+      'https://api.xiaomimimo.com/*',
+    ]);
+
+    const { areas } = installChromeEnv({
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [mimoStudioRecord, mimoChatRecord, mimoApiRecord],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', mimoStudioRecord.id, mimoChatRecord.id, mimoApiRecord.id],
+      },
+      grantedOrigins: [...grantedOrigins],
+    });
+
+    chrome.permissions.contains.mockImplementation(({ origins = [] } = {}) =>
+      Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+    );
+    chrome.permissions.remove.mockImplementation(({ origins = [] } = {}) => {
+      for (const origin of origins) {
+        grantedOrigins.delete(origin);
+      }
+      return Promise.resolve(true);
+    });
+    chrome.runtime.sendMessage.mockResolvedValue({ success: true });
+
+    const optionsMod = await import('../options/options.js');
+    await vi.waitFor(() => {
+      const row = document.querySelector(`[data-provider-id="${mimoStudioRecord.id}"]`);
+      expect(row).not.toBeNull();
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('false');
+    });
+
+    // 1) Toggle MiMo Studio OFF then ON -> synchronously prompts for *.xiaomimimo.com companion origins
+    document
+      .querySelector(`[data-provider-id="${mimoStudioRecord.id}"] .toggle-switch`)
+      .click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).not.toContain(mimoStudioRecord.id);
+    });
+
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      expect(origins).toEqual(['https://*.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*']);
+      origins.forEach((origin) => grantedOrigins.add(origin));
+      return Promise.resolve(true);
+    });
+    document
+      .querySelector(`[data-provider-id="${mimoStudioRecord.id}"] .toggle-switch`)
+      .click();
+    await vi.waitFor(() => {
+      const row = document.querySelector(`[data-provider-id="${mimoStudioRecord.id}"]`);
+      expect(row.dataset.hasCompanionCookieAccess).toBe('true');
+    });
+
+    // 2) Delete MiMo Studio while MiMo Chat (web) and MiMo API (api) still exist ->
+    //    must ONLY revoke https://aistudio.xiaomimimo.com/* and keep both *.xiaomimimo.com patterns!
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(mimoStudioRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://aistudio.xiaomimimo.com/*'],
+    });
+
+    // 3) Delete MiMo Chat while MiMo API (https://api.xiaomimimo.com/*) still exists ->
+    //    must revoke https://chat.xiaomimimo.com/* and http://*.xiaomimimo.com/*,
+    //    but MUST NOT revoke https://*.xiaomimimo.com/* because it covers https://api.xiaomimimo.com/*!
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(mimoChatRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://chat.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*'],
+    });
+    expect(grantedOrigins.has('https://*.xiaomimimo.com/*')).toBe(true);
+
+    // 4) Delete MiMo API (the final sibling) -> must revoke BOTH its exact origin
+    //    AND the retained https://*.xiaomimimo.com/* wildcard so nothing leaks.
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(mimoApiRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://api.xiaomimimo.com/*', 'https://*.xiaomimimo.com/*'],
+    });
+    expect(grantedOrigins.has('https://api.xiaomimimo.com/*')).toBe(false);
+    expect(grantedOrigins.has('https://*.xiaomimimo.com/*')).toBe(false);
+    expect(grantedOrigins.has('http://*.xiaomimimo.com/*')).toBe(false);
+  });
+
+  it('does not leak a web provider parent wildcard after deleting both the web provider and an exact-host API sibling', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const webRecord = {
+      id: 'custom-4444444444',
+      name: 'Example Studio Web',
+      url: 'https://aistudio.example.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+    const sameHostApiRecord = {
+      id: 'custom-5555555555',
+      kind: 'api',
+      name: 'Example Studio API',
+      endpointUrl: 'https://aistudio.example.com/v1/chat/completions',
+      model: 'example-model',
+      hasApiKey: false,
+      frameRuleId: 10001,
+      createdAt: 1700000001000,
+    };
+
+    const { grantedSet } = installChromeEnv({
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [webRecord, sameHostApiRecord],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', webRecord.id, sameHostApiRecord.id],
+      },
+      grantedOrigins: [
+        'https://aistudio.example.com/*',
+        'https://*.example.com/*',
+        'http://*.example.com/*',
+      ],
+    });
+    chrome.runtime.sendMessage.mockResolvedValue({ success: true });
+
+    const optionsMod = await import('../options/options.js');
+    await vi.waitFor(() => {
+      expect(document.querySelector(`[data-provider-id="${webRecord.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`[data-provider-id="${sameHostApiRecord.id}"]`)).not.toBeNull();
+    });
+
+    // Step 1: Delete web provider while same-host API sibling remains ->
+    // revokes unused http://*.example.com/* immediately while retaining exact origin and https://*.example.com/* for API sibling.
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(webRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['http://*.example.com/*'],
+    });
+    expect(grantedSet.has('https://aistudio.example.com/*')).toBe(true);
+    expect(grantedSet.has('https://*.example.com/*')).toBe(true);
+    expect(grantedSet.has('http://*.example.com/*')).toBe(false);
+
+    // Step 2: Delete same-host API sibling -> revokes BOTH exact origin AND retained https://*.example.com/* wildcard.
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(sameHostApiRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://aistudio.example.com/*', 'https://*.example.com/*'],
+    });
+    expect(grantedSet.has('https://aistudio.example.com/*')).toBe(false);
+    expect(grantedSet.has('https://*.example.com/*')).toBe(false);
+    expect(grantedSet.has('http://*.example.com/*')).toBe(false);
+  });
+
+  it('lets legacy HTTPS-only Zhipu users opt into companion http://chatglm.cn/* from the provider toggle while keeping Zhipu enabled if declined', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const grantedOrigins = new Set(['https://chatglm.cn/*']);
+    const { areas } = installChromeEnv({
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', 'chatglm'],
+      },
+      grantedOrigins: [...grantedOrigins],
+    });
+
+    chrome.permissions.contains.mockImplementation(({ origins = [] } = {}) =>
+      Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+    );
+    chrome.runtime.sendMessage.mockResolvedValue({ success: true });
+
+    await import('../options/options.js');
+    await vi.waitFor(() => {
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row).not.toBeNull();
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('false');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(true);
+    });
+
+    // 1) Toggling OFF must NOT prompt for companion permission.
+    chrome.permissions.request.mockClear();
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toEqual(['chatgpt']);
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row.dataset.enabledPreference).toBe('false');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(false);
+    });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+
+    // 2) Toggling ON synchronously requests companion http://chatglm.cn/* in the user gesture.
+    //    If declined, Zhipu still becomes enabled with legacy HTTPS-only access.
+    let microtaskTicked = false;
+    let calledSynchronously = false;
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      calledSynchronously = !microtaskTicked;
+      expect(origins).toEqual(['http://chatglm.cn/*']);
+      return Promise.resolve(false);
+    });
+    Promise.resolve().then(() => {
+      microtaskTicked = true;
+    });
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    expect(chrome.permissions.request).toHaveBeenCalledTimes(1);
+    expect(calledSynchronously).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toContain('chatglm');
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row.dataset.enabledPreference).toBe('true');
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('false');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(true);
+    });
+
+    // 3) Toggle OFF then ON again and APPROVE companion grant -> both origins granted,
+    //    syncOptionalProviderAccess activates cookie sync, and companion flag flips to true.
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toEqual(['chatgpt']);
+    });
+
+    chrome.runtime.sendMessage.mockClear();
+    chrome.permissions.request.mockClear();
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      expect(origins).toEqual(['http://chatglm.cn/*']);
+      origins.forEach((origin) => grantedOrigins.add(origin));
+      return Promise.resolve(true);
+    });
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toContain('chatglm');
+      const row = document.querySelector('[data-provider-id="chatglm"]');
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('true');
+      expect(row.querySelector('.toggle-switch').classList.contains('active')).toBe(true);
+    });
+    expect(grantedOrigins.has('https://chatglm.cn/*')).toBe(true);
+    expect(grantedOrigins.has('http://chatglm.cn/*')).toBe(true);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      action: 'syncOptionalProviderAccess',
+    });
+
+    // 4) Once companion permission is granted, toggling OFF then ON does not re-prompt.
+    chrome.permissions.request.mockClear();
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toEqual(['chatgpt']);
+    });
+    document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).toContain('chatglm');
+    });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
   });
 });
