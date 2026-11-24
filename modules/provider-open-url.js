@@ -1,3 +1,9 @@
+import {
+  extractGoogleAccountIndexFromUrl,
+  getGeminiTopLevelFallbackUrl,
+  normalizeGeminiAccountIndex,
+  stripGoogleAccountPathPrefix
+} from './gemini-account.js';
 import { getGoogleProviderUrl, normalizeGoogleProviderMode } from './google-mode.js';
 import { getProviderDescriptor } from './provider-registry.js';
 
@@ -121,13 +127,20 @@ function isGenericPath(url, paths) {
   return paths.includes(url.pathname);
 }
 
-export function getProviderFallbackUrl(provider, providerMode = null) {
+export function getProviderFallbackUrl(provider, providerMode = null, options = {}) {
   if (!provider) {
     return '';
   }
 
   if (provider.id === 'google') {
     return getGoogleProviderUrl(normalizeGoogleProviderMode(providerMode));
+  }
+
+  if (provider.id === 'gemini') {
+    const accountIndex = normalizeGeminiAccountIndex(options?.geminiAccountIndex);
+    if (accountIndex !== null) {
+      return getGeminiTopLevelFallbackUrl(accountIndex);
+    }
   }
 
   const descriptor = getProviderDescriptor(provider.id);
@@ -167,8 +180,10 @@ export function isProviderCurrentUrl(providerId, rawUrl) {
       return url.pathname.startsWith('/c/') && url.searchParams.get('temporary-chat') !== 'true';
     case 'claude':
       return url.pathname.startsWith('/chat/') && !url.searchParams.has('incognito');
-    case 'gemini':
-      return url.pathname.startsWith('/app/') && url.pathname !== '/app/';
+    case 'gemini': {
+      const geminiPath = stripGoogleAccountPathPrefix(url.pathname);
+      return geminiPath.startsWith('/app/') && geminiPath !== '/app/';
+    }
     case 'grok':
       return (url.pathname.startsWith('/c/') || url.pathname.startsWith('/chat/')) && url.hash !== '#private';
     case 'deepseek':
@@ -211,10 +226,23 @@ export function isProviderCurrentUrl(providerId, rawUrl) {
   }
 }
 
-export function getProviderOpenUrl(provider, reportedUrl = null, providerMode = null) {
+export function getProviderOpenUrl(provider, reportedUrl = null, providerMode = null, options = {}) {
   if (provider && isProviderCurrentUrl(provider.id, reportedUrl)) {
     return new URL(reportedUrl).toString();
   }
 
-  return getProviderFallbackUrl(provider, providerMode);
+  if (provider?.id === 'gemini') {
+    const parsedReported = parseHttpUrl(reportedUrl);
+    const reportedAccountIndex =
+      parsedReported && hasAllowedProviderHost('gemini', parsedReported)
+        ? extractGoogleAccountIndexFromUrl(reportedUrl)
+        : null;
+    const effectiveAccountIndex =
+      reportedAccountIndex ?? normalizeGeminiAccountIndex(options?.geminiAccountIndex);
+    if (effectiveAccountIndex !== null) {
+      return getGeminiTopLevelFallbackUrl(effectiveAccountIndex);
+    }
+  }
+
+  return getProviderFallbackUrl(provider, providerMode, options);
 }

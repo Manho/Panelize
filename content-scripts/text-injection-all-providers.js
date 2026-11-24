@@ -149,16 +149,19 @@
     gemini: ['.ql-editor'],
     grok: ['.tiptap', '.ProseMirror', 'textarea'],
     deepseek: [
+      'textarea[placeholder="Message DeepSeek"]',
+      'textarea[placeholder*="DeepSeek"]:not([name="user query"])',
       'textarea[placeholder="How can I help you?"]',
-      'textarea.ds-scroll-area',
-      'textarea[class*="ds-"]',
-      'textarea',
+      'textarea.ds-scroll-area:not([name="user query"])',
+      'textarea[class*="ds-"]:not([name="user query"])',
+      'textarea:not([name="user query"])',
       'div[contenteditable="true"]'
     ],
     kimi: [
-      '.chat-input-editor',
       'div[contenteditable="true"].chat-input-editor',
       'div.chat-input-editor[contenteditable]',
+      '.chat-input-editor[data-lexical-editor="true"]',
+      '.chat-input-editor',
       'div[contenteditable="true"]'
     ],
     doubao: [
@@ -326,12 +329,15 @@
       // Current site: a design-system div button that is disabled by class.
       'div[role="button"].ds-button--primary.ds-button--filled:not(.ds-button--disabled)',
       'button[aria-label="Send"]',
-      'button[type="submit"]'
+      'button[type="submit"]',
+      '.ds-icon-button[role="button"]:not([aria-disabled="true"]):not(.ds-icon-button--disabled):has(svg path[d*="M8.3125"])',
+      'button.ds-icon-button:not([aria-disabled="true"]):not(.ds-icon-button--disabled):has(svg path[d*="M8.3125"])'
     ],
     kimi: [
       // Priority: clickable send button containers that are not disabled
       '.send-button-container:not(.disabled)',
-      'div[class*="send"]:not([class*="disabled"])',
+      '.send-button:not(.disabled)',
+      '[role="button"][class*="send"]:not([class*="disabled"])',
       // Backup: look for send icon and click its parent
       'svg[name="Send"]',
       '.send-icon',
@@ -702,6 +708,10 @@
       message.succeededImageIds = result.succeededImageIds;
     }
 
+    if (!result.ok && Array.isArray(result?.attemptedImageIds)) {
+      message.attemptedImageIds = result.attemptedImageIds;
+    }
+
     if (!result.ok) {
       message.reason = result.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR;
     }
@@ -732,6 +742,90 @@
       url: window.location.href,
       context: MULTI_PANEL_PROVIDER_STATUS_CONTEXT
     });
+  }
+
+  function getCurrentGoogleAccountPrefix() {
+    const match = /^\/u\/(\d+)(?:\/|$)/.exec(window.location.pathname || '');
+    return match ? `/u/${match[1]}` : '';
+  }
+
+  function isSameOriginGeminiAccountSwitchUrl(targetUrl) {
+    if (!targetUrl || targetUrl.origin !== window.location.origin) {
+      return false;
+    }
+
+    if (targetUrl.searchParams.has('authuser')) {
+      return true;
+    }
+
+    const match = /^\/u\/(\d+)(?:\/|$)/.exec(targetUrl.pathname);
+    if (!match) {
+      return false;
+    }
+
+    const strippedPath = targetUrl.pathname.replace(/^\/u\/\d+(?=\/|$)/, '') || '/';
+    if (strippedPath === '/' || strippedPath === '/app' || strippedPath === '/app/') {
+      return true;
+    }
+
+    return `/u/${match[1]}` !== getCurrentGoogleAccountPrefix();
+  }
+
+  /**
+   * Keeps same-origin Gemini Google account-switch links (`/u/<n>/app`, `?authuser=<n>`)
+   * inside the embedded panel iframe when the page marks them `target="_blank"`
+   * or `target="_top"`, without hijacking ordinary same-account conversation links.
+   */
+  function setupSameOriginAccountNavigation() {
+    document.addEventListener('click', (event) => {
+      if (!isMultiPanelFrame()) {
+        return;
+      }
+
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const provider = detectProvider();
+      if (provider !== 'gemini') {
+        return;
+      }
+
+      const rawTarget = event.composedPath?.()[0] || event.target;
+      const anchor = typeof rawTarget?.closest === 'function'
+        ? rawTarget.closest('a[href]')
+        : rawTarget?.parentElement?.closest?.('a[href]') || null;
+      if (!anchor) {
+        return;
+      }
+
+      const targetAttr = (anchor.getAttribute('target') || '').trim().toLowerCase();
+      if (targetAttr !== '_blank' && targetAttr !== '_top' && targetAttr !== '_parent') {
+        return;
+      }
+
+      let resolvedUrl;
+      try {
+        resolvedUrl = new URL(anchor.getAttribute('href'), window.location.href);
+      } catch {
+        return;
+      }
+
+      if (!isSameOriginGeminiAccountSwitchUrl(resolvedUrl)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      window.location.assign(resolvedUrl.toString());
+    }, true);
   }
 
   function setupProviderLocationReporting() {
@@ -1191,11 +1285,52 @@
     return findFirstVisibleElement(getGoogleInputSelectors(mode));
   }
 
+  const touchedFormControls = new WeakSet();
+
   function setFormControlValue(element, value) {
+    const previousValue = element.value ?? '';
+    const wasPreviouslyTouched = touchedFormControls.has(element);
+    touchedFormControls.add(element);
+
+    try {
+      element.focus({ preventScroll: true });
+    } catch {
+      element.focus?.();
+    }
+
     const prototype = element.tagName === 'INPUT'
       ? window.HTMLInputElement.prototype
       : window.HTMLTextAreaElement.prototype;
     const nativeSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+
+    // Chrome MV3 content scripts run in an isolated world where React's main-world
+    // `node._valueTracker` expando is invisible. When re-filling a previously touched
+    // control that was cleared or left at the same value, flush an empty input event
+    // first so React's main-world tracker syncs to '' before observing the new value.
+    if (
+      wasPreviouslyTouched &&
+      !element._valueTracker &&
+      value !== '' &&
+      (previousValue === '' || previousValue === value)
+    ) {
+      if (previousValue !== '') {
+        if (nativeSetter) {
+          nativeSetter.call(element, '');
+        } else {
+          element.value = '';
+        }
+      }
+      try {
+        element.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          composed: true,
+          inputType: 'deleteContentBackward',
+          data: null
+        }));
+      } catch {
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
 
     if (nativeSetter) {
       nativeSetter.call(element, value);
@@ -1203,11 +1338,36 @@
       element.value = value;
     }
 
-    element.dispatchEvent(new Event('input', { bubbles: true }));
+    // Reset React's internal _valueTracker so controlled inputs (e.g. DeepSeek)
+    // always observe programmatic refills even after clearing or deleting text.
+    if (element._valueTracker && typeof element._valueTracker.setValue === 'function') {
+      try {
+        element._valueTracker.setValue(
+          previousValue === value ? (value === '' ? '__panelize_cleared__' : '') : previousValue
+        );
+      } catch {
+        // Ignore React tracker errors
+      }
+    }
+
+    try {
+      element.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        composed: true,
+        inputType: value === '' ? 'deleteContentBackward' : 'insertText',
+        data: value === '' ? null : value
+      }));
+    } catch {
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
     element.dispatchEvent(new Event('change', { bubbles: true }));
 
     if (typeof element.value === 'string') {
-      element.selectionStart = element.selectionEnd = element.value.length;
+      try {
+        element.selectionStart = element.selectionEnd = element.value.length;
+      } catch {
+        // Ignore selection range errors on unsupported input types
+      }
     }
   }
 
@@ -1340,7 +1500,16 @@
       return true;
     }
 
-    return !element.classList.contains('disabled');
+    if (
+      element.classList.contains('disabled') ||
+      element.classList.contains('ds-button--disabled') ||
+      element.classList.contains('ds-icon-button--disabled') ||
+      element.closest?.('.disabled, .ds-button--disabled, .ds-icon-button--disabled, [aria-disabled="true"]')
+    ) {
+      return false;
+    }
+
+    return true;
   }
 
   function fillGoogleSearchInput(text) {
@@ -1502,14 +1671,49 @@
     }
   }
 
-  // Find text input element by selector
+  function isUsableTextInputCandidate(element) {
+    if (!element || element.disabled || element.readOnly || element.hidden) {
+      return false;
+    }
+    if (
+      element.getAttribute('aria-hidden') === 'true' ||
+      element.getAttribute('aria-disabled') === 'true' ||
+      element.getAttribute('aria-readonly') === 'true' ||
+      element.getAttribute('contenteditable') === 'false'
+    ) {
+      return false;
+    }
+    const style = typeof window.getComputedStyle === 'function'
+      ? window.getComputedStyle(element)
+      : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse')) {
+      return false;
+    }
+    return true;
+  }
+
+  // Find text input element by selector, preferring visible & enabled composers
+  // over hidden helper/inline-edit textareas earlier in DOM order.
   function findTextInputElement(selector) {
     if (!selector || typeof selector !== 'string') {
       return null;
     }
 
     try {
-      return document.querySelector(selector);
+      const matches = document.querySelectorAll(selector);
+      let nonHiddenFallback = null;
+      for (const candidate of matches) {
+        if (!isUsableTextInputCandidate(candidate)) {
+          continue;
+        }
+        if (isVisibleElement(candidate)) {
+          return candidate;
+        }
+        if (!nonHiddenFallback) {
+          nonHiddenFallback = candidate;
+        }
+      }
+      return nonHiddenFallback;
     } catch (error) {
       console.error('Error finding element:', error);
       return null;
@@ -1593,7 +1797,7 @@
   }
 
   // Find and click send button
-  function clickSendButton(provider, providerMode = null) {
+  function clickSendButton(provider, providerMode = null, { allowEnterFallback = true } = {}) {
     if (provider === 'google') {
       return clickGoogleSendButton(providerMode);
     }
@@ -1620,14 +1824,21 @@
 
     console.log('[Text Injection] Attempting to click send button for provider:', provider);
 
-    // ChatGPT's send button lives in the composer's form; searching only there
-    // keeps another form's Send (e.g. an inline edit) from being clicked.
+    // ChatGPT's send button lives in the composer's form; DeepSeek's lives in the
+    // composer ancestor. Scoping the search keeps unrelated toolbar/inline buttons
+    // from being clicked.
     const searchRoot = provider === 'chatgpt'
       ? getChatgptComposer()?.findForm() || document
-      : document;
+      : provider === 'deepseek'
+        ? findClosestAncestorContaining(findProviderInput('deepseek'), 'div[role="button"], button') || document
+        : document;
 
-    // Try each selector
-    for (const selector of selectors) {
+    const hasDisabledPrimaryDeepSeekSend = provider === 'deepseek' && Boolean(
+      searchRoot.querySelector('div[role="button"].ds-button--primary.ds-button--filled.ds-button--disabled')
+    );
+
+    // Try each selector (unless DeepSeek's primary send button is present and disabled)
+    for (const selector of hasDisabledPrimaryDeepSeekSend ? [] : selectors) {
       try {
         const elements = searchRoot.querySelectorAll(selector);
         console.log(`[Text Injection] Found ${elements.length} elements with selector:`, selector);
@@ -1688,25 +1899,27 @@
       }
     }
 
+    if (!allowEnterFallback) {
+      return false;
+    }
+
     // Special handling for DeepSeek - trigger Enter key if button not found
     if (provider === 'deepseek') {
       console.log('[Text Injection] DeepSeek send button not found, trying Enter key');
       try {
-        const inputSelectors = PROVIDER_SELECTORS.deepseek;
-        for (const selector of inputSelectors) {
-          const input = document.querySelector(selector);
-          if (input) {
-            console.log('[Text Injection] Triggering Enter key on DeepSeek input');
-            // Trigger multiple events for better compatibility
-            const events = [
-              new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
-              new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
-              new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })
-            ];
+        const input = findProviderInput('deepseek');
+        if (input) {
+          console.log('[Text Injection] Triggering Enter key on DeepSeek input');
+          input.focus();
+          // Trigger multiple events for better compatibility
+          const events = [
+            new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
+            new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
+            new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })
+          ];
 
-            events.forEach(event => input.dispatchEvent(event));
-            return true;
-          }
+          events.forEach(event => input.dispatchEvent(event));
+          return true;
         }
       } catch (error) {
         console.warn('[Text Injection] Error in DeepSeek Enter key fallback:', error);
@@ -1750,6 +1963,53 @@
     console.warn('[Text Injection] Send button not found or disabled for:', provider);
     console.warn('[Text Injection] Available buttons:', document.querySelectorAll('button'));
     return false;
+  }
+
+  function hasDisabledSlowSendControl(provider) {
+    if (provider === 'deepseek') {
+      return Boolean(
+        document.querySelector(
+          'div[role="button"].ds-button--primary.ds-button--filled.ds-button--disabled, .ds-icon-button[aria-disabled="true"], .ds-icon-button--disabled'
+        )
+      );
+    }
+    if (provider === 'kimi') {
+      return Boolean(
+        document.querySelector('.send-button-container.disabled, .send-button.disabled')
+      );
+    }
+    return false;
+  }
+
+  function scheduleAutoSubmit(provider, providerMode = null) {
+    const initialDelay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
+    const extraRetryDelays = SLOW_COMPOSER_PROVIDERS.has(provider) ? [400, 800, 1200] : [];
+
+    setTimeout(() => {
+      const waitForSlowControl = hasDisabledSlowSendControl(provider);
+      if (clickSendButton(provider, providerMode, { allowEnterFallback: !waitForSlowControl })) {
+        return;
+      }
+      if (!waitForSlowControl || extraRetryDelays.length === 0) {
+        console.warn('[Text Injection] Failed to click send button for', provider);
+        return;
+      }
+
+      let settled = false;
+      extraRetryDelays.forEach((retryOffset, index) => {
+        setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          const isLastAttempt = index === extraRetryDelays.length - 1;
+          if (clickSendButton(provider, providerMode, { allowEnterFallback: isLastAttempt })) {
+            settled = true;
+          } else if (isLastAttempt) {
+            console.warn('[Text Injection] Failed to click send button for', provider);
+          }
+        }, retryOffset);
+      });
+    }, initialDelay);
   }
 
   // Special handler for Google to create "new search"
@@ -2522,9 +2782,10 @@
     // Ultimate fallback: navigate to new chat URL
     const fallbackUrl = NEW_CHAT_URLS[provider];
     if (fallbackUrl) {
+      const geminiAccountPrefix = provider === 'gemini' ? getCurrentGoogleAccountPrefix() : '';
       const resolvedFallbackUrl = (provider === 'chatgpt' && options?.temporaryChat === true)
         ? 'https://chatgpt.com/?temporary-chat=true'
-        : fallbackUrl;
+        : (geminiAccountPrefix ? `https://gemini.google.com${geminiAccountPrefix}/app` : fallbackUrl);
       if (provider === 'chatgpt') {
         clearChatgptComposerDraftOnce();
         markPendingChatgptNewChatComposerClear();
@@ -2575,6 +2836,7 @@
           range.collapse(false); // Collapse to end
           selection.removeAllRanges();
           selection.addRange(range);
+          document.dispatchEvent(new Event('selectionchange'));
         } catch (e) {
           // Ignore selection errors in cross-origin context
         }
@@ -2592,6 +2854,53 @@
 
           if (!element.dispatchEvent(beforeInputEvent)) {
             return true;
+          }
+        }
+
+        if (provider === 'kimi' || element.getAttribute('data-lexical-editor') === 'true') {
+          // Kimi's Lexical editor reconciles `beforeinput` asynchronously on microtasks;
+          // Chromium's synchronous `execCommand('insertText')` splits multiline text on `\n`
+          // and drops lines during long prompts. Dispatching a cancelable `paste` event lets
+          // Lexical insert the full text atomically, falling back cleanly when unhandled.
+          try {
+            if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
+              const beforeText = element.textContent || '';
+              const dataTransfer = new DataTransfer();
+              dataTransfer.setData('text/plain', text);
+              const pasteEvent = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                clipboardData: dataTransfer
+              });
+              if (!pasteEvent.clipboardData) {
+                Object.defineProperty(pasteEvent, 'clipboardData', {
+                  configurable: true,
+                  value: dataTransfer
+                });
+              }
+              element.dispatchEvent(pasteEvent);
+              if (pasteEvent.defaultPrevented) {
+                queueMicrotask(() => {
+                  if ((element.textContent || '') !== beforeText) {
+                    return;
+                  }
+                  let fallbackInserted = false;
+                  try {
+                    fallbackInserted = document.execCommand('insertText', false, text);
+                  } catch {
+                    // Ignore unsupported execCommand fallback
+                  }
+                  if (!fallbackInserted && (element.textContent || '') === beforeText) {
+                    element.appendChild(document.createTextNode(text));
+                    element.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                });
+                return true;
+              }
+            }
+          } catch (e) {
+            // Fall through to execCommand / DOM insertion if synthetic paste is unavailable
           }
         }
 
@@ -2655,11 +2964,86 @@
 
   // ===== Image Injection Functions =====
 
+  const CONTENTEDITABLE_BLOCK_TAGS = new Set([
+    'P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
+  ]);
+
+  function readContentEditableBlockText(root) {
+    if (!root) {
+      return '';
+    }
+
+    const extractInline = (node) => {
+      if (!node) return '';
+      if (node.nodeType === 3) {
+        return node.nodeValue || '';
+      }
+      if (node.nodeType !== 1) {
+        return '';
+      }
+      if (node.tagName === 'BR') {
+        return '\n';
+      }
+      let out = '';
+      for (const child of node.childNodes) {
+        out += extractInline(child);
+      }
+      return out;
+    };
+
+    const children = [...(root.childNodes || [])];
+    const hasBlockChild = children.some(
+      child => child.nodeType === 1 && CONTENTEDITABLE_BLOCK_TAGS.has(child.tagName)
+    );
+    if (!hasBlockChild) {
+      return extractInline(root).replace(/\r\n/g, '\n');
+    }
+
+    const lines = [];
+    let inlineBuffer = '';
+    const flushInline = () => {
+      if (inlineBuffer.length > 0) {
+        lines.push(inlineBuffer.replace(/\n$/, ''));
+        inlineBuffer = '';
+      }
+    };
+
+    for (const child of children) {
+      if (child.nodeType === 1 && CONTENTEDITABLE_BLOCK_TAGS.has(child.tagName)) {
+        flushInline();
+        const rawBlock = extractInline(child).replace(/\r\n/g, '\n');
+        // Empty paragraph `<p><br></p>` represents a single blank line `''`
+        lines.push(rawBlock === '\n' ? '' : rawBlock.replace(/\n$/, ''));
+      } else {
+        inlineBuffer += extractInline(child);
+      }
+    }
+    flushInline();
+    return lines.join('\n');
+  }
+
   // Helper function to inject text into provider's input field
   function inputEndsWithText(element, text) {
-    const isFormControl = element?.tagName === 'TEXTAREA' || element?.tagName === 'INPUT';
-    const currentText = isFormControl ? element.value : element?.textContent;
-    return typeof currentText === 'string' && currentText.endsWith(text);
+    if (!element || typeof text !== 'string') {
+      return false;
+    }
+    const isFormControl = element.tagName === 'TEXTAREA' || element.tagName === 'INPUT';
+    const currentText = isFormControl ? element.value : element.textContent;
+    if (typeof currentText === 'string' && currentText.endsWith(text)) {
+      return true;
+    }
+    if (isFormControl) {
+      return false;
+    }
+    const normalizedTarget = text.replace(/\r\n/g, '\n').trimEnd();
+    if (!normalizedTarget) {
+      return false;
+    }
+    const blockText = readContentEditableBlockText(element).trimEnd();
+    if (blockText.endsWith(normalizedTarget)) {
+      return true;
+    }
+    return blockText.replace(/\n+/g, '\n').endsWith(normalizedTarget.replace(/\n+/g, '\n'));
   }
 
   function injectText(
@@ -2691,9 +3075,7 @@
       if (success) {
         console.log('[Text Injection] Text injected via injectText helper for', provider);
         if (autoSubmit) {
-          // Use longer delay for providers whose composer state updates asynchronously
-          const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
-          setTimeout(() => clickSendButton(provider, providerMode), delay);
+          scheduleAutoSubmit(provider, providerMode);
         }
         return true;
       }
@@ -2703,9 +3085,66 @@
     return false;
   }
 
+  function getComposerRootForAttachmentCheck(provider, input) {
+    if (provider === 'deepseek') return getDeepSeekComposer();
+    if (provider === 'kimi') return getKimiComposer();
+    if (provider === 'grok') return getGrokComposer();
+    if (provider === 'yuanbao') return getYuanbaoComposer();
+    return input?.closest?.('form, ms-prompt-box, .input-area-container, .chat-editor, #chat-box') ||
+      input?.parentElement ||
+      null;
+  }
+
+  function isProviderComposerCleared(provider, candidateImages = [], providerMode = null) {
+    const input = provider === 'google'
+      ? findGoogleInput(providerMode)
+      : findProviderInput(provider);
+    if (!input) {
+      return false;
+    }
+
+    const isFormControl = input.tagName === 'TEXTAREA' || input.tagName === 'INPUT';
+    const currentText = isFormControl ? (input.value || '') : (input.textContent || '');
+    if (currentText.trim().length > 0) {
+      return false;
+    }
+
+    const composerRoot = getComposerRootForAttachmentCheck(provider, input);
+    if (
+      composerRoot &&
+      (candidateImages || []).some(img => img?.name && countFilenamePreviewEvidence(composerRoot, img.name) > 0)
+    ) {
+      return false;
+    }
+
+    if (provider === 'deepseek') {
+      if (composerRoot && composerRoot.querySelectorAll('img[src^="blob:"]').length > 0) {
+        return false;
+      }
+    } else if (provider === 'kimi') {
+      if (
+        composerRoot &&
+        (countKimiAttachmentPreviews(composerRoot) > 0 || countKimiPendingAttachmentPreviews(composerRoot) > 0)
+      ) {
+        return false;
+      }
+    } else if (provider === 'grok') {
+      const attachmentList = composerRoot?.querySelector('[role="list"][aria-label="Conversation attachments"]');
+      if ((attachmentList?.children.length || 0) > 0) {
+        return false;
+      }
+    } else if (provider === 'yuanbao') {
+      if ((candidateImages || []).some(img => img?.name && countYuanbaoCompletedPreviews(img.name) > 0)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   // Handle image injection message
   async function handleImageInjection(event) {
-    const { text, images, autoSubmit, requestId, retry = false } = event.data;
+    const { text, images, fallbackImages, autoSubmit, requestId, retry = false } = event.data;
     const provider = detectProvider();
     const providerMode = provider === 'google'
       ? normalizeGoogleProviderMode(event.data.providerMode)
@@ -2733,7 +3172,22 @@
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.UNSUPPORTED, []);
     }
 
-    if (!images || images.length === 0) {
+    const normalizedFallbackImages = Array.isArray(fallbackImages) ? fallbackImages : [];
+    const fallbackSucceededIds = normalizedFallbackImages
+      .map(img => img?.id)
+      .filter(id => typeof id === 'string');
+    const composerClearedOnRetry = Boolean(
+      retry &&
+      normalizedFallbackImages.length > 0 &&
+      isProviderComposerCleared(provider, normalizedFallbackImages, providerMode)
+    );
+    const effectiveImages = composerClearedOnRetry ? normalizedFallbackImages : images;
+    const effectiveRetry = composerClearedOnRetry ? false : retry;
+    const failureAttemptedIds = composerClearedOnRetry
+      ? effectiveImages.map(img => img?.id).filter(id => typeof id === 'string')
+      : undefined;
+
+    if (!effectiveImages || effectiveImages.length === 0) {
       if (retry && text && text.trim()) {
         const textInjected = injectText(
           provider,
@@ -2743,14 +3197,17 @@
           { skipIfAlreadyPresent: true }
         );
         return textInjected
-          ? createImageInjectionSuccess([])
+          ? createImageInjectionSuccess(fallbackSucceededIds)
           : createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, []);
+      }
+      if (retry && normalizedFallbackImages.length > 0) {
+        return createImageInjectionSuccess(fallbackSucceededIds);
       }
       console.warn('[Image Injection] No images provided');
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, []);
     }
 
-    console.log(`[Image Injection] Injecting ${images.length} images to ${provider}`);
+    console.log(`[Image Injection] Injecting ${effectiveImages.length} images to ${provider}`);
 
     try {
       // Fills protect the unified input's focus too, so report a click in
@@ -2769,8 +3226,8 @@
       const imageInjectionResults = [];
 
       // Inject images first
-      for (const image of images) {
-        const result = await injectSingleImage(provider, image, { retry });
+      for (const image of effectiveImages) {
+        const result = await injectSingleImage(provider, image, { retry: effectiveRetry });
         imageInjectionResults.push(result);
         if (result.ok) {
           if (image.id && typeof image.id === 'string') {
@@ -2783,7 +3240,7 @@
         await sleep(200);
       }
 
-      const allImagesInjected = imageInjectionResults.length === images.length &&
+      const allImagesInjected = imageInjectionResults.length === effectiveImages.length &&
         imageInjectionResults.every(result => result.ok);
       if (!allImagesInjected) {
         console.warn('[Image Injection] One or more images failed to inject for:', provider);
@@ -2801,7 +3258,7 @@
           text,
           autoSubmit && allImagesInjected,
           providerMode,
-          { skipIfAlreadyPresent: retry }
+          { skipIfAlreadyPresent: effectiveRetry }
         );
       } else if (autoSubmit) {
         if (!allImagesInjected) {
@@ -2809,7 +3266,8 @@
           const firstFailure = imageInjectionResults.find(result => !result.ok);
           return createImageInjectionFailure(
             firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
-            succeededImageIds
+            succeededImageIds,
+            failureAttemptedIds
           );
         }
         // If no text but autoSubmit is true, click send button
@@ -2821,21 +3279,23 @@
         const firstFailure = imageInjectionResults.find(result => !result.ok);
         return createImageInjectionFailure(
           firstFailure?.reason || IMAGE_INJECTION_REASONS.INJECTION_ERROR,
-          succeededImageIds
+          succeededImageIds,
+          failureAttemptedIds
         );
       }
 
       if (!textInjected) {
         return createImageInjectionFailure(
           IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND,
-          succeededImageIds
+          succeededImageIds,
+          failureAttemptedIds
         );
       }
 
       return createImageInjectionSuccess(succeededImageIds);
     } catch (error) {
       console.error('[Image Injection] Error:', error);
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, []);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR, [], failureAttemptedIds);
     }
   }
 
@@ -2843,8 +3303,13 @@
     return { ok: true, succeededImageIds };
   }
 
-  function createImageInjectionFailure(reason, succeededImageIds = []) {
-    return { ok: false, reason, succeededImageIds };
+  function createImageInjectionFailure(reason, succeededImageIds = [], attemptedImageIds = undefined) {
+    return {
+      ok: false,
+      reason,
+      succeededImageIds,
+      ...(Array.isArray(attemptedImageIds) ? { attemptedImageIds } : {})
+    };
   }
 
   function normalizeImageInjectionResult(result) {
@@ -3278,16 +3743,24 @@
       }
 
       // DeepSeek renders attachment previews beside the composer controls rather
-      // than consistently inside the nearest file-input ancestor.
-      const previousCount = countFilenamePreviewEvidence(document, imageData.name);
+      // than consistently inside the nearest file-input ancestor; track filename
+      // and composer blob thumbnail baselines independently so historical chat
+      // attachments with the same filename never mask a newly uploaded preview.
+      const previousFilenameCount = countFilenamePreviewEvidence(document, imageData.name);
+      const previousBlobCount = composer.querySelectorAll('img[src^="blob:"]').length;
       if (!assignFilesToInput(fileInput, [file])) {
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
       }
       dispatchFileInputEvents(fileInput);
 
       const accepted = await waitForPreviewIncrease(
-        () => countFilenamePreviewEvidence(document, imageData.name),
-        previousCount
+        () => (
+          countFilenamePreviewEvidence(document, imageData.name) > previousFilenameCount ||
+          composer.querySelectorAll('img[src^="blob:"]').length > previousBlobCount
+            ? 1
+            : 0
+        ),
+        0
       );
       return accepted
         ? createImageInjectionSuccess()
@@ -4446,15 +4919,7 @@
 
         // Auto-submit if requested (only from multi-panel context)
         if (shouldAutoSubmit) {
-          // Wait for framework-managed composer state to catch up before sending.
-          const delay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
-          setTimeout(() => {
-            console.log('[Text Injection] Attempting to click send button for', provider);
-            const clicked = clickSendButton(provider, providerMode);
-            if (!clicked) {
-              console.warn('[Text Injection] Failed to click send button for', provider);
-            }
-          }, delay);
+          scheduleAutoSubmit(provider, providerMode);
         }
       } else {
         console.error(`[Text Injection] Failed to inject text into ${provider}`);
@@ -4473,11 +4938,7 @@
             if (success) {
               console.log('[Text Injection] Text injected on retry into', provider);
               if (shouldAutoSubmit) {
-                const submitDelay = SLOW_COMPOSER_PROVIDERS.has(provider) ? 800 : 500;
-                setTimeout(() => {
-                  console.log('[Text Injection] Attempting to click send button for', provider, 'after retry');
-                  clickSendButton(provider, providerMode);
-                }, submitDelay);
+                scheduleAutoSubmit(provider, providerMode);
               }
             }
           } else if (index === retryDelays.length - 1) {
@@ -5505,6 +5966,7 @@
   }
 
   // Listen for messages from the multi-panel host
+  setupSameOriginAccountNavigation();
   setupProviderLocationReporting();
   setupPageWidthReporting();
   setupChatgptSentDraftTracking();

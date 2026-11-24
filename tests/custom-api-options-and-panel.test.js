@@ -1349,6 +1349,73 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
         succeededImageIds: ['img-1'],
       });
 
+      // Untouched API panel on Send All retry (`images: []`, `fallbackImages: [img-1]`) acknowledges `img-1` without duplicating staged image
+      sendHostMessage({
+        context: 'multi-panel',
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        action: 'fill',
+        requestId: 'fill-req-untouched-retry',
+        text: 'Compare this diagram',
+        autoSubmit: false,
+        retry: true,
+        images: [],
+        fallbackImages: [
+          {
+            id: 'img-1',
+            dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+            name: 'diagram.png',
+            type: 'image/png',
+          },
+        ],
+      });
+      expect(childDoc.querySelectorAll('#staged-images .staged-image-item')).toHaveLength(1);
+      expect(hostReceivedMessages).toContainEqual({
+        context: 'multi-panel-action-result',
+        type: 'PANELIZE_ACTION_RESULT',
+        requestId: 'fill-req-untouched-retry',
+        provider: PROVIDER_ID,
+        action: 'fill',
+        status: 'succeeded',
+        reason: null,
+        succeededImageIds: ['img-1'],
+      });
+
+      // Cleared API panel on Send All retry restores both caption and staged image from `fallbackImages`
+      sendHostMessage({ context: 'multi-panel', type: 'CLEAR_INPUT', clearImages: true });
+      expect(childDoc.getElementById('composer-input').value).toBe('');
+      expect(childDoc.querySelectorAll('#staged-images .staged-image-item')).toHaveLength(0);
+
+      sendHostMessage({
+        context: 'multi-panel',
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        action: 'fill',
+        requestId: 'fill-req-cleared-retry',
+        text: 'Compare this diagram',
+        autoSubmit: false,
+        retry: true,
+        images: [],
+        fallbackImages: [
+          {
+            id: 'img-1',
+            dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+            name: 'diagram.png',
+            type: 'image/png',
+          },
+        ],
+      });
+      expect(childDoc.getElementById('composer-input').value).toBe('Compare this diagram');
+      expect(childDoc.querySelectorAll('#staged-images .staged-image-item')).toHaveLength(1);
+      expect(hostReceivedMessages).toContainEqual({
+        context: 'multi-panel-action-result',
+        type: 'PANELIZE_ACTION_RESULT',
+        requestId: 'fill-req-cleared-retry',
+        provider: PROVIDER_ID,
+        action: 'fill',
+        status: 'succeeded',
+        reason: null,
+        succeededImageIds: ['img-1'],
+      });
+
       // Broadcast TRIGGER_SEND
       sendHostMessage({
         context: 'multi-panel',
