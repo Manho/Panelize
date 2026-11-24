@@ -182,6 +182,13 @@ describe('image fill ACK normalization and timeout budget', () => {
     expect(getPanelActionResultTimeoutMs(10)).toBe(66500);
   });
 
+  it('weights document timeouts higher than images and supports mixed counts', () => {
+    expect(getPanelActionResultTimeoutMs(0, 1)).toBe(12000);
+    expect(getPanelActionResultTimeoutMs(0, 3)).toBe(32000);
+    expect(getPanelActionResultTimeoutMs({ imageCount: 2, documentCount: 1 })).toBe(25000);
+    expect(getPanelActionResultTimeoutMs({ imageCount: 1, documentCount: 2 })).toBe(28500);
+  });
+
   it('normalizes success ACK missing image list to all expected IDs', () => {
     const expected = ['img-1', 'img-2'];
     expect(normalizeSucceededImageIds(undefined, expected, true)).toEqual(['img-1', 'img-2']);
@@ -275,6 +282,108 @@ describe('fill retry state & stale ID cleanup', () => {
   it('resets retry targeting when no failed IDs remain', () => {
     expect(getFillTargetPanels(panels, new Set())).toBe(panels);
   });
+
+  it('handles tri-state skipped panels without entering failedPanelIds', () => {
+    const summary = summarizeFillResults(panels, [
+      { ok: true, panelId: 'panel-grok' },
+      { ok: true, skipped: true, panelId: 'panel-deepseek', reason: 'unsupported' },
+      {
+        ok: true,
+        panelId: 'panel-kimi',
+        skippedAttachments: [{ id: 'doc-1', name: 'spec.pdf', reason: 'type-not-accepted' }]
+      },
+    ]);
+
+    expect(summary.failedCount).toBe(0);
+    expect(summary.skippedCount).toBe(1);
+    expect(summary.successfulCount).toBe(2);
+    expect([...summary.failedPanelIds]).toEqual([]);
+    expect([...summary.skippedPanelIds]).toEqual(['panel-deepseek']);
+    expect([...summary.partialSkippedPanelIds]).toEqual(['panel-kimi']);
+    expect(summary.allSucceeded).toBe(true);
+    expect(summary.allSkipped).toBe(false);
+    expect(shouldClearFillPayload(summary, { hasText: false })).toBe(true);
+  });
+
+  it('retains pure-document payload when every panel returns skipped', () => {
+    const summary = summarizeFillResults(panels, [
+      { ok: true, skipped: true, panelId: 'panel-grok', reason: 'unsupported' },
+      { ok: true, skipped: true, panelId: 'panel-deepseek', reason: 'unsupported' },
+      { ok: true, skipped: true, panelId: 'panel-kimi', reason: 'unsupported' },
+    ]);
+
+    expect(summary.failedCount).toBe(0);
+    expect(summary.skippedCount).toBe(3);
+    expect(summary.successfulCount).toBe(0);
+    expect(summary.allSucceeded).toBe(true);
+    expect(summary.allSkipped).toBe(true);
+    expect(shouldClearFillPayload(summary, { hasText: false })).toBe(false);
+    expect(shouldClearFillPayload(summary, { hasText: true })).toBe(true);
+  });
+});
+
+describe('panel action result waiter tri-state and attachment ACK fields', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves skipped status as ok: true, skipped: true with normalized skippedAttachments', async () => {
+    const target = new EventTarget();
+    const { panel, contentWindow } = createPanel('panel-grok', 'grok');
+    const waiter = createPanelActionResultWaiter({
+      target,
+      panel,
+      requestId: 'request-current',
+      expectedAttachmentIds: ['doc-1'],
+    });
+
+    target.dispatchEvent(createActionMessage(contentWindow, {
+      status: 'skipped',
+      reason: 'type-not-accepted',
+      skippedAttachments: [{ id: 'doc-1', name: 'paper.pdf', reason: 'type-not-accepted' }],
+    }));
+
+    await expect(waiter.promise).resolves.toEqual({
+      ok: true,
+      skipped: true,
+      panelId: 'panel-grok',
+      provider: 'grok',
+      reason: 'type-not-accepted',
+      succeededImageIds: [],
+      succeededAttachmentIds: [],
+      skippedAttachments: [{ id: 'doc-1', name: 'paper.pdf', reason: 'type-not-accepted' }],
+    });
+  });
+
+  it('supports succeededAttachmentIds and partial skippedAttachments on succeeded ACKs', async () => {
+    const target = new EventTarget();
+    const { panel, contentWindow } = createPanel('panel-grok', 'grok');
+    const waiter = createPanelActionResultWaiter({
+      target,
+      panel,
+      requestId: 'request-current',
+      expectedAttachmentIds: ['img-1', 'doc-1'],
+    });
+
+    target.dispatchEvent(createActionMessage(contentWindow, {
+      status: 'succeeded',
+      succeededAttachmentIds: ['img-1'],
+      skippedAttachments: [{ id: 'doc-1', name: 'paper.pdf', reason: 'unsupported' }],
+    }));
+
+    await expect(waiter.promise).resolves.toEqual({
+      ok: true,
+      panelId: 'panel-grok',
+      provider: 'grok',
+      succeededImageIds: ['img-1'],
+      succeededAttachmentIds: ['img-1'],
+      skippedAttachments: [{ id: 'doc-1', name: 'paper.pdf', reason: 'unsupported' }],
+    });
+  });
 });
 
 describe('broadcast gate', () => {
@@ -336,6 +445,20 @@ describe('getPanelBroadcastActionParams & determinePanelMessageType', () => {
       waitForActionResult: true,
     });
     expect(determinePanelMessageType({ isFillAction: params.isFillAction })).toBe('INJECT_TEXT_WITH_IMAGES');
+  });
+
+  it('returns fill action parameters when hasAttachments is true', () => {
+    const params = getPanelBroadcastActionParams({
+      hasAttachments: true,
+      hasFailedPanels: false,
+      autoSubmit: true,
+    });
+    expect(params).toEqual({
+      isFillAction: true,
+      shouldAutoSubmit: false,
+      messageType: 'INJECT_TEXT_WITH_IMAGES',
+      waitForActionResult: true,
+    });
   });
 
   it('returns fill action parameters during text-only retry when hasFailedPanels is true', () => {
