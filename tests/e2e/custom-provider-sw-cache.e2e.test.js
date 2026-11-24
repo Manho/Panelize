@@ -285,7 +285,7 @@ test.describe('Custom web AI Service Worker poisoned CacheStorage framing recove
   test('recovers automatically from pre-poisoned Service Worker CacheStorage while preserving session state and blocking third-party framing', async () => {
     const server = await startSwTlsServer();
     const extensionCopy = await createPatchedExtensionCopy((manifest) => {
-      manifest.host_permissions.push(`${SW_PROVIDER_ORIGIN}/*`, `http://${SW_PROVIDER_HOST}/*`);
+      manifest.host_permissions.push(`${SW_PROVIDER_ORIGIN}/*`);
     });
 
     const hostRules = [

@@ -39,6 +39,14 @@ function parseCookies(cookieHeader = '') {
   return map;
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
 async function startAuthTlsFixtureServer() {
   const certDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-auth-tls-'));
   const keyPath = path.join(certDir, 'key.pem');
@@ -73,9 +81,14 @@ async function startAuthTlsFixtureServer() {
   const guestRefreshToken = createJwt({ uid: 'zhipu-guest-00', is_guest: true, type: 'refresh' });
 
   const observed = {
+    chatglmPageRequests: 0,
     chatglmGuestCalls: 0,
     chatglmUserInfoAuths: [],
+    chatglmProbeCookieHeaders: [],
+    mimoPageRequests: 0,
+    mimoUserGetCalls: [],
     mimoHistoryListCalls: [],
+    mimoProbeCookieHeaders: [],
   };
 
   const server = https.createServer({ key, cert }, (req, res) => {
@@ -83,15 +96,38 @@ async function startAuthTlsFixtureServer() {
     const url = new URL(req.url || '/', `https://${req.headers.host}`);
 
     if (hostHeader === ATTACKER_HOST) {
+      if (url.pathname === '/probe-host') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!doctype html><html><body>
+          <iframe id="probe-chatglm" src="https://${CHATGLM_HOST}/probe-cookies"></iframe>
+          <iframe id="probe-mimo" src="https://${MIMO_HOST}/probe-cookies"></iframe>
+        </body></html>`);
+        return;
+      }
+
       const frameSrc = url.searchParams.get('frame') || '';
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`<!doctype html><html><body>
-        <iframe id="embedded" src="${frameSrc}"></iframe>
+        <iframe id="embedded" src="${escapeHtml(frameSrc)}"></iframe>
       </body></html>`);
       return;
     }
 
     if (hostHeader === CHATGLM_HOST) {
+      if (url.pathname === '/probe-cookies') {
+        const cookieHeader = req.headers.cookie || '';
+        observed.chatglmProbeCookieHeaders.push(cookieHeader);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!doctype html><html><body>
+          <p id="probe-header">${escapeHtml(cookieHeader || 'NONE')}</p>
+          <p id="probe-doc-cookie">PENDING</p>
+          <script>
+            document.getElementById('probe-doc-cookie').textContent = document.cookie || 'EMPTY';
+          </script>
+        </body></html>`);
+        return;
+      }
+
       if (url.pathname === '/chatglm/user-api/guest/access') {
         observed.chatglmGuestCalls += 1;
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -122,6 +158,7 @@ async function startAuthTlsFixtureServer() {
         return;
       }
 
+      observed.chatglmPageRequests += 1;
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'X-Frame-Options': 'SAMEORIGIN',
@@ -173,6 +210,20 @@ async function startAuthTlsFixtureServer() {
     if (hostHeader === MIMO_HOST) {
       const cookies = parseCookies(req.headers.cookie || '');
 
+      if (url.pathname === '/probe-cookies') {
+        const cookieHeader = req.headers.cookie || '';
+        observed.mimoProbeCookieHeaders.push(cookieHeader);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!doctype html><html><body>
+          <p id="probe-header">${escapeHtml(cookieHeader || 'NONE')}</p>
+          <p id="probe-doc-cookie">PENDING</p>
+          <script>
+            document.getElementById('probe-doc-cookie').textContent = document.cookie || 'EMPTY';
+          </script>
+        </body></html>`);
+        return;
+      }
+
       if (url.pathname === '/sts-login') {
         // Real Xiaomi Passport STS sets HttpOnly serviceToken + non-HttpOnly xiaomichatbot_ph without Secure
         res.writeHead(200, {
@@ -199,7 +250,9 @@ async function startAuthTlsFixtureServer() {
       }
 
       if (url.pathname === '/open-apis/user/mi/get') {
-        if (cookies.get('serviceToken') !== 'mimo-session-secret') {
+        const hasServiceToken = cookies.get('serviceToken') === 'mimo-session-secret';
+        observed.mimoUserGetCalls.push({ hasServiceToken });
+        if (!hasServiceToken) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ code: 401, loginUrl: 'https://account.xiaomi.com/pass/serviceLogin' }));
           return;
@@ -226,6 +279,7 @@ async function startAuthTlsFixtureServer() {
         return;
       }
 
+      observed.mimoPageRequests += 1;
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'X-Frame-Options': 'DENY',
@@ -292,11 +346,12 @@ async function startAuthTlsFixtureServer() {
 test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) login sync E2E', () => {
   test.setTimeout(60_000);
 
-  test('syncs top-level login state into embedded panels, blocks third-party cookie leakage, and reflects top-level logout', async ({}, testInfo) => {
+  test('syncs top-level login state into embedded panels, enforces frame-block and CHIPS isolation for both Zhipu and MiMo on third-party origins, and reflects top-level logout', async ({}, testInfo) => {
     const server = await startAuthTlsFixtureServer();
     const extensionCopy = await createPatchedExtensionCopy((manifest) => {
       manifest.host_permissions.push(
         ...OPTIONAL_PROVIDER_CONFIGS.chatglm.origins,
+        `http://${CHATGLM_HOST}/*`,
         `https://${MIMO_HOST}/*`,
         `http://${MIMO_HOST}/*`
       );
@@ -400,8 +455,24 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
         fullPage: true,
       });
 
-      // 3. Third-party page framing multi-panel.html must NEVER expose CHIPS session cookies
+      // 3A. Third-party page framing multi-panel.html: scoped DNR rules must NOT strip XFO,
+      //     so Chromium explicitly blocks BOTH Zhipu and MiMo subframes with zero API calls.
+      const beforeAttacker = {
+        chatglmPageRequests: server.observed.chatglmPageRequests,
+        mimoPageRequests: server.observed.mimoPageRequests,
+        chatglmUserInfoCount: server.observed.chatglmUserInfoAuths.length,
+        mimoUserGetCount: server.observed.mimoUserGetCalls.length,
+        mimoHistoryListCount: server.observed.mimoHistoryListCalls.length,
+      };
+      const blockedFrameFailures = [];
       const framedMultiPanel = await extension.context.newPage();
+      framedMultiPanel.on('requestfailed', (request) => {
+        blockedFrameFailures.push({
+          url: request.url(),
+          errorText: request.failure()?.errorText || '',
+        });
+      });
+
       await framedMultiPanel.goto(
         `https://${ATTACKER_HOST}/?frame=${encodeURIComponent(
           extension.extensionUrl('multi-panel/multi-panel.html')
@@ -411,15 +482,56 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
         .frameLocator('#embedded')
         .locator('#panel-grid iframe');
       await expect(nestedPanels).toHaveCount(2);
-      // Without extension as top-level site, scoped frame rules do not strip XFO or expose CHIPS cookies
-      const attackerGlmText = await nestedPanels
-        .nth(0)
-        .contentFrame()
-        .locator('#chatglm-auth-state')
-        .textContent({ timeout: 2000 })
-        .catch(() => null);
-      expect(attackerGlmText).not.toBe('Logged in: ZhipuLoggedInUser');
+
+      // Verify the fixture actually requested both provider documents and Chromium explicitly
+      // blocked both responses (ERR_BLOCKED_BY_RESPONSE -> chrome-error://chromewebdata/).
+      await expect
+        .poll(() => ({
+          glmRequested: server.observed.chatglmPageRequests > beforeAttacker.chatglmPageRequests,
+          mimoRequested: server.observed.mimoPageRequests > beforeAttacker.mimoPageRequests,
+          glmBlocked: blockedFrameFailures.some(
+            (entry) =>
+              entry.url.startsWith(`https://${CHATGLM_HOST}/`) &&
+              entry.errorText.includes('ERR_BLOCKED_BY_RESPONSE')
+          ),
+          mimoBlocked: blockedFrameFailures.some(
+            (entry) =>
+              entry.url.startsWith(`https://${MIMO_HOST}/`) &&
+              entry.errorText.includes('ERR_BLOCKED_BY_RESPONSE')
+          ),
+        }))
+        .toEqual({
+          glmRequested: true,
+          mimoRequested: true,
+          glmBlocked: true,
+          mimoBlocked: true,
+        });
+
+      expect(server.observed.chatglmUserInfoAuths.length).toBe(beforeAttacker.chatglmUserInfoCount);
+      expect(server.observed.mimoUserGetCalls.length).toBe(beforeAttacker.mimoUserGetCount);
+      expect(server.observed.mimoHistoryListCalls.length).toBe(beforeAttacker.mimoHistoryListCount);
       await framedMultiPanel.close();
+
+      // 3B. Even when a third-party origin frames a frameable endpoint (without XFO) on BOTH
+      //     chatglm.cn and aistudio.xiaomimimo.com, mirrored CHIPS cookies must NEVER leak
+      //     into either document.cookie or the HTTP Cookie header.
+      const probePage = await extension.context.newPage();
+      await probePage.goto(`https://${ATTACKER_HOST}/probe-host`);
+
+      const chatglmProbeFrame = probePage.frameLocator('#probe-chatglm');
+      const mimoProbeFrame = probePage.frameLocator('#probe-mimo');
+      await expect(chatglmProbeFrame.locator('#probe-doc-cookie')).toHaveText('EMPTY');
+      await expect(mimoProbeFrame.locator('#probe-doc-cookie')).toHaveText('EMPTY');
+
+      expect(server.observed.chatglmProbeCookieHeaders.length).toBeGreaterThan(0);
+      expect(server.observed.mimoProbeCookieHeaders.length).toBeGreaterThan(0);
+      const latestGlmProbeHeader = server.observed.chatglmProbeCookieHeaders.at(-1);
+      const latestMimoProbeHeader = server.observed.mimoProbeCookieHeaders.at(-1);
+      expect(latestGlmProbeHeader).not.toContain('chatglm_token');
+      expect(latestGlmProbeHeader).not.toContain('chatglm_refresh_token');
+      expect(latestMimoProbeHeader).not.toContain('xiaomichatbot_ph');
+      expect(latestMimoProbeHeader).not.toContain('serviceToken');
+      await probePage.close();
 
       // 4. Top-level logout clears mirrored CHIPS cookies so panel refresh shows logged-out state
       const logoutZhipu = await extension.context.newPage();
@@ -441,6 +553,78 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
         mpPage.locator('#panel-grid iframe').nth(1).contentFrame().locator('#mimo-auth-state')
       ).toHaveText('Sign in');
 
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await extension.close();
+      await extensionCopy.cleanup();
+      await server.close();
+    }
+  });
+
+  test('preserves legacy HTTPS-only grants for Zhipu and HTTPS custom web providers without http:// permission', async () => {
+    const server = await startAuthTlsFixtureServer();
+    // Simulate legacy upgrade: ONLY https:// origins granted, NO http:// origins!
+    const extensionCopy = await createPatchedExtensionCopy((manifest) => {
+      manifest.host_permissions.push(
+        ...OPTIONAL_PROVIDER_CONFIGS.chatglm.origins,
+        `https://${MIMO_HOST}/*`
+      );
+    });
+
+    const hostRules = [
+      `MAP ${CHATGLM_HOST} 127.0.0.1:${server.port}`,
+      `MAP ${MIMO_HOST} 127.0.0.1:${server.port}`,
+    ].join(', ');
+
+    const extension = await launchExtension({
+      extensionPath: extensionCopy.extensionPath,
+      viewport: { width: 1280, height: 800 },
+      args: [
+        '--ignore-certificate-errors',
+        '--proxy-bypass-list=*',
+        `--host-resolver-rules=${hostRules}`,
+      ],
+    });
+
+    try {
+      const pageErrors = [];
+      extension.context.on('page', (p) => p.on('pageerror', (err) => pageErrors.push(err.message)));
+
+      await extension.serviceWorker.evaluate(
+        async ({ customId, ruleId, mimoUrl }) => {
+          await chrome.storage.local.set({
+            customProviders: [
+              {
+                id: customId,
+                name: 'Xiaomi MiMo',
+                url: mimoUrl,
+                frameRuleId: ruleId,
+                createdAt: 1700000000000,
+              },
+            ],
+          });
+        },
+        {
+          customId: CUSTOM_MIMO_ID,
+          ruleId: CUSTOM_MIMO_RULE_ID,
+          mimoUrl: `https://${MIMO_HOST}/`,
+        }
+      );
+
+      const mpPage = await openMultiPanel(extension, {
+        providers: ['chatglm', CUSTOM_MIMO_ID],
+        layout: '1x2',
+      });
+
+      // Both panels must remain enabled, embedded, and framed cleanly without http:// grants
+      const panelFrames = mpPage.locator('#panel-grid iframe');
+      await expect(panelFrames).toHaveCount(2);
+      await expect(panelFrames.nth(0).contentFrame().locator('#chatglm-auth-state')).toHaveText(
+        'Logged out (Guest)'
+      );
+      await expect(panelFrames.nth(1).contentFrame().locator('#mimo-auth-state')).toHaveText(
+        'Sign in'
+      );
       expect(pageErrors).toEqual([]);
     } finally {
       await extension.close();

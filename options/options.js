@@ -1,8 +1,10 @@
 // T050-T064: Settings Page Implementation
 import { listProviders, getProviderIcon } from '../modules/providers.js';
 import {
-  getExpectedCustomWebPermissionOrigins,
+  getCompanionCookiePermissionOrigins,
+  getProviderCompanionCookieOrigins,
   getProviderDescriptor,
+  getProviderRequestPermissionOrigins,
   hasProviderDescriptor,
   listProviderDescriptors
 } from '../modules/provider-registry.js';
@@ -323,7 +325,7 @@ function getCustomRequestPermissionOrigins(origin, isApiKind) {
   if (isApiKind) {
     return [`${origin}/*`];
   }
-  return getExpectedCustomWebPermissionOrigins(origin);
+  return [`${origin}/*`, ...getCompanionCookiePermissionOrigins(origin)];
 }
 
 function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) {
@@ -339,6 +341,9 @@ function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) 
       usedPatterns.add(`${frameOrigin}/*`);
     }
     for (const pattern of descriptor.permissionOrigins || []) {
+      usedPatterns.add(pattern);
+    }
+    for (const pattern of getProviderCompanionCookieOrigins(descriptor)) {
       usedPatterns.add(pattern);
     }
   }
@@ -1940,6 +1945,14 @@ async function handleInlineEditSubmit(event, inlineState) {
       return;
     }
 
+    if (!granted && chrome?.permissions?.contains) {
+      // Preserve legacy HTTPS-only grants when the user declines only the
+      // companion non-Secure cookie permission.
+      granted = Boolean(
+        await chrome.permissions.contains({ origins: [`${urlCheck.origin}/*`] }).catch(() => false)
+      );
+    }
+
     if (!granted) {
       const message = t('msgCustomProviderPermissionDenied', urlCheck.origin);
       inlineState.setError(message);
@@ -1949,9 +1962,7 @@ async function handleInlineEditSubmit(event, inlineState) {
 
     const targetId = editingDescriptor.id;
     const previousOrigin = getCustomProviderOrigin(editingDescriptor);
-    const previousPermissionOrigins = Array.isArray(editingDescriptor.permissionOrigins)
-      ? [...editingDescriptor.permissionOrigins]
-      : (previousOrigin ? [`${previousOrigin}/*`] : []);
+    const previousPermissionOrigins = getProviderRequestPermissionOrigins(editingDescriptor);
     const previousEndpointUrl = editingDescriptor.apiConfig?.endpointUrl || null;
     const sameOriginAsSaved = Boolean(previousOrigin && previousOrigin === urlCheck.origin);
     let previousSecret = null;
@@ -2002,6 +2013,10 @@ async function handleInlineEditSubmit(event, inlineState) {
       );
       providerRecordPersisted = true;
 
+      // Run optional access and mirrored-cookie cleanup BEFORE revoking the
+      // previous origin's host permission so cookies.remove still succeeds.
+      await requestOptionalProviderAccessSync();
+
       if (
         previousOrigin &&
         previousOrigin !== urlCheck.origin &&
@@ -2017,7 +2032,6 @@ async function handleInlineEditSubmit(event, inlineState) {
       }
 
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
-      await requestOptionalProviderAccessSync();
 
       editingCustomProviderId = null;
       if (activeInlineEditState === inlineState) {
@@ -2255,6 +2269,12 @@ export async function handleCustomProviderFormSubmit(event) {
       return;
     }
 
+    if (!granted && chrome?.permissions?.contains) {
+      granted = Boolean(
+        await chrome.permissions.contains({ origins: [`${urlCheck.origin}/*`] }).catch(() => false)
+      );
+    }
+
     if (!granted) {
       const message = t('msgCustomProviderPermissionDenied', urlCheck.origin);
       setCustomProviderFormError(message);
@@ -2373,9 +2393,7 @@ export async function deleteCustomProviderEntry(providerId) {
   }
 
   const origin = getCustomProviderOrigin(descriptor);
-  const removedPermissionOrigins = Array.isArray(descriptor.permissionOrigins)
-    ? [...descriptor.permissionOrigins]
-    : (origin ? [`${origin}/*`] : []);
+  const removedPermissionOrigins = getProviderRequestPermissionOrigins(descriptor);
   const providerName = descriptor.name;
 
   if (editingCustomProviderId === providerId) {
@@ -3442,6 +3460,7 @@ export async function toggleProvider(providerId) {
   );
 
   await saveSettings({ enabledProviders, providerOrder });
+  await requestOptionalProviderAccessSync();
   await renderProviderList();
   showStatus('success', t('msgProviderSettingsUpdated'));
 }

@@ -240,11 +240,7 @@ describe('B3b origin badge start-truncation invariants, title tooltip, and liter
         providerOrder: ['custom-1111111111', 'chatgpt', 'custom-2222222222'],
         multiPanelProviders: ['custom-1111111111', 'chatgpt'],
       },
-      grantedOrigins: [
-        `${loopbackOrigin}/*`,
-        `${spoofOrigin}/*`,
-        'http://accounts.google.com.evil.tld/*',
-      ],
+      grantedOrigins: [`${loopbackOrigin}/*`, `${spoofOrigin}/*`],
     });
 
     await import('../multi-panel/multi-panel.js');

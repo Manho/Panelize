@@ -14,7 +14,7 @@ import {
 import {
   EMBEDDED_FRAME_COOKIE_SYNC_ACTION,
   createEmbeddedFrameCookieReconcileScheduler,
-  handleEmbeddedFrameCookieChanged,
+  isEmbeddedFrameTopLevelCookieChange,
   reconcileEmbeddedFrameCookies
 } from '../modules/embedded-frame-cookies.js';
 import {
@@ -231,15 +231,9 @@ if (chrome.cookies?.onChanged) {
     if (isGrokWebSocketCookieChange(changeInfo)) {
       scheduleGrokWebSocketCookieReconcile();
     }
-    handleEmbeddedFrameCookieChanged(changeInfo)
-      .then((shouldReconcile) => {
-        if (shouldReconcile) {
-          scheduleEmbeddedFrameCookieReconcile();
-        }
-      })
-      .catch((error) => {
-        console.error('[Background] Failed to handle embedded frame cookie change:', error);
-      });
+    if (isEmbeddedFrameTopLevelCookieChange(changeInfo)) {
+      scheduleEmbeddedFrameCookieReconcile();
+    }
   });
 }
 

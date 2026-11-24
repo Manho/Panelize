@@ -75,7 +75,7 @@ const EXPECTED_OPTIONAL_CONFIGS = {
     frameRule: expectedFrameRule(1002, 'https://chat.qwen.ai/*'),
   },
   chatglm: {
-    origins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+    origins: ['https://chatglm.cn/*'],
     contentScript: expectedContentScript('chatglm', 'https://chatglm.cn/*'),
     frameRule: expectedFrameRule(1003, 'https://chatglm.cn/*'),
   },
@@ -244,8 +244,12 @@ describe('characterization: optional provider configs, scripting registrations, 
         });
 
         await expect(requestOptionalProviderPermission(providerId)).resolves.toBe(true);
+        const expectedRequestOrigins =
+          providerId === 'chatglm'
+            ? ['https://chatglm.cn/*', 'http://chatglm.cn/*']
+            : expected.origins;
         expect(chrome.permissions.request).toHaveBeenLastCalledWith({
-          origins: expected.origins,
+          origins: expectedRequestOrigins,
         });
       }
     });

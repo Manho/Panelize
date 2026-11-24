@@ -226,39 +226,74 @@ function isOriginMatchPattern(pattern) {
 }
 
 /**
- * Returns the exact ordered permissionOrigins required for a custom Web UI
- * provider origin. HTTPS custom web providers also include `http://<hostname>/*`
- * (and portless `https://<hostname>/*` when a custom port is used) so
- * `chrome.cookies` can read non-Secure first-party cookies set by the site and
- * mirror them into the extension's CHIPS partition for `document.cookie`.
+ * Returns additional optional host permission patterns needed alongside a
+ * provider's core HTTPS embedding permission so `chrome.cookies` can read
+ * non-Secure first-party cookies set by the site and mirror them into the
+ * extension's CHIPS partition.
  *
- * @param {string} customOrigin
+ * Keeping these separate from `descriptor.permissionOrigins` ensures existing
+ * users with legacy HTTPS-only grants never lose framing rules, content
+ * scripts, or Multi-Panel eligibility on upgrade.
+ *
+ * @param {string} origin
  * @returns {string[]}
  */
-export function getExpectedCustomWebPermissionOrigins(customOrigin) {
-  if (!isExactHttpOrigin(customOrigin)) {
+export function getCompanionCookiePermissionOrigins(origin) {
+  if (!isExactHttpOrigin(origin)) {
     return [];
   }
-  const parsed = new URL(customOrigin);
+  const parsed = new URL(origin);
   if (parsed.protocol !== 'https:') {
-    return [`${customOrigin}/*`];
+    return [];
   }
-  const patterns = [`${customOrigin}/*`];
-  const portlessHttpsPattern = `https://${parsed.hostname}/*`;
-  if (!patterns.includes(portlessHttpsPattern)) {
-    patterns.push(portlessHttpsPattern);
+  const patterns = [];
+  if (parsed.port !== '') {
+    patterns.push(`https://${parsed.hostname}/*`);
   }
   patterns.push(`http://${parsed.hostname}/*`);
   return patterns;
 }
 
-function isSameOrderedStringList(left, right) {
-  return (
-    Array.isArray(left) &&
-    Array.isArray(right) &&
-    left.length === right.length &&
-    left.every((item, index) => item === right[index])
-  );
+/**
+ * Returns companion optional cookie-sync permission origins for a provider
+ * descriptor (Zhipu and HTTPS custom web providers), or an empty array for
+ * providers that do not use embedded-frame cookie mirroring.
+ *
+ * @param {object | null | undefined} descriptor
+ * @returns {string[]}
+ */
+export function getProviderCompanionCookieOrigins(descriptor) {
+  if (!descriptor || typeof descriptor !== 'object') {
+    return [];
+  }
+  if (
+    descriptor.id === 'chatglm' ||
+    (descriptor.access === 'custom' && descriptor.customKind !== 'api')
+  ) {
+    return getCompanionCookiePermissionOrigins(descriptor.frameOrigins?.[0]);
+  }
+  return [];
+}
+
+/**
+ * Returns the full deduplicated list of optional host permission origins to
+ * request when enabling/adding a provider (core required `permissionOrigins`
+ * plus any companion cookie-sync origins).
+ *
+ * @param {object | null | undefined} descriptor
+ * @returns {string[]}
+ */
+export function getProviderRequestPermissionOrigins(descriptor) {
+  const origins = [];
+  for (const pattern of [
+    ...(Array.isArray(descriptor?.permissionOrigins) ? descriptor.permissionOrigins : []),
+    ...getProviderCompanionCookieOrigins(descriptor)
+  ]) {
+    if (typeof pattern === 'string' && pattern.length > 0 && !origins.includes(pattern)) {
+      origins.push(pattern);
+    }
+  }
+  return origins;
 }
 
 /**
@@ -489,18 +524,14 @@ export function validateProviderDescriptor(
       );
     }
   } else if (isCustom) {
-    const expectedCustomOrigins = customOrigin !== null
-      ? getExpectedCustomWebPermissionOrigins(customOrigin)
-      : null;
     if (
       !Array.isArray(descriptor.permissionOrigins) ||
-      descriptor.permissionOrigins.length === 0 ||
-      !descriptor.permissionOrigins.every(isOriginMatchPattern) ||
-      (expectedCustomOrigins !== null &&
-        !isSameOrderedStringList(descriptor.permissionOrigins, expectedCustomOrigins))
+      descriptor.permissionOrigins.length !== 1 ||
+      !isOriginMatchPattern(descriptor.permissionOrigins[0]) ||
+      (customOrigin !== null && descriptor.permissionOrigins[0] !== `${customOrigin}/*`)
     ) {
       errors.push(
-        `Provider "${id || '<unnamed>'}": custom provider permissionOrigins must match expected origin patterns for "${customOrigin || '<origin>'}"`
+        `Provider "${id || '<unnamed>'}": custom provider permissionOrigins must be ["<origin>/*"]`
       );
     }
   } else if (descriptor.permissionOrigins !== null && descriptor.permissionOrigins !== undefined) {
@@ -944,9 +975,7 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
     access: 'optional',
     frameOrigins: ['https://chatglm.cn'],
     allowedHosts: ['chatglm.cn'],
-    // Zhipu stores chatglm_token and chatglm_refresh_token without Secure, so
-    // chrome.cookies requires http:// access alongside https:// to mirror them.
-    permissionOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
+    permissionOrigins: ['https://chatglm.cn/*'],
     contentScript: createOptionalContentScriptSpec(
       'https://chatglm.cn/*',
       'content-scripts/enter-behavior-chatglm.js'

@@ -3,8 +3,10 @@ import {
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
   CUSTOM_PROVIDER_ID_PATTERN,
-  getExpectedCustomWebPermissionOrigins,
+  getCompanionCookiePermissionOrigins,
+  getProviderCompanionCookieOrigins,
   getProviderDescriptor,
+  getProviderRequestPermissionOrigins,
   listProviderDescriptors,
   setCustomProviderDescriptors,
   validateProviderDescriptor
@@ -15,7 +17,9 @@ export {
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
   CUSTOM_PROVIDER_ID_PATTERN,
-  getExpectedCustomWebPermissionOrigins
+  getCompanionCookiePermissionOrigins,
+  getProviderCompanionCookieOrigins,
+  getProviderRequestPermissionOrigins
 };
 
 export const CUSTOM_PROVIDERS_STORAGE_KEY = 'customProviders';
@@ -413,7 +417,6 @@ export function toCustomProviderDescriptor(record, { extensionOrigin = null } = 
   const normalizedUrl = parsed.toString();
   const { origin } = parsed;
   const matchPattern = `${origin}/*`;
-  const permissionOrigins = getExpectedCustomWebPermissionOrigins(origin);
 
   return Object.freeze({
     id: record.id,
@@ -426,7 +429,7 @@ export function toCustomProviderDescriptor(record, { extensionOrigin = null } = 
     access: 'custom',
     frameOrigins: Object.freeze([origin]),
     allowedHosts: Object.freeze([]),
-    permissionOrigins: Object.freeze(permissionOrigins),
+    permissionOrigins: Object.freeze([matchPattern]),
     contentScript: Object.freeze({
       matches: Object.freeze([matchPattern]),
       js: Object.freeze([CUSTOM_PROVIDER_DRIVER_SCRIPT])

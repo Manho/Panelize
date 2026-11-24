@@ -280,7 +280,7 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
 
     await expect(hasOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(false);
     expect(chrome.permissions.contains).toHaveBeenLastCalledWith({
-      origins: ['https://chat.example.com/*', 'http://chat.example.com/*'],
+      origins: ['https://chat.example.com/*'],
     });
 
     await expect(hasOptionalProviderPermission('custom-deadbeef00')).resolves.toBe(false);
@@ -326,11 +326,7 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
     const state = installStatefulChromeEnv({
       topDomainsSupported: true,
       localRecords: [CUSTOM_RECORD_A, CUSTOM_RECORD_B],
-      grantedOrigins: [
-        'http://127.0.0.1:3000/*',
-        'https://chat.example.com/*',
-        'http://chat.example.com/*',
-      ],
+      grantedOrigins: ['http://127.0.0.1:3000/*', 'https://chat.example.com/*'],
       enabledProviders: [CUSTOM_RECORD_A.id, CUSTOM_RECORD_B.id, 'chatgpt'],
     });
 
@@ -499,9 +495,7 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
       grantedOrigins: [
         'http://127.0.0.1:3000/*',
         'https://chat.example.com/*',
-        'http://chat.example.com/*',
         'https://chatglm.cn/*',
-        'http://chatglm.cn/*',
       ],
       enabledProviders: [CUSTOM_RECORD_A.id, CUSTOM_RECORD_B.id, 'chatglm'],
     });

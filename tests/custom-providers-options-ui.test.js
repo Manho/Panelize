@@ -793,4 +793,111 @@ describe('B3.2 custom web providers in Options', () => {
     expect(areas.sync.multiPanelProviders).toBeUndefined();
     expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toEqual([customRecord]);
   });
+
+  it('runs optional-access/cookie cleanup BEFORE revoking host permissions on delete and origin-changing inline edit, and preserves legacy HTTPS-only grants when companion http:// is declined', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const customRecord = {
+      id: 'custom-1234567890',
+      name: 'Legacy HTTPS AI',
+      url: 'https://legacy-a.example.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+
+    const callOrder = [];
+    const grantedOrigins = new Set(['https://legacy-a.example.com/*']);
+
+    installChromeEnv({
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [customRecord],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', customRecord.id],
+      },
+      grantedOrigins: [...grantedOrigins],
+    });
+
+    chrome.permissions.contains.mockImplementation(({ origins = [] } = {}) =>
+      Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+    );
+    chrome.runtime.sendMessage.mockImplementation((msg) => {
+      if (msg?.action === 'syncOptionalProviderAccess') {
+        callOrder.push('syncOptionalProviderAccess');
+      }
+      return Promise.resolve({ success: true });
+    });
+    chrome.permissions.remove.mockImplementation(({ origins = [] } = {}) => {
+      callOrder.push(`permissions.remove:${origins.join(',')}`);
+      for (const origin of origins) {
+        grantedOrigins.delete(origin);
+      }
+      return Promise.resolve(true);
+    });
+
+    const optionsMod = await import('../options/options.js');
+    await vi.waitFor(() => {
+      expect(document.querySelector(`[data-provider-id="${customRecord.id}"]`)).not.toBeNull();
+    });
+
+    // 1) Legacy HTTPS-only user edits name on same origin and declines companion http:// request ->
+    //    core https:// grant preserves the edit without error.
+    const row = document.querySelector(`[data-provider-id="${customRecord.id}"]`);
+    row.querySelector('[data-action="edit-custom-provider"]').click();
+    await vi.waitFor(() => {
+      expect(document.querySelector('.custom-provider-inline-edit')).not.toBeNull();
+    });
+    const inlineForm = document.querySelector('.custom-provider-inline-edit');
+    inlineForm.querySelector(`#inline-edit-${customRecord.id}-name`).value = 'Legacy HTTPS AI Renamed';
+    chrome.permissions.request.mockResolvedValueOnce(false);
+    inlineForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector(`[data-provider-id="${customRecord.id}"] .provider-name`)?.textContent
+      ).toBe('Legacy HTTPS AI Renamed');
+    });
+    expect(chrome.permissions.request).toHaveBeenCalledWith({
+      origins: ['https://legacy-a.example.com/*', 'http://legacy-a.example.com/*'],
+    });
+
+    // 2) Changing origin via inline edit runs syncOptionalProviderAccess BEFORE chrome.permissions.remove
+    //    so mirrored cookies on the old origin are cleaned up while host permission is still held.
+    callOrder.length = 0;
+    document
+      .querySelector(`[data-provider-id="${customRecord.id}"] [data-action="edit-custom-provider"]`)
+      .click();
+    await vi.waitFor(() => {
+      expect(document.querySelector('.custom-provider-inline-edit')).not.toBeNull();
+    });
+    const inlineForm2 = document.querySelector('.custom-provider-inline-edit');
+    inlineForm2.querySelector(`#inline-edit-${customRecord.id}-url`).value =
+      'https://migrated-b.example.com/';
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      for (const origin of origins) {
+        grantedOrigins.add(origin);
+      }
+      return Promise.resolve(true);
+    });
+    inlineForm2.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(callOrder.some((entry) => entry.startsWith('permissions.remove:'))).toBe(true);
+    });
+    expect(callOrder[0]).toBe('syncOptionalProviderAccess');
+    expect(callOrder[1]).toBe(
+      'permissions.remove:https://legacy-a.example.com/*,http://legacy-a.example.com/*'
+    );
+
+    // 3) Deleting custom provider also runs syncOptionalProviderAccess BEFORE chrome.permissions.remove
+    callOrder.length = 0;
+    await optionsMod.deleteCustomProviderEntry(customRecord.id);
+    expect(callOrder[0]).toBe('syncOptionalProviderAccess');
+    expect(callOrder[1]).toBe(
+      'permissions.remove:https://migrated-b.example.com/*,http://migrated-b.example.com/*'
+    );
+  });
 });

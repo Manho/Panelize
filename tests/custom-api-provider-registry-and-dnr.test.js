@@ -406,11 +406,7 @@ describe('Custom API provider descriptors, validation, storage, and DNR Origin-s
   it('installs Origin-removal DNR rules and zero content scripts for enabled+permitted API providers on Chrome >= 145', async () => {
     const state = installStatefulChromeEnv({
       topDomainsSupported: true,
-      grantedOrigins: [
-        'http://localhost:11434/*',
-        'https://webui.example.com/*',
-        'http://webui.example.com/*',
-      ],
+      grantedOrigins: ['http://localhost:11434/*', 'https://webui.example.com/*'],
       localRecords: [API_RECORD_OLLAMA_A, API_RECORD_OLLAMA_B, WEB_RECORD_C],
       enabledProviders: [API_RECORD_OLLAMA_A.id, API_RECORD_OLLAMA_B.id, WEB_RECORD_C.id],
     });

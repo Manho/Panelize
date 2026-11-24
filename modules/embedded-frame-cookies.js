@@ -1,19 +1,19 @@
 import { isCustomProviderId, loadCustomProviders } from './custom-providers.js';
-import { hasOptionalProviderPermission, supportsScopedFrameRules } from './optional-provider-access.js';
+import {
+  hasOptionalProviderCompanionCookiePermission,
+  hasOptionalProviderPermission,
+  supportsScopedFrameRules
+} from './optional-provider-access.js';
 import { getProviderDescriptor, listProviderDescriptors } from './provider-registry.js';
 
 export const EMBEDDED_FRAME_COOKIE_SYNC_ACTION = 'syncEmbeddedFrameCookies';
 export const CHATGLM_PROVIDER_ID = 'chatglm';
 export const CHATGLM_ORIGIN = 'https://chatglm.cn';
 export const CHATGLM_HOSTNAME = 'chatglm.cn';
-export const CHATGLM_AUTH_COOKIE_NAMES = Object.freeze([
-  'chatglm_token',
-  'chatglm_refresh_token'
-]);
 export const MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY = 'mirroredEmbeddedFrameCookies';
+export const PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY = 'pendingEmbeddedFrameCookieCleanups';
 
 const EXPIRY_TOLERANCE_SECONDS = 2;
-const activeSelfPartitionedRemovals = new Set();
 
 export function computeCookieValueDigest(value) {
   const text = typeof value === 'string' ? value : '';
@@ -55,26 +55,13 @@ export function requiresEmbeddedFrameCookieSync(providerId) {
   );
 }
 
-export function isChatglmGuestJwt(token) {
-  if (typeof token !== 'string' || token.length === 0) {
-    return false;
-  }
-  const parts = token.split('.');
-  if (parts.length < 2 || !parts[1]) {
-    return false;
-  }
-  try {
-    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
-    const decoded = JSON.parse(atob(padded));
-    return decoded?.is_guest === true;
-  } catch {
-    return false;
-  }
-}
-
 export function cookieMatchesHostname(cookieDomain, hostOnly, hostname) {
-  if (typeof cookieDomain !== 'string' || cookieDomain.length === 0 || typeof hostname !== 'string' || hostname.length === 0) {
+  if (
+    typeof cookieDomain !== 'string' ||
+    cookieDomain.length === 0 ||
+    typeof hostname !== 'string' ||
+    hostname.length === 0
+  ) {
     return false;
   }
   const targetHost = hostname.toLowerCase();
@@ -86,6 +73,29 @@ export function cookieMatchesHostname(cookieDomain, hostOnly, hostname) {
     return false;
   }
   return targetHost === cleanDomain || targetHost.endsWith(`.${cleanDomain}`);
+}
+
+/**
+ * Strictly one-way filter for `chrome.cookies.onChanged`: only unpartitioned
+ * top-level non-HttpOnly cookie changes may schedule reconciliation into the
+ * extension's CHIPS partition. Partitioned panel events (including self-writes
+ * and Chrome evictions/expirations) are always ignored.
+ *
+ * @param {chrome.cookies.CookieChangeInfo | null | undefined} changeInfo
+ * @returns {boolean}
+ */
+export function isEmbeddedFrameTopLevelCookieChange(changeInfo) {
+  const cookie = changeInfo?.cookie;
+  if (!cookie || typeof cookie.name !== 'string' || cookie.name.length === 0) {
+    return false;
+  }
+  if (cookie.partitionKey || cookie.httpOnly) {
+    return false;
+  }
+  if (changeInfo.removed && changeInfo.cause === 'overwrite') {
+    return false;
+  }
+  return true;
 }
 
 function isSamePartitionKey(cookiePartitionKey, expectedPartitionKey) {
@@ -189,18 +199,41 @@ function isUpToDatePartitionedMirror(sourceCookie, candidateCookie) {
   );
 }
 
-async function queryHostCookies(hostname, partitionKey = null) {
-  if (!chrome?.cookies?.getAll) {
-    return [];
+async function hasOriginCookiePermission(origin) {
+  if (typeof origin !== 'string' || !origin.startsWith('https://')) {
+    return false;
+  }
+  if (!chrome?.permissions?.contains) {
+    return false;
+  }
+  try {
+    return Boolean(await chrome.permissions.contains({ origins: [`${origin}/*`] }));
+  } catch {
+    return false;
+  }
+}
+
+async function queryHostCookiesStrict(hostname, partitionKey = null) {
+  if (!chrome?.cookies?.getAll || !hostname) {
+    return { ok: false, cookies: [] };
   }
   const partitionFilter = partitionKey ? { partitionKey } : {};
-  const [byUrl, byDomain] = await Promise.all([
-    chrome.cookies.getAll({ url: `https://${hostname}/`, ...partitionFilter }).catch(() => []),
-    chrome.cookies.getAll({ domain: hostname, ...partitionFilter }).catch(() => [])
-  ]);
+  let byUrl;
+  let byDomain;
+  try {
+    [byUrl, byDomain] = await Promise.all([
+      chrome.cookies.getAll({ url: `https://${hostname}/`, ...partitionFilter }),
+      chrome.cookies.getAll({ domain: hostname, ...partitionFilter })
+    ]);
+  } catch {
+    return { ok: false, cookies: [] };
+  }
 
   const deduped = new Map();
-  for (const cookie of [...(Array.isArray(byUrl) ? byUrl : []), ...(Array.isArray(byDomain) ? byDomain : [])]) {
+  for (const cookie of [
+    ...(Array.isArray(byUrl) ? byUrl : []),
+    ...(Array.isArray(byDomain) ? byDomain : [])
+  ]) {
     if (!cookie || typeof cookie.name !== 'string' || cookie.name.length === 0) {
       continue;
     }
@@ -217,7 +250,7 @@ async function queryHostCookies(hostname, partitionKey = null) {
     deduped.set(cookieIdentityKey(cookie, hostname), cookie);
   }
 
-  return [...deduped.values()];
+  return { ok: true, cookies: [...deduped.values()] };
 }
 
 async function setPartitionedMirrorCookie(sourceCookie, hostname, partitionKey) {
@@ -251,62 +284,37 @@ async function setPartitionedMirrorCookie(sourceCookie, hostname, partitionKey) 
 
   if (preserveDomain) {
     try {
-      return await chrome.cookies.set({
+      const result = await chrome.cookies.set({
         ...baseDetails,
         domain: sourceCookie.domain
       });
+      if (result) {
+        return result;
+      }
     } catch {
       // Fall back to a host-only partitioned cookie if superdomain write access is unavailable.
     }
   }
 
   try {
-    return await chrome.cookies.set(baseDetails);
+    return (await chrome.cookies.set(baseDetails)) || null;
   } catch (error) {
     console.warn(`[EmbeddedCookies] Failed to mirror cookie ${sourceCookie.name} on ${hostname}:`, error);
     return null;
   }
 }
 
-async function setUnpartitionedChatglmCookie(sourceCookie) {
-  if (!chrome?.cookies?.set) {
-    return null;
-  }
-  const path = sourceCookie.path || '/';
-  const details = {
-    url: `${CHATGLM_ORIGIN}${path}`,
-    name: sourceCookie.name,
-    value: sourceCookie.value,
-    path,
-    secure: false,
-    httpOnly: false,
-    sameSite: 'lax'
-  };
-  if (typeof sourceCookie.expirationDate === 'number') {
-    details.expirationDate = sourceCookie.expirationDate;
-  }
-  if (typeof sourceCookie.storeId === 'string' && sourceCookie.storeId.length > 0) {
-    details.storeId = sourceCookie.storeId;
-  }
-  try {
-    return await chrome.cookies.set(details);
-  } catch (error) {
-    console.warn(`[EmbeddedCookies] Failed to sync ChatGLM cookie ${sourceCookie.name} to top-level:`, error);
-    return null;
-  }
-}
-
 async function removePartitionedCookieByKey(serializedKey, hostname, partitionKey) {
   if (!chrome?.cookies?.remove) {
-    return;
+    return false;
   }
   const parsed = parseCookieIdentityKey(serializedKey);
   if (!parsed) {
-    return;
+    return false;
   }
   const cleanHost = hostname || parsed.domain.replace(/^\.+/, '');
   if (!cleanHost) {
-    return;
+    return false;
   }
   const details = {
     url: `https://${cleanHost}${parsed.path}`,
@@ -316,37 +324,51 @@ async function removePartitionedCookieByKey(serializedKey, hostname, partitionKe
   if (parsed.storeId) {
     details.storeId = parsed.storeId;
   }
-  activeSelfPartitionedRemovals.add(parsed.name);
   try {
-    await chrome.cookies.remove(details).catch(() => {});
-  } finally {
-    activeSelfPartitionedRemovals.delete(parsed.name);
+    const removed = await chrome.cookies.remove(details);
+    return Boolean(removed);
+  } catch {
+    return false;
   }
 }
 
-async function loadMirroredCookiesState() {
-  if (!chrome?.storage?.local?.get) {
+function normalizeOriginRecordMap(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {};
   }
-  try {
-    const stored = await chrome.storage.local.get({ [MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]: {} });
-    const raw = stored?.[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY];
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return {};
-    }
-    const normalized = {};
-    for (const [origin, keys] of Object.entries(raw)) {
-      if (typeof origin === 'string' && Array.isArray(keys)) {
-        normalized[origin] = keys.filter((key) => typeof key === 'string');
+  const normalized = {};
+  for (const [origin, keys] of Object.entries(raw)) {
+    if (typeof origin === 'string' && Array.isArray(keys)) {
+      const validKeys = [...new Set(keys.filter((key) => typeof key === 'string'))].sort();
+      if (validKeys.length > 0) {
+        normalized[origin] = validKeys;
       }
     }
-    return normalized;
+  }
+  return normalized;
+}
+
+async function loadCookieTrackingState() {
+  if (!chrome?.storage?.local?.get) {
+    return { mirrored: {}, pendingCleanups: {} };
+  }
+  try {
+    const stored = await chrome.storage.local.get({
+      [MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]: {},
+      [PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY]: {}
+    });
+    return {
+      mirrored: normalizeOriginRecordMap(stored?.[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]),
+      pendingCleanups: normalizeOriginRecordMap(
+        stored?.[PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY]
+      )
+    };
   } catch {
-    return {};
+    return { mirrored: {}, pendingCleanups: {} };
   }
 }
 
-function isSameMirroredState(left, right) {
+function isSameOriginRecordMap(left, right) {
   const leftOrigins = Object.keys(left).sort();
   const rightOrigins = Object.keys(right).sort();
   if (leftOrigins.length !== rightOrigins.length) {
@@ -371,14 +393,24 @@ function isSameMirroredState(left, right) {
   return true;
 }
 
-async function saveMirroredCookiesStateIfChanged(previousState, nextState) {
-  if (!chrome?.storage?.local?.set || isSameMirroredState(previousState, nextState)) {
+async function saveCookieTrackingStateIfChanged(previousState, nextState) {
+  if (!chrome?.storage?.local?.set) {
+    return;
+  }
+  const updates = {};
+  if (!isSameOriginRecordMap(previousState.mirrored, nextState.mirrored)) {
+    updates[MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY] = nextState.mirrored;
+  }
+  if (!isSameOriginRecordMap(previousState.pendingCleanups, nextState.pendingCleanups)) {
+    updates[PENDING_EMBEDDED_COOKIE_CLEANUPS_STORAGE_KEY] = nextState.pendingCleanups;
+  }
+  if (Object.keys(updates).length === 0) {
     return;
   }
   try {
-    await chrome.storage.local.set({ [MIRRORED_EMBEDDED_COOKIES_STORAGE_KEY]: nextState });
+    await chrome.storage.local.set(updates);
   } catch (error) {
-    console.warn('[EmbeddedCookies] Failed to persist mirrored cookie keys:', error);
+    console.warn('[EmbeddedCookies] Failed to persist mirrored cookie tracking state:', error);
   }
 }
 
@@ -386,8 +418,16 @@ async function collectActiveEmbeddedHttpsOrigins(enabledProviderIds, { includeCu
   const enabledSet = new Set(Array.isArray(enabledProviderIds) ? enabledProviderIds : []);
   const activeOrigins = new Map();
 
-  if (enabledSet.has(CHATGLM_PROVIDER_ID) && await hasOptionalProviderPermission(CHATGLM_PROVIDER_ID)) {
-    activeOrigins.set(CHATGLM_ORIGIN, CHATGLM_HOSTNAME);
+  if (
+    enabledSet.has(CHATGLM_PROVIDER_ID) &&
+    await hasOptionalProviderPermission(CHATGLM_PROVIDER_ID)
+  ) {
+    activeOrigins.set(CHATGLM_ORIGIN, {
+      hostname: CHATGLM_HOSTNAME,
+      hasNonSecureCookieAccess: await hasOptionalProviderCompanionCookiePermission(
+        CHATGLM_PROVIDER_ID
+      )
+    });
   }
 
   if (includeCustom && supportsScopedFrameRules()) {
@@ -413,7 +453,12 @@ async function collectActiveEmbeddedHttpsOrigins(enabledProviderIds, { includeCu
         continue;
       }
       if (await hasOptionalProviderPermission(descriptor.id)) {
-        activeOrigins.set(origin, hostname);
+        activeOrigins.set(origin, {
+          hostname,
+          hasNonSecureCookieAccess: await hasOptionalProviderCompanionCookiePermission(
+            descriptor.id
+          )
+        });
       }
     }
   }
@@ -421,50 +466,71 @@ async function collectActiveEmbeddedHttpsOrigins(enabledProviderIds, { includeCu
   return activeOrigins;
 }
 
-async function promoteChatglmLoggedInPanelSessionIfNeeded(
-  unpartitionedCookies,
-  partitionedCookies,
-  previousMirroredRecords = []
+/**
+ * Cleans up stale mirrored partitioned cookies for an origin, verifying that
+ * host permission is currently held and that each cookie's current digest still
+ * matches the last mirrored digest (never deleting fresh panel-owned sessions).
+ * Records whose removal cannot be verified (e.g., permission revoked externally
+ * or `chrome.cookies.remove` failure) are returned as `remainingPending`.
+ */
+async function cleanupStalePartitionedRecords(
+  records,
+  origin,
+  hostname,
+  partitionKey,
+  { existingPartitionedResult = null } = {}
 ) {
-  const partToken = partitionedCookies.find((cookie) => cookie.name === 'chatglm_token');
-  if (!partToken || !partToken.value || isChatglmGuestJwt(partToken.value)) {
-    return unpartitionedCookies;
+  const uniqueRecords = [...new Set(Array.isArray(records) ? records : [])].filter(
+    (record) => typeof record === 'string' && parseCookieIdentityKey(record) !== null
+  );
+  if (uniqueRecords.length === 0) {
+    return { remainingPending: [], removedIdentityKeys: new Set() };
   }
 
-  const previousTokenDigests = new Set();
-  for (const record of previousMirroredRecords) {
+  if (!hostname || !(await hasOriginCookiePermission(origin))) {
+    return { remainingPending: uniqueRecords, removedIdentityKeys: new Set() };
+  }
+
+  const partResult =
+    existingPartitionedResult || (await queryHostCookiesStrict(hostname, partitionKey));
+  if (!partResult.ok) {
+    return { remainingPending: uniqueRecords, removedIdentityKeys: new Set() };
+  }
+
+  const partByIdentity = new Map(
+    partResult.cookies.map((cookie) => [cookieIdentityKey(cookie, hostname), cookie])
+  );
+  const remainingPending = [];
+  const removedIdentityKeys = new Set();
+
+  for (const record of uniqueRecords) {
     const parsed = parseCookieIdentityKey(record);
-    if (parsed?.name === 'chatglm_token' && parsed.valueDigest) {
-      previousTokenDigests.add(parsed.valueDigest);
-    }
-  }
-  if (previousTokenDigests.has(computeCookieValueDigest(partToken.value))) {
-    return unpartitionedCookies;
-  }
-
-  const unpartToken = unpartitionedCookies.find((cookie) => cookie.name === 'chatglm_token');
-  if (unpartToken && unpartToken.value && !isChatglmGuestJwt(unpartToken.value)) {
-    return unpartitionedCookies;
-  }
-
-  const promotedByName = new Map();
-  for (const name of CHATGLM_AUTH_COOKIE_NAMES) {
-    const partCookie = partitionedCookies.find((cookie) => cookie.name === name);
-    if (!partCookie || !partCookie.value) {
+    if (!parsed) {
       continue;
     }
-    const saved = await setUnpartitionedChatglmCookie(partCookie);
-    if (saved) {
-      promotedByName.set(name, saved);
+    const currentCookie = partByIdentity.get(parsed.identityKey);
+    if (!currentCookie) {
+      // Verified absent while host permission is held -> cleanup complete.
+      continue;
+    }
+    if (currentCookie.httpOnly) {
+      // Never delete a server-set HttpOnly cookie.
+      continue;
+    }
+    if (!parsed.valueDigest || computeCookieValueDigest(currentCookie.value) !== parsed.valueDigest) {
+      // Partitioned cookie was rotated/replaced inside the panel -> preserve panel-owned session.
+      continue;
+    }
+    const removed = await removePartitionedCookieByKey(record, hostname, partitionKey);
+    if (removed) {
+      removedIdentityKeys.add(parsed.identityKey);
+      partByIdentity.delete(parsed.identityKey);
+    } else {
+      remainingPending.push(record);
     }
   }
 
-  if (promotedByName.size === 0) {
-    return unpartitionedCookies;
-  }
-
-  const retained = unpartitionedCookies.filter((cookie) => !promotedByName.has(cookie.name));
-  return [...retained, ...promotedByName.values()];
+  return { remainingPending, removedIdentityKeys };
 }
 
 export async function reconcileEmbeddedFrameCookies() {
@@ -486,21 +552,43 @@ export async function reconcileEmbeddedFrameCookies() {
   const activeOrigins = await collectActiveEmbeddedHttpsOrigins(enabledProviderIds, {
     includeCustom: hydration.ok
   });
-  const previousState = await loadMirroredCookiesState();
-  const nextState = {};
+  const previousState = await loadCookieTrackingState();
+  const nextMirrored = {};
+  const nextPendingCleanups = {};
 
-  for (const [origin, hostname] of activeOrigins.entries()) {
-    let [unpartitionedCookies, partitionedCookies] = await Promise.all([
-      queryHostCookies(hostname, null),
-      queryHostCookies(hostname, partitionKey)
-    ]);
+  for (const [origin, { hostname, hasNonSecureCookieAccess }] of activeOrigins.entries()) {
+    const previousRecords = previousState.mirrored[origin] || [];
+    const pendingForOrigin = previousState.pendingCleanups[origin] || [];
 
-    if (origin === CHATGLM_ORIGIN) {
-      unpartitionedCookies = await promoteChatglmLoggedInPanelSessionIfNeeded(
-        unpartitionedCookies,
-        partitionedCookies,
-        previousState[origin] || []
+    const partResult = await queryHostCookiesStrict(hostname, partitionKey);
+    let remainingPendingForOrigin = pendingForOrigin;
+    let partitionedCookies = partResult.cookies;
+
+    if (pendingForOrigin.length > 0) {
+      const flushed = await cleanupStalePartitionedRecords(
+        pendingForOrigin,
+        origin,
+        hostname,
+        partitionKey,
+        { existingPartitionedResult: partResult }
       );
+      remainingPendingForOrigin = flushed.remainingPending;
+      if (flushed.removedIdentityKeys.size > 0) {
+        partitionedCookies = partitionedCookies.filter(
+          (cookie) => !flushed.removedIdentityKeys.has(cookieIdentityKey(cookie, hostname))
+        );
+      }
+    }
+
+    const unpartResult = await queryHostCookiesStrict(hostname, null);
+    if (!partResult.ok || !unpartResult.ok) {
+      if (previousRecords.length > 0) {
+        nextMirrored[origin] = previousRecords;
+      }
+      if (remainingPendingForOrigin.length > 0) {
+        nextPendingCleanups[origin] = [...new Set(remainingPendingForOrigin)].sort();
+      }
+      continue;
     }
 
     const partitionedByExactKey = new Map(
@@ -519,10 +607,24 @@ export async function reconcileEmbeddedFrameCookies() {
         ])
     );
 
+    const previousByIdentity = new Map();
+    for (const rawRecord of previousRecords) {
+      const parsed = parseCookieIdentityKey(rawRecord);
+      if (parsed) {
+        previousByIdentity.set(parsed.identityKey, { parsed, raw: rawRecord });
+      }
+    }
+
     const nextRecords = [];
-    const nextIdentityKeys = new Set();
-    for (const sourceCookie of unpartitionedCookies) {
+    const handledPreviousIdentityKeys = new Set();
+    const overwrittenIdentityKeys = new Set();
+
+    for (const sourceCookie of unpartResult.cookies) {
       if (!isMirrorableUnpartitionedCookie(sourceCookie)) {
+        continue;
+      }
+      // Non-Secure cookies are gated on the companion http://<hostname>/* grant.
+      if (!sourceCookie.secure && !hasNonSecureCookieAccess) {
         continue;
       }
 
@@ -532,138 +634,150 @@ export async function reconcileEmbeddedFrameCookies() {
         sourceCookie.path || '/',
         sourceCookie.name
       ]);
+      const hostFallbackIdentityKey = cookieIdentityKey(
+        {
+          ...sourceCookie,
+          domain: hostname,
+          hostOnly: true
+        },
+        hostname
+      );
       const existingMirror =
         partitionedByExactKey.get(exactKey) || partitionedByHostFallbackKey.get(fallbackKey);
-      const valueDigest = computeCookieValueDigest(sourceCookie.value);
+      const existingMirrorKey = existingMirror
+        ? cookieIdentityKey(existingMirror, hostname)
+        : null;
+      const previousEntry =
+        (existingMirrorKey && previousByIdentity.get(existingMirrorKey)) ||
+        previousByIdentity.get(exactKey) ||
+        previousByIdentity.get(hostFallbackIdentityKey) ||
+        null;
 
-      if (isUpToDatePartitionedMirror(sourceCookie, existingMirror)) {
-        nextIdentityKeys.add(cookieIdentityKey(existingMirror, hostname));
-        nextRecords.push(serializeMirroredCookieRecord(existingMirror, hostname, valueDigest));
+      const sourceDigest = computeCookieValueDigest(sourceCookie.value);
+      const lastMirroredDigest = previousEntry?.parsed?.valueDigest || null;
+      const existingMirrorDigest = existingMirror
+        ? computeCookieValueDigest(existingMirror.value)
+        : null;
+
+      if (existingMirror?.httpOnly) {
+        continue;
+      }
+
+      // Preserve fresh panel-owned sessions: if the partitioned cookie diverged
+      // from our last mirror while the top-level cookie has not changed, keep
+      // the panel's cookie and retain the last mirrored digest for future checks.
+      if (
+        existingMirror &&
+        lastMirroredDigest !== null &&
+        sourceDigest === lastMirroredDigest &&
+        existingMirrorDigest !== lastMirroredDigest
+      ) {
+        handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
+        nextRecords.push(previousEntry.raw);
+        continue;
+      }
+
+      if (existingMirror && isUpToDatePartitionedMirror(sourceCookie, existingMirror)) {
+        if (previousEntry && previousEntry.parsed.identityKey === existingMirrorKey) {
+          handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
+        }
+        nextRecords.push(serializeMirroredCookieRecord(existingMirror, hostname, sourceDigest));
+        overwrittenIdentityKeys.add(existingMirrorKey);
         continue;
       }
 
       const written = await setPartitionedMirrorCookie(sourceCookie, hostname, partitionKey);
-      const mirrorCookie = written || sourceCookie;
-      nextIdentityKeys.add(cookieIdentityKey(mirrorCookie, hostname));
-      nextRecords.push(serializeMirroredCookieRecord(mirrorCookie, hostname, valueDigest));
+      if (written) {
+        const writtenIdentityKey = cookieIdentityKey(written, hostname);
+        if (previousEntry && previousEntry.parsed.identityKey === writtenIdentityKey) {
+          handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
+        }
+        nextRecords.push(serializeMirroredCookieRecord(written, hostname, sourceDigest));
+        overwrittenIdentityKeys.add(writtenIdentityKey);
+      } else if (previousEntry) {
+        // Write failed: do not record the unwritten digest; retain the last verified mirror record.
+        handledPreviousIdentityKeys.add(previousEntry.parsed.identityKey);
+        nextRecords.push(previousEntry.raw);
+      }
     }
 
-    const previousRecords = previousState[origin] || [];
-    for (const oldRecord of previousRecords) {
-      const parsedOld = parseCookieIdentityKey(oldRecord);
-      if (parsedOld && !nextIdentityKeys.has(parsedOld.identityKey)) {
-        await removePartitionedCookieByKey(oldRecord, hostname, partitionKey);
-      }
+    const staleRecords = previousRecords.filter((rawRecord) => {
+      const parsed = parseCookieIdentityKey(rawRecord);
+      return parsed && !handledPreviousIdentityKeys.has(parsed.identityKey);
+    });
+
+    const staleCleanup = await cleanupStalePartitionedRecords(
+      staleRecords,
+      origin,
+      hostname,
+      partitionKey,
+      { existingPartitionedResult: { ok: true, cookies: partitionedCookies } }
+    );
+
+    const combinedPending = [
+      ...remainingPendingForOrigin.filter((rawRecord) => {
+        const parsed = parseCookieIdentityKey(rawRecord);
+        return parsed && !overwrittenIdentityKeys.has(parsed.identityKey);
+      }),
+      ...staleCleanup.remainingPending
+    ];
+
+    const uniqueSortedPending = [...new Set(combinedPending)].sort();
+    if (uniqueSortedPending.length > 0) {
+      nextPendingCleanups[origin] = uniqueSortedPending;
     }
 
     const uniqueSortedNextRecords = [...new Set(nextRecords)].sort();
     if (uniqueSortedNextRecords.length > 0) {
-      nextState[origin] = uniqueSortedNextRecords;
+      nextMirrored[origin] = uniqueSortedNextRecords;
     }
   }
 
-  for (const [origin, previousKeys] of Object.entries(previousState)) {
+  const inactiveOrigins = new Set([
+    ...Object.keys(previousState.mirrored),
+    ...Object.keys(previousState.pendingCleanups)
+  ]);
+
+  for (const origin of inactiveOrigins) {
     if (activeOrigins.has(origin)) {
       continue;
     }
+    const previousKeys = previousState.mirrored[origin] || [];
+    const previousPending = previousState.pendingCleanups[origin] || [];
+
     if (!hydration.ok && origin !== CHATGLM_ORIGIN) {
-      nextState[origin] = previousKeys;
+      if (previousKeys.length > 0) {
+        nextMirrored[origin] = previousKeys;
+      }
+      if (previousPending.length > 0) {
+        nextPendingCleanups[origin] = previousPending;
+      }
       continue;
     }
+
     let hostname = '';
     try {
       hostname = new URL(origin).hostname;
     } catch {
       hostname = '';
     }
-    for (const oldKey of previousKeys) {
-      await removePartitionedCookieByKey(oldKey, hostname, partitionKey);
+
+    const cleanupResult = await cleanupStalePartitionedRecords(
+      [...previousKeys, ...previousPending],
+      origin,
+      hostname,
+      partitionKey
+    );
+    const uniqueSortedPending = [...new Set(cleanupResult.remainingPending)].sort();
+    if (uniqueSortedPending.length > 0) {
+      nextPendingCleanups[origin] = uniqueSortedPending;
     }
   }
 
-  await saveMirroredCookiesStateIfChanged(previousState, nextState);
-}
-
-export async function handleEmbeddedFrameCookieChanged(changeInfo) {
-  const cookie = changeInfo?.cookie;
-  if (!cookie || typeof cookie.name !== 'string' || cookie.name.length === 0) {
-    return false;
-  }
-
-  const partitionKey = getExtensionPartitionKey();
-  if (!partitionKey) {
-    return false;
-  }
-
-  // Bidirectional sync for Zhipu (chatglm.cn) auth cookies written or cleared inside the panel.
-  if (isSamePartitionKey(cookie.partitionKey, partitionKey)) {
-    if (
-      !CHATGLM_AUTH_COOKIE_NAMES.includes(cookie.name) ||
-      !cookieMatchesHostname(cookie.domain || '', Boolean(cookie.hostOnly), CHATGLM_HOSTNAME)
-    ) {
-      return false;
-    }
-    if (changeInfo.removed && (changeInfo.cause === 'overwrite' || activeSelfPartitionedRemovals.has(cookie.name))) {
-      return false;
-    }
-
-    const settings = await chrome.storage.sync.get({ enabledProviders: [] }).catch(() => ({ enabledProviders: [] }));
-    const enabledIds = Array.isArray(settings?.enabledProviders) ? settings.enabledProviders : [];
-    if (!enabledIds.includes(CHATGLM_PROVIDER_ID) || !(await hasOptionalProviderPermission(CHATGLM_PROVIDER_ID))) {
-      return false;
-    }
-
-    const unpartitionedCookies = await queryHostCookies(CHATGLM_HOSTNAME, null);
-    const matchingUnpart = unpartitionedCookies.filter((item) => item.name === cookie.name);
-
-    if (!changeInfo.removed) {
-      if (matchingUnpart.some((item) => item.value === cookie.value)) {
-        return false;
-      }
-      const unpartAccessToken = unpartitionedCookies.find((item) => item.name === 'chatglm_token');
-      const topLevelHasRealUser = Boolean(
-        unpartAccessToken?.value && !isChatglmGuestJwt(unpartAccessToken.value)
-      );
-      if (topLevelHasRealUser) {
-        if (cookie.name === 'chatglm_token' && isChatglmGuestJwt(cookie.value)) {
-          return true;
-        }
-        if (cookie.name === 'chatglm_refresh_token') {
-          const partCookies = await queryHostCookies(CHATGLM_HOSTNAME, partitionKey);
-          const partAccessToken = partCookies.find((item) => item.name === 'chatglm_token');
-          if (!partAccessToken?.value || isChatglmGuestJwt(partAccessToken.value)) {
-            return true;
-          }
-        }
-      }
-      await setUnpartitionedChatglmCookie(cookie);
-      return true;
-    }
-
-    if (matchingUnpart.length === 0) {
-      return false;
-    }
-
-    if (chrome.cookies?.remove) {
-      for (const item of matchingUnpart) {
-        const removeDetails = {
-          url: `${CHATGLM_ORIGIN}${item.path || '/'}`,
-          name: item.name
-        };
-        if (typeof item.storeId === 'string' && item.storeId.length > 0) {
-          removeDetails.storeId = item.storeId;
-        }
-        await chrome.cookies.remove(removeDetails).catch(() => {});
-      }
-    }
-    return true;
-  }
-
-  if (cookie.partitionKey || cookie.httpOnly) {
-    return false;
-  }
-
-  return true;
+  await saveCookieTrackingStateIfChanged(previousState, {
+    mirrored: nextMirrored,
+    pendingCleanups: nextPendingCleanups
+  });
 }
 
 export function createEmbeddedFrameCookieReconcileScheduler(reconcile, onError = () => {}) {

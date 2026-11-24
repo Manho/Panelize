@@ -8,7 +8,9 @@ import {
   BUILTIN_PROVIDER_DESCRIPTORS,
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
+  getProviderCompanionCookieOrigins,
   getProviderDescriptor,
+  getProviderRequestPermissionOrigins,
   listProviderDescriptors
 } from './provider-registry.js';
 
@@ -121,13 +123,37 @@ export async function hasOptionalProviderPermission(providerId) {
   return chrome.permissions.contains({ origins: [...config.origins] });
 }
 
+export async function hasOptionalProviderCompanionCookiePermission(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  const companionOrigins = getProviderCompanionCookieOrigins(descriptor);
+  if (companionOrigins.length === 0) {
+    return true;
+  }
+  if (!chrome.permissions?.contains) {
+    return false;
+  }
+  try {
+    return Boolean(await chrome.permissions.contains({ origins: companionOrigins }));
+  } catch {
+    return false;
+  }
+}
+
 export function requestOptionalProviderPermission(providerId) {
   const descriptor = getProviderDescriptor(providerId);
   if (descriptor?.access === 'custom') {
     if (!chrome.permissions?.request) {
       return Promise.resolve(false);
     }
-    return chrome.permissions.request({ origins: [...descriptor.permissionOrigins] });
+    const requestOrigins = getProviderRequestPermissionOrigins(descriptor);
+    return Promise.resolve(chrome.permissions.request({ origins: requestOrigins })).then(
+      async (granted) => {
+        if (granted) {
+          return true;
+        }
+        return hasOptionalProviderPermission(providerId);
+      }
+    );
   }
   if (isCustomProviderId(providerId)) {
     return Promise.resolve(false);
@@ -138,7 +164,15 @@ export function requestOptionalProviderPermission(providerId) {
     return Promise.resolve(true);
   }
 
-  return chrome.permissions.request({ origins: [...config.origins] });
+  const requestOrigins = getProviderRequestPermissionOrigins(descriptor);
+  return Promise.resolve(chrome.permissions.request({ origins: requestOrigins })).then(
+    async (granted) => {
+      if (granted) {
+        return true;
+      }
+      return hasOptionalProviderPermission(providerId);
+    }
+  );
 }
 
 export async function filterProvidersWithGrantedAccess(providerIds) {
