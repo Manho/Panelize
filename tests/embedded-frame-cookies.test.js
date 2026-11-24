@@ -1445,6 +1445,270 @@ describe('modules/embedded-frame-cookies.js', () => {
     }
   });
 
+  it('preserves pending-cleanup block on a custom HTTPS panel across New Chat for All, settings-driven reload, and unsuccessful Refresh until affirmative clearance', async () => {
+    const mimoOrigin = 'https://aistudio.xiaomimimo.com';
+    const initialMimoRecord = {
+      id: 'custom-a1b2c3d4e5',
+      name: 'MiMo',
+      url: `${mimoOrigin}/`,
+      frameRuleId: 10002,
+      createdAt: 1700000000000,
+    };
+    const updatedMimoRecord = {
+      ...initialMimoRecord,
+      name: 'MiMo Updated',
+      url: `${mimoOrigin}/chat`,
+    };
+
+    const multiPanelHtml = readFileSync(
+      resolve(process.cwd(), 'multi-panel/multi-panel.html'),
+      'utf8'
+    );
+    const bodyHtml = multiPanelHtml
+      .match(/<body[^>]*>([\s\S]*?)<\/body>/i)[1]
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+
+    vi.resetModules();
+    document.body.innerHTML = bodyHtml;
+
+    const cleanupListeners = [];
+    const origWinAdd = window.addEventListener.bind(window);
+    const origWinRemove = window.removeEventListener.bind(window);
+    const origDocAdd = document.addEventListener.bind(document);
+    const origDocRemove = document.removeEventListener.bind(document);
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+      cleanupListeners.push(() => origWinRemove(type, listener, options));
+      return origWinAdd(type, listener, options);
+    });
+    vi.spyOn(document, 'addEventListener').mockImplementation((type, listener, options) => {
+      cleanupListeners.push(() => origDocRemove(type, listener, options));
+      return origDocAdd(type, listener, options);
+    });
+
+    const storageListeners = new Set();
+    const originalOnChanged = chrome.storage.onChanged;
+    chrome.storage.onChanged = {
+      addListener: vi.fn((listener) => storageListeners.add(listener)),
+      removeListener: vi.fn((listener) => storageListeners.delete(listener)),
+    };
+
+    chrome.permissions = {
+      contains: vi.fn(() => Promise.resolve(true)),
+      request: vi.fn(() => Promise.resolve(true)),
+    };
+    chrome.windows = {
+      getCurrent: vi.fn(() => Promise.resolve({ type: 'normal' })),
+      create: vi.fn(() => Promise.resolve({ id: 1 })),
+    };
+    chrome.storage.session = {
+      get: vi.fn(() => Promise.resolve({})),
+      set: vi.fn(() => Promise.resolve()),
+      remove: vi.fn(() => Promise.resolve()),
+    };
+
+    let currentCustomRecords = [initialMimoRecord];
+    chrome.storage.local.get.mockImplementation((keys) => {
+      const defaults =
+        typeof keys === 'object' && keys !== null && !Array.isArray(keys) ? { ...keys } : {};
+      if (
+        keys === CUSTOM_PROVIDERS_STORAGE_KEY ||
+        (Array.isArray(keys) && keys.includes(CUSTOM_PROVIDERS_STORAGE_KEY)) ||
+        (typeof keys === 'object' && keys !== null && CUSTOM_PROVIDERS_STORAGE_KEY in keys)
+      ) {
+        defaults[CUSTOM_PROVIDERS_STORAGE_KEY] = structuredClone(currentCustomRecords);
+      }
+      return Promise.resolve(defaults);
+    });
+    chrome.storage.local.set.mockResolvedValue();
+    chrome.storage.local.remove.mockResolvedValue();
+    chrome.storage.sync.get.mockImplementation((defaults) =>
+      Promise.resolve({
+        ...(typeof defaults === 'object' && defaults !== null && !Array.isArray(defaults)
+          ? defaults
+          : {}),
+        theme: 'light',
+        language: 'en',
+        multiPanelLayout: '1x2',
+        enabledProviders: ['chatgpt', initialMimoRecord.id],
+        providerOrder: ['chatgpt', initialMimoRecord.id],
+        multiPanelProviders: ['chatgpt', initialMimoRecord.id],
+      })
+    );
+    chrome.storage.sync.set.mockResolvedValue();
+
+    let cookieSyncBehavior = () =>
+      Promise.resolve({
+        ok: false,
+        success: false,
+        hasPendingCleanup: true,
+        pendingCleanupCount: 1,
+        pendingCleanupsByOrigin: { [mimoOrigin]: 1 },
+      });
+    let cookieSyncCallCount = 0;
+
+    chrome.runtime.sendMessage.mockImplementation((msg, callback) => {
+      if (msg?.action === EMBEDDED_FRAME_COOKIE_SYNC_ACTION) {
+        cookieSyncCallCount += 1;
+        return cookieSyncBehavior();
+      }
+      const response = { success: true };
+      if (callback) callback(response);
+      return Promise.resolve(response);
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+    );
+
+    const flushMicrotasks = async () => {
+      for (let i = 0; i < 6; i += 1) {
+        await Promise.resolve();
+      }
+    };
+
+    try {
+      await import('../multi-panel/multi-panel.js');
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('#panel-grid .panel-item')).toHaveLength(2);
+      });
+
+      const [chatgptPanelEl, mimoPanelEl] = Array.from(
+        document.querySelectorAll('#panel-grid .panel-item')
+      );
+      const chatgptIframe = chatgptPanelEl.querySelector('iframe');
+      const mimoIframe = mimoPanelEl.querySelector('iframe');
+      const mimoLoadingEl = mimoPanelEl.querySelector('.panel-loading');
+
+      // Initial startup: ChatGPT loads normally while MiMo is blocked due to pending cleanup
+      expect(chatgptIframe.getAttribute('src')).toBe('https://chatgpt.com');
+      expect(mimoIframe.getAttribute('src')).toBeNull();
+      expect(mimoLoadingEl.classList.contains('hidden')).toBe(false);
+      expect(mimoLoadingEl.dataset.blockedReason).toBe('pending-cookie-cleanup');
+      expect(mimoLoadingEl.textContent).toContain('Failed to clear previous MiMo session cookies');
+
+      // Path 1: Global New Chat for All must not navigate the blocked MiMo panel
+      // (MiMo has inPageNewChat: false), while still messaging unblocked ChatGPT.
+      const chatgptPost = vi.fn();
+      Object.defineProperty(chatgptIframe, 'contentWindow', {
+        configurable: true,
+        value: { postMessage: chatgptPost },
+      });
+      document.getElementById('new-chat-btn').click();
+      await flushMicrotasks();
+
+      expect(chatgptPost).toHaveBeenCalledWith(
+        {
+          type: 'NEW_CHAT',
+          providerMode: null,
+          context: 'multi-panel',
+        },
+        'https://chatgpt.com'
+      );
+      expect(mimoIframe.getAttribute('src')).toBeNull();
+      expect(mimoLoadingEl.classList.contains('hidden')).toBe(false);
+      expect(mimoLoadingEl.dataset.blockedReason).toBe('pending-cookie-cleanup');
+
+      // Path 2: Custom-provider settings-driven reload must preserve the block and not assign src
+      currentCustomRecords = [updatedMimoRecord];
+      for (const listener of Array.from(storageListeners)) {
+        listener(
+          {
+            [CUSTOM_PROVIDERS_STORAGE_KEY]: {
+              oldValue: [initialMimoRecord],
+              newValue: [updatedMimoRecord],
+            },
+          },
+          'local'
+        );
+      }
+      await vi.waitFor(() => {
+        expect(
+          mimoPanelEl.querySelector('.panel-header-left span:not(.panel-origin-badge)').textContent
+        ).toBe('MiMo Updated');
+      });
+      expect(mimoIframe.getAttribute('src')).toBeNull();
+      expect(mimoLoadingEl.classList.contains('hidden')).toBe(false);
+      expect(mimoLoadingEl.dataset.blockedReason).toBe('pending-cookie-cleanup');
+      expect(mimoLoadingEl.textContent).toContain(
+        'Failed to clear previous MiMo Updated session cookies'
+      );
+
+      // Path 3a: Unsuccessful Refresh (sendMessage rejects -> requestEmbeddedFrameCookieSync returns null)
+      // MUST preserve the block and never navigate the blocked panel.
+      const callsBeforeRejectedRefresh = cookieSyncCallCount;
+      cookieSyncBehavior = () => Promise.reject(new Error('Service worker unavailable'));
+      mimoPanelEl.querySelector('.refresh-panel-btn').click();
+      await vi.waitFor(() => {
+        expect(cookieSyncCallCount).toBe(callsBeforeRejectedRefresh + 1);
+      });
+      await flushMicrotasks();
+
+      expect(mimoIframe.getAttribute('src')).toBeNull();
+      expect(mimoLoadingEl.classList.contains('hidden')).toBe(false);
+      expect(mimoLoadingEl.dataset.blockedReason).toBe('pending-cookie-cleanup');
+
+      // Path 3b: Unsuccessful Refresh with non-ok response (ok: false, no pendingCleanupCount)
+      // MUST also preserve the block.
+      const callsBeforeFailedOkRefresh = cookieSyncCallCount;
+      cookieSyncBehavior = () =>
+        Promise.resolve({
+          ok: false,
+          success: false,
+          hasPendingCleanup: false,
+          pendingCleanupCount: 0,
+          pendingCleanupsByOrigin: {},
+          error: 'Transient reconcile failure',
+        });
+      mimoPanelEl.querySelector('.refresh-panel-btn').click();
+      await vi.waitFor(() => {
+        expect(cookieSyncCallCount).toBe(callsBeforeFailedOkRefresh + 1);
+      });
+      await flushMicrotasks();
+
+      expect(mimoIframe.getAttribute('src')).toBeNull();
+      expect(mimoLoadingEl.classList.contains('hidden')).toBe(false);
+      expect(mimoLoadingEl.dataset.blockedReason).toBe('pending-cookie-cleanup');
+
+      // Path 3c: Affirmative successful Refresh (ok: true, zero pending cleanups)
+      // cleanly lifts the block and navigates to the updated MiMo URL.
+      const callsBeforeSuccessRefresh = cookieSyncCallCount;
+      cookieSyncBehavior = () =>
+        Promise.resolve({
+          ok: true,
+          success: true,
+          hasPendingCleanup: false,
+          pendingCleanupCount: 0,
+          pendingCleanupsByOrigin: {},
+        });
+      mimoPanelEl.querySelector('.refresh-panel-btn').click();
+      await vi.waitFor(() => {
+        expect(cookieSyncCallCount).toBe(callsBeforeSuccessRefresh + 1);
+        expect(mimoIframe.getAttribute('src')).toBe(updatedMimoRecord.url);
+      });
+      expect(mimoLoadingEl.dataset.blockedReason).toBeUndefined();
+
+      // Path 3d: Once unblocked, a transient sync rejection on Refresh does not re-block the panel.
+      const callsBeforeTransientUnblockedRefresh = cookieSyncCallCount;
+      mimoIframe.setAttribute('src', `${mimoOrigin}/chat/thread-1`);
+      cookieSyncBehavior = () => Promise.reject(new Error('Transient background error'));
+      mimoPanelEl.querySelector('.refresh-panel-btn').click();
+      await vi.waitFor(() => {
+        expect(cookieSyncCallCount).toBe(callsBeforeTransientUnblockedRefresh + 1);
+        expect(mimoIframe.getAttribute('src')).toBe(updatedMimoRecord.url);
+      });
+      expect(mimoLoadingEl.dataset.blockedReason).toBeUndefined();
+    } finally {
+      for (const cleanup of cleanupListeners.splice(0)) {
+        cleanup();
+      }
+      storageListeners.clear();
+      chrome.storage.onChanged = originalOnChanged;
+      globalThis.fetch = originalFetch;
+      document.body.innerHTML = '';
+    }
+  });
+
   it('coalesces burst reconcile calls in createEmbeddedFrameCookieReconcileScheduler', async () => {
     let releaseFirst;
     let count = 0;

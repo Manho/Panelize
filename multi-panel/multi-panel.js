@@ -508,7 +508,7 @@ function supportsImageUpload(providerId) {
 }
 
 function postNewChatToPanel(panel, { reloadUrl = null } = {}) {
-  if (!panel) {
+  if (!panel || isPanelPendingCleanupBlocked(panel)) {
     return;
   }
 
@@ -703,11 +703,53 @@ function showPanelPendingCleanupBlockedState(panelEl, provider) {
   );
 }
 
+function isPanelPendingCleanupBlocked(panel) {
+  return Boolean(panel && (panel.pendingCookieCleanupBlocked === true || panel.state === 'blocked'));
+}
+
+function shouldKeepPanelPendingCleanupBlocked(providerId, syncResult, { wasBlocked = false } = {}) {
+  if (hasPendingEmbeddedCookieCleanupForProvider(providerId, syncResult)) {
+    return true;
+  }
+  if (!wasBlocked) {
+    return false;
+  }
+  return !syncResult || typeof syncResult !== 'object' || syncResult.ok !== true;
+}
+
+function setPanelPendingCleanupBlocked(panel, panelEl = document.getElementById(panel?.id)) {
+  if (!panel) {
+    return;
+  }
+  panel.pendingCookieCleanupBlocked = true;
+  panel.state = 'blocked';
+  loadingPanelIds.delete(panel.id);
+  const provider = getProviderById(panel.providerId);
+  if (panelEl && provider) {
+    showPanelPendingCleanupBlockedState(panelEl, provider);
+  }
+}
+
+function clearPanelPendingCleanupBlocked(panel) {
+  if (!panel) {
+    return;
+  }
+  panel.pendingCookieCleanupBlocked = false;
+  if (panel.state === 'blocked') {
+    panel.state = 'loading';
+  }
+}
+
 function reloadPanelIframe(panel, overrideUrl = null, { isRecoveryReload = false } = {}) {
   customApiHostBridge?.abortPanelStream(panel.id);
   const panelEl = document.getElementById(panel.id);
   const provider = getProviderById(panel.providerId);
   if (!panelEl || !provider) {
+    return;
+  }
+
+  if (isPanelPendingCleanupBlocked(panel)) {
+    setPanelPendingCleanupBlocked(panel, panelEl);
     return;
   }
 
@@ -763,17 +805,20 @@ function bindPanelHeaderActions(panelId) {
   const refreshBtn = panelEl.querySelector('.refresh-panel-btn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
-      if (requiresEmbeddedFrameCookieSync(panel.providerId)) {
+      const targetProviderId = panel.providerId;
+      if (requiresEmbeddedFrameCookieSync(targetProviderId)) {
         const cookieSyncResult = await requestEmbeddedFrameCookieSync();
-        if (hasPendingEmbeddedCookieCleanupForProvider(panel.providerId, cookieSyncResult)) {
-          panel.state = 'blocked';
-          loadingPanelIds.delete(panel.id);
-          const currentProvider = getProviderById(panel.providerId);
-          if (currentProvider) {
-            showPanelPendingCleanupBlockedState(panelEl, currentProvider);
-          }
+        if (panel.providerId !== targetProviderId || !panels.includes(panel)) {
           return;
         }
+        const wasBlocked = isPanelPendingCleanupBlocked(panel);
+        if (shouldKeepPanelPendingCleanupBlocked(targetProviderId, cookieSyncResult, { wasBlocked })) {
+          setPanelPendingCleanupBlocked(panel, panelEl);
+          return;
+        }
+        clearPanelPendingCleanupBlocked(panel);
+      } else if (isPanelPendingCleanupBlocked(panel)) {
+        clearPanelPendingCleanupBlocked(panel);
       }
       reloadPanelIframe(panel);
     });
@@ -864,7 +909,9 @@ function registerStorageChangeListener() {
         headerName.textContent = provider.name;
         syncPanelCustomOriginBadge(panelEl, headerLeft, headerName, panel.providerId);
       }
-      if (descriptor.customKind !== 'api' && panel.iframe) {
+      if (isPanelPendingCleanupBlocked(panel)) {
+        setPanelPendingCleanupBlocked(panel, panelEl);
+      } else if (descriptor.customKind !== 'api' && panel.iframe) {
         const nextFrameUrl = getProviderFrameUrl(panel.providerId);
         if (panel.iframe.getAttribute('src') !== nextFrameUrl) {
           reloadPanelIframe(panel, nextFrameUrl);
@@ -1055,7 +1102,7 @@ function startTemporaryChatActivationCycle() {
 function startFreshChatForPanel(panel, options = {}) {
   const preferInPageNewChat = options.preferInPageNewChat === true;
 
-  if (!panel) {
+  if (!panel || isPanelPendingCleanupBlocked(panel)) {
     return;
   }
 
@@ -1909,6 +1956,7 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
     iframe,
     currentUrl: null,
     state: cookieSyncBlocked ? 'blocked' : 'loading',
+    pendingCookieCleanupBlocked: cookieSyncBlocked,
     pageNeededWidth: 0,
     fit: createPanelFitState()
   };
@@ -1919,7 +1967,7 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   const LOAD_GRACE_PERIOD = 3000;
   iframe.addEventListener('load', () => {
     const currentPanel = panels.find(p => p.id === panelId);
-    if (currentPanel?.state === 'blocked') {
+    if (isPanelPendingCleanupBlocked(currentPanel)) {
       return;
     }
     const finishLoad = () => {
@@ -1948,6 +1996,9 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
 
   iframe.addEventListener('error', () => {
     const currentPanel = panels.find(p => p.id === panelId);
+    if (isPanelPendingCleanupBlocked(currentPanel)) {
+      return;
+    }
     const currentProvider = (currentPanel && getProviderById(currentPanel.providerId)) || provider;
     renderPanelLoadingContent(loadingEl, currentProvider, `Failed to load ${currentProvider.name}`);
     loadingPanelIds.delete(panelId);
@@ -1956,7 +2007,7 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   if (cookieSyncBlocked) {
     iframeContainerEl.append(loadingEl, iframe);
     panelEl.append(headerEl, iframeContainerEl);
-    showPanelPendingCleanupBlockedState(panelEl, provider);
+    setPanelPendingCleanupBlocked(panel, panelEl);
   } else {
     customSwRecoveryController?.notifyNavigationStart(panel, initialFrameUrl);
     loadingPanelIds.add(panelId);
@@ -2055,10 +2106,15 @@ async function switchPanelProvider(panelId, newProviderId) {
   if (newProviderId === 'grok') {
     await requestGrokWebSocketCookieSync();
   }
+  const previousProviderId = panel.providerId;
+  const wasBlockedForSameProvider =
+    isPanelPendingCleanupBlocked(panel) && previousProviderId === newProviderId;
   let cookieSyncBlocked = false;
   if (requiresEmbeddedFrameCookieSync(newProviderId)) {
     const cookieSyncResult = await requestEmbeddedFrameCookieSync();
-    cookieSyncBlocked = hasPendingEmbeddedCookieCleanupForProvider(newProviderId, cookieSyncResult);
+    cookieSyncBlocked = shouldKeepPanelPendingCleanupBlocked(newProviderId, cookieSyncResult, {
+      wasBlocked: wasBlockedForSameProvider
+    });
   }
 
   // Update panel header
@@ -2084,13 +2140,12 @@ async function switchPanelProvider(panelId, newProviderId) {
   updatePanelFit(panel);
   bindPanelHeaderActions(panelId);
   if (cookieSyncBlocked) {
-    panel.state = 'blocked';
-    loadingPanelIds.delete(panelId);
     if (iframe) {
       iframe.src = 'about:blank';
     }
-    showPanelPendingCleanupBlockedState(panelEl, provider);
+    setPanelPendingCleanupBlocked(panel, panelEl);
   } else {
+    clearPanelPendingCleanupBlocked(panel);
     reloadPanelIframe(panel);
   }
 
@@ -3484,6 +3539,9 @@ async function temporaryChatAllProviders() {
     setTemporaryChatButtonDisabled(true);
 
     panels.forEach(panel => {
+      if (isPanelPendingCleanupBlocked(panel)) {
+        return;
+      }
       if (isTemporaryChatSupportedProvider(panel.providerId)) {
         if (isCustomWebProvider(panel.providerId)) {
           tempChatDeactivationPendingPanelIds.add(panel.id);
