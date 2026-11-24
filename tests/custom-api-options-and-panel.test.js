@@ -1966,5 +1966,186 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       apiPanel.destroy();
       bridge.dispose();
     });
+
+    it('inlines plain-text documents into OpenAI chat requests with Doc Chips and skips binary PDFs cleanly', async () => {
+      const capturedRequests = [];
+      const streamImpl = vi.fn(async (req) => {
+        capturedRequests.push(req);
+        return {
+          content: 'Analyzed CSV rows.',
+          reasoning: '',
+          finishReason: 'stop',
+        };
+      });
+
+      const { childDoc, bridge, hostReceivedMessages, sendHostMessage, apiPanel } =
+        createWiredPanelAndBridge({ streamImpl });
+
+      // 1) Pure binary PDF without text -> status: 'skipped' (not failed) + inline notice
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7\ncontent').buffer;
+      sendHostMessage({
+        context: 'multi-panel',
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        action: 'fill',
+        requestId: 'api-pure-pdf-skip',
+        text: '',
+        autoSubmit: false,
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            isPlainText: false,
+            bytes: pdfBytes,
+          },
+        ],
+      });
+
+      expect(hostReceivedMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'api-pure-pdf-skip',
+          provider: PROVIDER_ID,
+          status: 'skipped',
+          reason: 'unsupported',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'report.pdf', reason: 'unsupported' }],
+        })
+      );
+      expect(childDoc.getElementById('staged-notice').hidden).toBe(false);
+      expect(childDoc.getElementById('staged-notice').textContent).toContain('report.pdf');
+
+      // 2) Mixed TXT + binary PDF + text -> stages TXT Doc Chip, skips PDF, returns status: 'succeeded' with skippedAttachments
+      const csvText = 'name,score\nAlice,98\nBob,92';
+      const csvBytes = new TextEncoder().encode(csvText).buffer;
+      hostReceivedMessages.length = 0;
+
+      sendHostMessage({
+        context: 'multi-panel',
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        action: 'fill',
+        requestId: 'api-mixed-csv-pdf',
+        text: 'Who scored highest?',
+        autoSubmit: false,
+        images: [],
+        attachments: [
+          {
+            id: 'doc-csv-1',
+            kind: 'document',
+            name: 'scores.csv',
+            type: 'text/csv',
+            ext: '.csv',
+            size: csvBytes.byteLength,
+            isPlainText: true,
+            bytes: csvBytes,
+            textContent: csvText,
+          },
+          {
+            id: 'doc-pdf-2',
+            kind: 'document',
+            name: 'appendix.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            isPlainText: false,
+            bytes: pdfBytes,
+          },
+        ],
+      });
+
+      expect(childDoc.querySelectorAll('#staged-images .staged-doc-chip')).toHaveLength(1);
+      expect(childDoc.querySelector('#staged-images .staged-doc-chip').textContent).toContain('scores.csv');
+      expect(hostReceivedMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'api-mixed-csv-pdf',
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-csv-1'],
+          skippedAttachments: [{ id: 'doc-pdf-2', name: 'appendix.pdf', reason: 'unsupported' }],
+        })
+      );
+
+      // Trigger send and confirm outgoing API payload inlines the fenced CSV block while bubble shows compact Doc Chip
+      sendHostMessage({ context: 'multi-panel', type: 'TRIGGER_SEND' });
+
+      await vi.waitFor(() => {
+        expect(capturedRequests).toHaveLength(1);
+      });
+
+      const sentUserMessage = capturedRequests[0].messages[0];
+      expect(sentUserMessage.role).toBe('user');
+      expect(typeof sentUserMessage.content).toBe('string');
+      expect(sentUserMessage.content).toContain('[Attached file: scores.csv]');
+      expect(sentUserMessage.content).toContain('Alice,98');
+      expect(sentUserMessage.content).toContain('Who scored highest?');
+
+      expect(childDoc.querySelectorAll('.turn-user .turn-doc-chip')).toHaveLength(1);
+      expect(childDoc.querySelector('.turn-user .turn-doc-chip').textContent).toContain('scores.csv');
+      expect(childDoc.querySelector('.turn-user .turn-user-text').textContent).toBe('Who scored highest?');
+
+      // 3) Oversized plain-text file (>200 KB) is skipped with reason 'too-large'
+      const oversizedText = 'x'.repeat(210 * 1024);
+      hostReceivedMessages.length = 0;
+      sendHostMessage({
+        context: 'multi-panel',
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        action: 'fill',
+        requestId: 'api-oversized-txt',
+        text: '',
+        autoSubmit: false,
+        images: [],
+        attachments: [
+          {
+            id: 'doc-big-1',
+            kind: 'document',
+            name: 'huge.txt',
+            type: 'text/plain',
+            ext: '.txt',
+            size: oversizedText.length,
+            isPlainText: true,
+            textContent: oversizedText,
+          },
+        ],
+      });
+
+      expect(hostReceivedMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'api-oversized-txt',
+          status: 'skipped',
+          reason: 'too-large',
+          skippedAttachments: [{ id: 'doc-big-1', name: 'huge.txt', reason: 'too-large' }],
+        })
+      );
+
+      apiPanel.destroy();
+      bridge.dispose();
+    });
+    it('stages an empty-MIME PNG from the local picker as a data:image/png URL', async () => {
+      const { childDoc, bridge, apiPanel } = createWiredPanelAndBridge({
+        streamImpl: vi.fn(async () => ({ content: '', reasoning: '', finishReason: 'stop' })),
+      });
+
+      const pngBytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+        (c) => c.charCodeAt(0)
+      );
+      const emptyMimePng = new File([pngBytes], 'clipboard.png', { type: '' });
+      const fileInput = childDoc.getElementById('image-file-input');
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [emptyMimePng] });
+      fileInput.dispatchEvent(new Event('change'));
+
+      await vi.waitFor(() => {
+        expect(childDoc.querySelectorAll('#staged-images .staged-image-item img')).toHaveLength(1);
+      });
+      expect(childDoc.querySelector('#staged-images .staged-image-item img').getAttribute('src'))
+        .toMatch(/^data:image\/png;base64,/);
+
+      apiPanel.destroy();
+      bridge.dispose();
+    });
   });
 });

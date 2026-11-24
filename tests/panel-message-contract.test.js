@@ -193,6 +193,24 @@ describe('panel-message-contract', () => {
     }
   });
 
+  it('documents attachment and tri-state skip fields on INJECT_TEXT_WITH_IMAGES and PANELIZE_ACTION_RESULT', () => {
+    const fillEntry = HOST_TO_FRAME_MESSAGES.find((entry) => entry.type === 'INJECT_TEXT_WITH_IMAGES');
+    expect(fillEntry?.payloadFields).toEqual(
+      expect.arrayContaining(['images', 'fallbackImages', 'attachments', 'fallbackAttachments'])
+    );
+
+    const resultEntry = FRAME_TO_HOST_MESSAGES.find((entry) => entry.type === 'PANELIZE_ACTION_RESULT');
+    expect(resultEntry?.payloadFields).toEqual(
+      expect.arrayContaining([
+        'succeededImageIds',
+        'attemptedImageIds',
+        'succeededAttachmentIds',
+        'attemptedAttachmentIds',
+        'skippedAttachments',
+      ])
+    );
+  });
+
   it('documents the three origin and source security rules in the module JSDoc header', () => {
     const contractSource = readProjectSource('modules/panel-message-contract.js');
     expect(contractSource).toContain('getProviderFrameOrigins(providerId)');

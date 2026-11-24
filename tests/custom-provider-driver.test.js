@@ -1918,4 +1918,749 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('uploads PDF documents via matching file input and confirms filename preview chip', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" accept="image/*,.pdf,.docx,.txt" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      const composer = setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      const received = [];
+
+      fileInput.addEventListener('change', () => {
+        for (const f of Array.from(fileInput.files || [])) {
+          received.push({ name: f.name, type: f.type, size: f.size });
+          const chip = env.document.createElement('div');
+          chip.className = 'file-chip';
+          chip.dataset.fileName = f.name;
+          chip.textContent = f.name;
+          previews.appendChild(chip);
+        }
+      });
+
+      env.evaluateDriver();
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7\nhello').buffer;
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-custom-pdf-ok',
+        action: 'fill',
+        text: 'Summarize PDF',
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            bytes: pdfBytes,
+          },
+        ],
+        autoSubmit: false,
+      });
+
+      await wait(160);
+      expect(received).toEqual([{ name: 'report.pdf', type: 'application/pdf', size: pdfBytes.byteLength }]);
+      expect(composer.value).toBe('Summarize PDF');
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'req-custom-pdf-ok',
+          provider: CUSTOM_PROVIDER_ID,
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-pdf-1'],
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('gates documents against image-only accept="image/*" inputs and returns status "skipped" instead of failing', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="img-only-input" type="file" accept="image/*" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      const composer = setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('img-only-input');
+      const changeSpy = vi.fn();
+      fileInput.addEventListener('change', changeSpy);
+
+      env.evaluateDriver();
+      const pdfBytes = new TextEncoder().encode('%PDF-1.7\nonly').buffer;
+
+      // 1) Pure PDF on image-only Custom Web -> status: 'skipped'
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-custom-pdf-skipped',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            bytes: pdfBytes,
+          },
+        ],
+        autoSubmit: false,
+      });
+
+      await wait(100);
+      expect(changeSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'req-custom-pdf-skipped',
+          provider: CUSTOM_PROVIDER_ID,
+          status: 'skipped',
+          reason: 'type-not-accepted',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'report.pdf', reason: 'type-not-accepted' }],
+        }),
+        EXTENSION_ORIGIN
+      );
+
+      // 2) Text + PDF on image-only Custom Web -> text injected, status: 'succeeded' with skippedAttachments
+      env.parent.postMessage.mockClear();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-custom-text-plus-pdf-skipped',
+        action: 'fill',
+        text: 'Still inject text',
+        images: [],
+        attachments: [
+          {
+            id: 'doc-pdf-1',
+            kind: 'document',
+            name: 'report.pdf',
+            type: 'application/pdf',
+            ext: '.pdf',
+            size: pdfBytes.byteLength,
+            bytes: pdfBytes,
+          },
+        ],
+        autoSubmit: false,
+      });
+
+      await wait(100);
+      expect(composer.value).toBe('Still inject text');
+      expect(changeSpy).not.toHaveBeenCalled();
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'PANELIZE_ACTION_RESULT',
+          requestId: 'req-custom-text-plus-pdf-skipped',
+          provider: CUSTOM_PROVIDER_ID,
+          status: 'succeeded',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'report.pdf', reason: 'type-not-accepted' }],
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
+  function makePdfPayload(id, name) {
+    const bytes = new TextEncoder().encode(`%PDF-1.7\n${name}`).buffer;
+    return {
+      id,
+      kind: 'document',
+      name,
+      type: 'application/pdf',
+      ext: '.pdf',
+      size: bytes.byteLength,
+      bytes,
+    };
+  }
+
+  const PNG_DATA_URL =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  function findActionResult(env, requestId) {
+    const call = env.parent.postMessage.mock.calls.find(
+      ([msg]) => msg?.type === 'PANELIZE_ACTION_RESULT' && msg.requestId === requestId
+    );
+    return call ? call[0] : undefined;
+  }
+
+  it('routes a PDF to the chat composer form input instead of an unrelated form whose accept explicitly lists .pdf', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <div id="page">
+          <form id="library-form">
+            <input id="library-input" type="file" accept=".pdf" />
+          </form>
+          <form id="chat-form">
+            <div id="previews"></div>
+            <input id="chat-input" type="file" />
+            <textarea id="composer"></textarea>
+          </form>
+        </div>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const libraryInput = env.document.getElementById('library-input');
+      const chatInput = env.document.getElementById('chat-input');
+      const previews = env.document.getElementById('previews');
+      const libraryChanges = vi.fn();
+      const chatChanges = [];
+      libraryInput.addEventListener('change', libraryChanges);
+      chatInput.addEventListener('change', () => {
+        for (const f of Array.from(chatInput.files || [])) {
+          chatChanges.push(f.name);
+          const chip = env.document.createElement('div');
+          chip.className = 'file-chip';
+          chip.dataset.fileName = f.name;
+          chip.textContent = f.name;
+          previews.appendChild(chip);
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-form-scope',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-scope-1', 'report.pdf')],
+        autoSubmit: false,
+      });
+
+      await wait(200);
+      expect(libraryChanges).not.toHaveBeenCalled();
+      expect(chatChanges).toEqual(['report.pdf']);
+      expect(findActionResult(env, 'req-form-scope')).toEqual(
+        expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-scope-1'] })
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('prefers a form-less in-scope composer input over an unrelated .pdf form when the composer has no form', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <div id="page">
+          <form id="library-form">
+            <input id="library-input" type="file" accept="application/pdf,.pdf" />
+          </form>
+          <div id="chat-box">
+            <div id="previews"></div>
+            <input id="chat-input" type="file" />
+            <textarea id="composer"></textarea>
+          </div>
+        </div>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const libraryInput = env.document.getElementById('library-input');
+      const chatInput = env.document.getElementById('chat-input');
+      const previews = env.document.getElementById('previews');
+      const libraryChanges = vi.fn();
+      libraryInput.addEventListener('change', libraryChanges);
+      chatInput.addEventListener('change', () => {
+        const chip = env.document.createElement('div');
+        chip.className = 'file-chip';
+        chip.dataset.fileName = chatInput.files[0].name;
+        previews.appendChild(chip);
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-form-scope-formless',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-scope-2', 'notes.pdf')],
+        autoSubmit: false,
+      });
+
+      await wait(200);
+      expect(libraryChanges).not.toHaveBeenCalled();
+      expect(findActionResult(env, 'req-form-scope-formless')).toEqual(
+        expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-scope-2'] })
+      );
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('uploads a document batch through a multiple file input in one assignment and never ACKs a document whose preview did not appear', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      const changeBatches = [];
+      fileInput.addEventListener('change', () => {
+        const names = Array.from(fileInput.files || []).map((f) => f.name);
+        changeBatches.push(names);
+        // The page silently rejects first.pdf and only previews second.pdf.
+        for (const name of names) {
+          if (name === 'second.pdf') {
+            const chip = env.document.createElement('div');
+            chip.className = 'file-chip';
+            chip.dataset.fileName = name;
+            chip.textContent = name;
+            previews.appendChild(chip);
+          }
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-doc-partial-input',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-first', 'first.pdf'), makePdfPayload('doc-second', 'second.pdf')],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-doc-partial-input')).toBeDefined(), {
+        timeout: 12000,
+        interval: 100,
+      });
+      expect(changeBatches).toEqual([['first.pdf', 'second.pdf']]);
+      const result = findActionResult(env, 'req-doc-partial-input');
+      expect(result.status).toBe('failed');
+      expect(result.reason).toBe('preview-timeout');
+      expect(result.succeededAttachmentIds).toEqual(['doc-second']);
+      expect(result.succeededAttachmentIds).not.toContain('doc-first');
+    } finally {
+      await env.close();
+    }
+  }, 20000);
+
+  it('ACKs only images whose own filename preview appeared when a multi-image batch partially fails', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" accept="image/*" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      fileInput.addEventListener('change', () => {
+        for (const f of Array.from(fileInput.files || [])) {
+          if (f.name === 'second.png') {
+            const chip = env.document.createElement('div');
+            chip.className = 'file-chip';
+            chip.dataset.fileName = f.name;
+            previews.appendChild(chip);
+          }
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-img-partial-batch',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          { id: 'img-first', kind: 'image', name: 'first.png', type: 'image/png', dataUrl: PNG_DATA_URL },
+          { id: 'img-second', kind: 'image', name: 'second.png', type: 'image/png', dataUrl: PNG_DATA_URL },
+        ],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-img-partial-batch')).toBeDefined(), {
+        timeout: 9000,
+        interval: 100,
+      });
+      const result = findActionResult(env, 'req-img-partial-batch');
+      expect(result.status).toBe('failed');
+      expect(result.reason).toBe('preview-timeout');
+      expect(result.succeededAttachmentIds).toEqual(['img-second']);
+    } finally {
+      await env.close();
+    }
+  }, 15000);
+
+  it('keeps both documents on a replacement-style multiple file input that renders only the current input.files', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      const changeBatches = [];
+      fileInput.addEventListener('change', () => {
+        // Replacement-style picker: the staged set is exactly the latest input.files.
+        const names = Array.from(fileInput.files || []).map((f) => f.name);
+        changeBatches.push(names);
+        previews.replaceChildren();
+        for (const name of names) {
+          const chip = env.document.createElement('div');
+          chip.className = 'file-chip';
+          chip.dataset.fileName = name;
+          chip.textContent = name;
+          previews.appendChild(chip);
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-doc-replace-input',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-first', 'first.pdf'), makePdfPayload('doc-second', 'second.pdf')],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-doc-replace-input')).toBeDefined(), {
+        timeout: 12000,
+        interval: 50,
+      });
+      const result = findActionResult(env, 'req-doc-replace-input');
+      expect(changeBatches).toEqual([['first.pdf', 'second.pdf']]);
+      expect(Array.from(fileInput.files).map((f) => f.name)).toEqual(['first.pdf', 'second.pdf']);
+      expect(Array.from(previews.children).map((chip) => chip.dataset.fileName)).toEqual([
+        'first.pdf',
+        'second.pdf',
+      ]);
+      expect(result.status).toBe('succeeded');
+      expect(result.succeededAttachmentIds).toEqual(['doc-first', 'doc-second']);
+    } finally {
+      await env.close();
+    }
+  }, 20000);
+
+  it('does not ACK a document missing from the final staged set when the page discards it from a multiple input', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      fileInput.addEventListener('change', () => {
+        // Two generic previews appear, but the page keeps only second.pdf staged
+        // and labels only that one by filename.
+        const names = Array.from(fileInput.files || []).map((f) => f.name);
+        for (const name of names) {
+          const chip = env.document.createElement('div');
+          chip.className = 'file-chip';
+          if (name === 'second.pdf') {
+            chip.dataset.fileName = name;
+            chip.textContent = name;
+          }
+          chip.appendChild(env.document.createElement('button')).setAttribute('aria-label', 'Remove file');
+          previews.appendChild(chip);
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-doc-final-set',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-first', 'first.pdf'), makePdfPayload('doc-second', 'second.pdf')],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-doc-final-set')).toBeDefined(), {
+        timeout: 12000,
+        interval: 50,
+      });
+      const result = findActionResult(env, 'req-doc-final-set');
+      expect(result.status).toBe('failed');
+      expect(result.reason).toBe('preview-timeout');
+      expect(result.succeededAttachmentIds).toEqual(['doc-second']);
+    } finally {
+      await env.close();
+    }
+  }, 20000);
+
+  it('never ACKs more same-name images than the net preview increase when a batch partially fails', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <div id="previews"></div>
+          <input id="file-input" type="file" accept="image/*" multiple />
+          <textarea id="composer"></textarea>
+        </form>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const fileInput = env.document.getElementById('file-input');
+      const previews = env.document.getElementById('previews');
+      fileInput.addEventListener('change', () => {
+        // Only the second same-name image produces a preview.
+        const files = Array.from(fileInput.files || []);
+        if (files.length > 1) {
+          const chip = env.document.createElement('div');
+          chip.className = 'file-chip';
+          chip.dataset.fileName = files[1].name;
+          previews.appendChild(chip);
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-img-same-name',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          { id: 'img-a', kind: 'image', name: 'image.png', type: 'image/png', dataUrl: PNG_DATA_URL },
+          { id: 'img-b', kind: 'image', name: 'image.png', type: 'image/png', dataUrl: PNG_DATA_URL },
+        ],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-img-same-name')).toBeDefined(), {
+        timeout: 9000,
+        interval: 50,
+      });
+      const result = findActionResult(env, 'req-img-same-name');
+      expect(result.status).toBe('failed');
+      expect(result.reason).toBe('preview-timeout');
+      expect(result.succeededAttachmentIds.length).toBeLessThanOrEqual(1);
+      const pending = ['img-a', 'img-b'].filter((id) => !result.succeededAttachmentIds.includes(id));
+      expect(pending.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await env.close();
+    }
+  }, 15000);
+
+  it('prefers the nearest form-less ancestor scope over a sibling library input under a shared compact parent', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <div id="page">
+          <section id="library-box">
+            <input id="library-input" type="file" accept="application/pdf,.pdf" />
+          </section>
+          <div id="chat-box">
+            <div id="previews"></div>
+            <input id="chat-input" type="file" />
+            <textarea id="composer"></textarea>
+          </div>
+        </div>
+      `;
+      setLayoutRect(env.document.getElementById('composer'));
+      const libraryInput = env.document.getElementById('library-input');
+      const chatInput = env.document.getElementById('chat-input');
+      const previews = env.document.getElementById('previews');
+      const libraryChanges = vi.fn();
+      const chatChanges = [];
+      libraryInput.addEventListener('change', libraryChanges);
+      chatInput.addEventListener('change', () => {
+        chatChanges.push(chatInput.files[0].name);
+        const chip = env.document.createElement('div');
+        chip.className = 'file-chip';
+        chip.dataset.fileName = chatInput.files[0].name;
+        previews.appendChild(chip);
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-nearest-scope',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-near-1', 'notes.pdf')],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-nearest-scope')).toBeDefined(), {
+        timeout: 9000,
+        interval: 50,
+      });
+      expect(libraryChanges).not.toHaveBeenCalled();
+      expect(chatChanges).toEqual(['notes.pdf']);
+      expect(findActionResult(env, 'req-nearest-scope')).toEqual(
+        expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-near-1'] })
+      );
+    } finally {
+      await env.close();
+    }
+  }, 15000);
+
+  it('drops documents one at a time on a drop-only composer and never ACKs a document whose preview did not appear', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="chat-form">
+          <div id="previews"></div>
+          <div id="editor" contenteditable="true" role="textbox"></div>
+        </form>
+      `;
+      const editor = setLayoutRect(env.document.getElementById('editor'));
+      const previews = env.document.getElementById('previews');
+      const dropBatches = [];
+      editor.addEventListener('drop', (ev) => {
+        const files = Array.from(ev.dataTransfer?.files || []);
+        ev.preventDefault();
+        dropBatches.push(files.map((f) => f.name));
+        for (const f of files) {
+          if (f.name === 'second.pdf') {
+            const chip = env.document.createElement('div');
+            chip.className = 'file-chip';
+            chip.dataset.fileName = f.name;
+            previews.appendChild(chip);
+          }
+        }
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-doc-partial-drop',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [makePdfPayload('doc-first', 'first.pdf'), makePdfPayload('doc-second', 'second.pdf')],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-doc-partial-drop')).toBeDefined(), {
+        timeout: 8000,
+        interval: 100,
+      });
+      expect(dropBatches).toEqual([['first.pdf']]);
+      const result = findActionResult(env, 'req-doc-partial-drop');
+      expect(result.status).toBe('failed');
+      expect(result.reason).toBe('preview-timeout');
+      expect(result.succeededAttachmentIds).toEqual([]);
+    } finally {
+      await env.close();
+    }
+  }, 15000);
+
+  it('keeps pasting the PNG on a paste-only composer in a mixed PNG+PDF batch and skips only the PDF', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="chat-form">
+          <div id="previews"></div>
+          <div id="editor" contenteditable="true" role="textbox"></div>
+        </form>
+      `;
+      const editor = setLayoutRect(env.document.getElementById('editor'));
+      const previews = env.document.getElementById('previews');
+      const pastedBatches = [];
+      editor.addEventListener('paste', (ev) => {
+        const files = Array.from(ev.clipboardData?.files || []);
+        if (files.length === 0) return;
+        ev.preventDefault();
+        pastedBatches.push(files.map((f) => f.name));
+        setTimeout(() => {
+          for (const file of files) {
+            const img = env.document.createElement('img');
+            img.setAttribute('src', `blob:http://127.0.0.1:3000/${file.name}`);
+            previews.appendChild(img);
+          }
+        }, 30);
+      });
+
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-mixed-paste-only',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          { id: 'img-mixed', kind: 'image', name: 'pasted.png', type: 'image/png', dataUrl: PNG_DATA_URL },
+          makePdfPayload('doc-mixed', 'report.pdf'),
+        ],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-mixed-paste-only')).toBeDefined(), {
+        timeout: 3000,
+        interval: 50,
+      });
+      expect(pastedBatches).toEqual([['pasted.png']]);
+      expect(previews.querySelectorAll('img')).toHaveLength(1);
+      expect(findActionResult(env, 'req-mixed-paste-only')).toEqual(
+        expect.objectContaining({
+          status: 'succeeded',
+          succeededAttachmentIds: ['img-mixed'],
+          skippedAttachments: [{ id: 'doc-mixed', name: 'report.pdf', reason: 'unsupported' }],
+        })
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });

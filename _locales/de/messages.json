@@ -1188,5 +1188,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "Alle aktivierten KIs sind bereits geöffnet"
+  },
+  "btnAttachFilesTitle": {
+    "message": "Bilder oder Dokumente anhängen"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "Dokumente übersprungen für: $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "Keines der aktiven Panels unterstützt die angehängten Dokumente."
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "Nicht unterstützter Dateityp: $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "Dateiinhalt passt nicht zum Format: $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "Dokumente dürfen maximal 10 MB groß sein"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "Die Gesamtgröße der Anhänge darf 25 MB nicht überschreiten"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "Maximal $1 Anhänge erlaubt"
+  },
+  "msgDocumentMaxCount": {
+    "message": "Maximal $1 Dokumente erlaubt"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "Große oder binäre Dokumente wurden beim Wechsel des Ansichtsmodus nicht beibehalten."
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "Bitte Nachricht eingeben oder Datei anhängen"
+  },
+  "ariaRemoveAttachment": {
+    "message": "$1 entfernen"
   }
 }

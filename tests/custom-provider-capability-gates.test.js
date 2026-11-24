@@ -222,6 +222,11 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
         expect(typeof text, `${locale}.msgImagesSkippedForPanels`).toBe('string');
         expect(text.trim().length, `${locale}.msgImagesSkippedForPanels`).toBeGreaterThan(0);
         expect(text, `${locale}.msgImagesSkippedForPanels`).toContain('$1');
+
+        const docText = messages.msgDocumentsSkippedForPanels?.message;
+        expect(typeof docText, `${locale}.msgDocumentsSkippedForPanels`).toBe('string');
+        expect(docText.trim().length, `${locale}.msgDocumentsSkippedForPanels`).toBeGreaterThan(0);
+        expect(docText, `${locale}.msgDocumentsSkippedForPanels`).toContain('$1');
       }
     });
   });
@@ -686,6 +691,114 @@ describe('B2.3 provider capability gates (inPageNewChat, snapshotStitch, imageUp
       expect(
         Array.from(document.querySelectorAll('.panelize-toast')).map((el) => el.textContent)
       ).toContain('Images were not sent to: Local Open WebUI');
+    });
+
+    it('keeps earlier panel skips across Retry Failed so a lone PDF that no panel received is not cleared', async () => {
+      const { mpMod, chatgptEl, deepseekEl, customEl } =
+        await bootMultiPanelWithBuiltinsAndCustom();
+
+      const attachScriptedResponder = (iframe, { providerId, origin, outcomes }) => {
+        const calls = [];
+        const cw = {
+          postMessage: vi.fn((message, targetOrigin) => {
+            if (targetOrigin !== origin) {
+              return;
+            }
+            calls.push(structuredClone(message));
+            if (message.type !== 'INJECT_TEXT_WITH_IMAGES' || message.action !== 'fill') {
+              return;
+            }
+            const status = outcomes[Math.min(calls.length - 1, outcomes.length - 1)];
+            const ids = (message.attachments || []).map((att) => att.id);
+            queueMicrotask(() => {
+              window.dispatchEvent(new MessageEvent('message', {
+                origin,
+                source: cw,
+                data: {
+                  type: 'PANELIZE_ACTION_RESULT',
+                  context: 'multi-panel-action-result',
+                  requestId: message.requestId,
+                  provider: providerId,
+                  action: 'fill',
+                  status,
+                  ...(status === 'failed' ? { reason: 'control-not-found' } : {}),
+                  ...(status === 'skipped' ? { reason: 'type-not-accepted' } : {}),
+                  succeededAttachmentIds: [],
+                  ...(status === 'skipped'
+                    ? { skippedAttachments: ids.map((id) => ({ id, name: 'paper.pdf', reason: 'type-not-accepted' })) }
+                    : {}),
+                },
+              }));
+            });
+          }),
+        };
+        Object.defineProperty(iframe, 'contentWindow', { configurable: true, value: cw });
+        return calls;
+      };
+
+      const chatgptCalls = attachScriptedResponder(chatgptEl.querySelector('iframe'), {
+        providerId: 'chatgpt',
+        origin: 'https://chatgpt.com',
+        outcomes: ['skipped'],
+      });
+      const deepseekCalls = attachScriptedResponder(deepseekEl.querySelector('iframe'), {
+        providerId: 'deepseek',
+        origin: 'https://chat.deepseek.com',
+        outcomes: ['failed', 'skipped'],
+      });
+      const customCalls = attachScriptedResponder(customEl.querySelector('iframe'), {
+        providerId: CUSTOM_RECORD.id,
+        origin: 'http://127.0.0.1:3000',
+        outcomes: ['skipped'],
+      });
+
+      const pdfFile = new File([new TextEncoder().encode('%PDF-1.7\nretry')], 'paper.pdf', {
+        type: 'application/pdf',
+      });
+      const fileInput = document.getElementById('image-file-input');
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [pdfFile] });
+      fileInput.dispatchEvent(new Event('change'));
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.attachment-doc-chip')).toHaveLength(1);
+      });
+
+      const fillBtn = document.getElementById('fill-input-btn');
+      const statusEl = document.getElementById('send-status');
+
+      // Round 1: ChatGPT + Custom skip, DeepSeek fails.
+      await mpMod.broadcastMessage('', false);
+      expect(fillBtn.dataset.retryFailed).toBe('true');
+      expect(document.querySelectorAll('.attachment-doc-chip')).toHaveLength(1);
+
+      // Retry Failed: only DeepSeek is re-targeted, and it now skips too.
+      await mpMod.broadcastMessage('', false);
+      expect(chatgptCalls).toHaveLength(1);
+      expect(customCalls).toHaveLength(1);
+      expect(deepseekCalls).toHaveLength(2);
+
+      // No panel received the PDF: the draft is kept and no fill is reported.
+      expect(document.querySelectorAll('.attachment-doc-chip')).toHaveLength(1);
+      expect(statusEl.textContent).toBe('Skipped: unsupported document');
+      expect(statusEl.textContent).not.toMatch(/^Filled/);
+      expect(fillBtn.dataset.retryFailed).toBe('false');
+    });
+
+    it('stores an empty-MIME PNG attachment as a data:image/png URL', async () => {
+      await bootMultiPanelWithBuiltinsAndCustom();
+      const pngBytes = Uint8Array.from(
+        atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+        (c) => c.charCodeAt(0)
+      );
+      const emptyMimePng = new File([pngBytes], 'clipboard.png', { type: '' });
+      const fileInput = document.getElementById('image-file-input');
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [emptyMimePng] });
+      fileInput.dispatchEvent(new Event('change'));
+
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.image-preview-item img')).toHaveLength(1);
+      });
+      expect(document.querySelector('.image-preview-item img').getAttribute('src'))
+        .toMatch(/^data:image\/png;base64,/);
     });
 
     it('sends ENABLE_TEMP_CHAT on custom web iframe load when temporary chat is enabled and DISABLE_TEMP_CHAT when disabled', async () => {

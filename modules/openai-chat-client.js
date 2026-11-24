@@ -383,15 +383,21 @@ export async function fetchOpenAiModels({
   }
 }
 
+import {
+  MAX_API_INLINE_TEXT_SIZE,
+  formatInlineTextDocumentBlock
+} from './attachment-utils.js';
+
 const SAFE_IMAGE_DATA_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,/i;
 
 /**
  * Formats conversation turns into OpenAI-compatible `messages` array.
  * Uses plain string `content` when a user turn has no images so text-only
  * local servers accept the payload, and OpenAI multimodal content parts when
- * images are attached. Idempotent when given already-formatted OpenAI messages.
+ * images are attached. Plain-text documents (`turn.documents`) are inlined as
+ * structured fenced blocks. Idempotent when given already-formatted OpenAI messages.
  *
- * @param {Array<{ role: 'system' | 'user' | 'assistant', content?: string | Array<object>, text?: string, images?: Array<{ dataUrl: string }> }>} turns
+ * @param {Array<{ role: 'system' | 'user' | 'assistant', content?: string | Array<object>, text?: string, images?: Array<{ dataUrl: string }>, documents?: Array<{ name?: string, ext?: string, textContent: string }> }>} turns
  * @returns {Array<{ role: string, content: string | Array<object> }>}
  */
 export function buildOpenAiChatMessages(turns) {
@@ -433,10 +439,22 @@ export function buildOpenAiChatMessages(turns) {
       continue;
     }
 
-    const text =
+    const rawText =
       typeof turn.content === 'string'
         ? turn.content
         : (typeof turn.text === 'string' ? turn.text : '');
+    const validDocs = role === 'user' && Array.isArray(turn.documents)
+      ? turn.documents.filter(
+          (doc) => doc && typeof doc === 'object' && typeof doc.textContent === 'string'
+        )
+      : [];
+    const docBlocks = validDocs.map((doc) =>
+      formatInlineTextDocumentBlock(doc, doc.textContent, MAX_API_INLINE_TEXT_SIZE).text
+    );
+    const combinedText = docBlocks.length > 0
+      ? [...docBlocks, ...(rawText.length > 0 ? [rawText] : [])].join('\n\n')
+      : rawText;
+
     const validImages = role === 'user' && Array.isArray(turn.images)
       ? turn.images.filter(
           (img) =>
@@ -448,8 +466,8 @@ export function buildOpenAiChatMessages(turns) {
 
     if (validImages.length > 0) {
       const parts = [];
-      if (text.length > 0) {
-        parts.push({ type: 'text', text });
+      if (combinedText.length > 0) {
+        parts.push({ type: 'text', text: combinedText });
       }
       for (const img of validImages) {
         parts.push({
@@ -459,7 +477,7 @@ export function buildOpenAiChatMessages(turns) {
       }
       formatted.push({ role, content: parts });
     } else {
-      formatted.push({ role, content: text });
+      formatted.push({ role, content: combinedText });
     }
   }
 

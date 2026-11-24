@@ -1182,5 +1182,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "已启用的AI均已打开"
+  },
+  "btnAttachFilesTitle": {
+    "message": "添加图片或文档"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "以下面板已跳过文档：$1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "当前打开的面板均不支持所选文档格式。"
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "不支持的文件格式：$1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "文件内容与格式不符：$1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "单个文档大小不能超过10MB"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "附件总大小不能超过25MB"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "最多可添加$1个附件"
+  },
+  "msgDocumentMaxCount": {
+    "message": "最多可添加$1个文档"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "切换视图模式时未保留大文档或二进制文档，请重新附加。"
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "请输入消息或添加附件"
+  },
+  "ariaRemoveAttachment": {
+    "message": "移除 $1"
   }
 }

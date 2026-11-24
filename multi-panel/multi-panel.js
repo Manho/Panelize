@@ -102,7 +102,7 @@ import {
 } from '../modules/snapshot-capture.js';
 import { SHARE_SNAPSHOT_ACTION, getExecuteActionShortcut } from '../modules/share-trigger.js';
 import {
-  calculatePendingImageIds,
+  calculatePendingAttachmentIds,
   cleanStalePanelRetryState,
   createBroadcastGate,
   createPanelActionResultWaiter,
@@ -110,11 +110,21 @@ import {
   getFillTargetPanels,
   getPanelActionResultTimeoutMs,
   getPanelBroadcastActionParams,
+  mergePanelFillOutcomes,
   normalizePanelResults,
-  normalizeSucceededImageIds,
   shouldClearFillPayload,
   summarizeFillResults
 } from '../modules/panel-action-results.js';
+import {
+  MAX_ATTACHMENT_COUNT,
+  MAX_DOCUMENT_COUNT,
+  formatFileSize,
+  getAttachmentBadge,
+  isDocumentAttachment,
+  isImageAttachment,
+  prepareAttachmentsForOpenModeHandoff,
+  validateAttachmentFile
+} from '../modules/attachment-utils.js';
 import {
   getAllPrompts,
   searchPrompts,
@@ -162,12 +172,14 @@ const panelFitObserver = typeof ResizeObserver === 'function'
     });
   })
   : null;
-let uploadedImages = []; // Array of uploaded images { id, name, type, dataUrl }
+let uploadedAttachments = []; // Array of { id, kind, name, type, ext, size, dataUrl?, bytes?, textContent?, isPlainText?, badge?, badgeTone? }
 let failedFillPanelIds = new Set();
-let pendingFillImageIdsByPanel = new Map();
+let pendingFillAttachmentIdsByPanel = new Map();
 const broadcastGate = createBroadcastGate();
 let fillActionRequestCounter = 0;
 let fillPayloadRevision = 0;
+// Latest fill outcome per panel for the current payload revision and panel set.
+let fillOutcomeState = null;
 let loadingPanelIds = new Set(); // Track iframes still loading, used for focus protection
 let newChatFocusRestoreTimerIds = [];
 let focusRestoreGeneration = 0; // Bumped on every cancel so queued refocus frames are dropped
@@ -524,6 +536,9 @@ function postToPanelFrame(panel, message) {
   const payload = getProviderDescriptor(panel.providerId)?.access === 'custom'
     ? { ...message, providerId: panel.providerId }
     : message;
+  // Post to every configured origin: a cached reported URL can outlive a
+  // redirect (e.g. chatgpt.com <-> chat.openai.com), and the browser drops
+  // copies whose target origin does not match the frame's current origin.
   getProviderFrameOrigins(panel.providerId).forEach((origin) => {
     target.postMessage(payload, origin);
   });
@@ -1714,9 +1729,16 @@ function updateToggleButton() {
 }
 
 function collectCurrentState() {
+  const handoff = prepareAttachmentsForOpenModeHandoff(uploadedAttachments);
   const state = {
     inputText: document.getElementById('unified-input')?.value || '',
-    uploadedImages: [...uploadedImages],
+    uploadedImages: handoff.preservedImages,
+    ...(handoff.preservedAttachments.length > 0
+      ? { uploadedAttachments: handoff.preservedAttachments }
+      : {}),
+    ...(handoff.omittedCount > 0
+      ? { omittedAttachmentsCount: handoff.omittedCount }
+      : {}),
     currentLayout: currentLayout,
     panels: panels.map(p => ({
       providerId: p.providerId,
@@ -1753,9 +1775,24 @@ async function fallbackRecreateForOpenMode(targetIsPopup) {
     });
   } catch (error) {
     console.error('Error saving state:', error);
-    await chrome.storage.local.set({
-      [storageKey]: state
-    });
+    const lightweightState = {
+      ...state,
+      uploadedImages: [],
+      uploadedAttachments: [],
+      omittedAttachmentsCount: Math.max(
+        state.omittedAttachmentsCount || 0,
+        uploadedAttachments.length
+      )
+    };
+    try {
+      await chrome.storage.session.set({
+        [storageKey]: lightweightState
+      });
+    } catch {
+      await chrome.storage.local.set({
+        [storageKey]: lightweightState
+      });
+    }
   }
 
   const targetUrl = new URL(chrome.runtime.getURL('multi-panel/multi-panel.html'));
@@ -1897,10 +1934,35 @@ async function restoreStateIfNeeded() {
         resizeTextarea();
       }
 
-      // Restore uploaded images
-      if (state.uploadedImages && state.uploadedImages.length > 0) {
-        uploadedImages = state.uploadedImages;
-        renderImagePreviews();
+      // Restore uploaded attachments (with legacy uploadedImages fallback)
+      const restoredItems = Array.isArray(state.uploadedAttachments) && state.uploadedAttachments.length > 0
+        ? state.uploadedAttachments
+        : (Array.isArray(state.uploadedImages) ? state.uploadedImages : []);
+      if (restoredItems.length > 0) {
+        const encoder = new TextEncoder();
+        uploadedAttachments = restoredItems.map(item => {
+          if (item.kind === 'document' && typeof item.textContent === 'string' && !item.bytes) {
+            const encoded = encoder.encode(item.textContent);
+            return {
+              ...item,
+              bytes: encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength),
+              size: item.size ?? encoded.byteLength
+            };
+          }
+          return {
+            kind: item.kind || 'image',
+            ...item
+          };
+        });
+        renderAttachmentPreviews();
+      }
+      if (state.omittedAttachmentsCount > 0) {
+        showToast(
+          getLocalizedText(
+            'msgAttachmentsOmittedOnModeSwitch',
+            'Large or binary documents were not preserved when switching view mode.'
+          )
+        );
       }
 
       // Restore layout
@@ -2456,7 +2518,8 @@ function updateFillRetryButton() {
 
 function resetFillRetryState() {
   fillPayloadRevision += 1;
-  pendingFillImageIdsByPanel = new Map();
+  pendingFillAttachmentIdsByPanel = new Map();
+  fillOutcomeState = null;
   if (failedFillPanelIds.size === 0) {
     updateFillRetryButton();
     return;
@@ -2471,6 +2534,55 @@ function setFillRetryState(panelIds) {
   updateFillRetryButton();
 }
 
+function countAttachmentKinds(items = []) {
+  let imageCount = 0;
+  let documentCount = 0;
+  for (const item of items) {
+    if (isDocumentAttachment(item)) {
+      documentCount += 1;
+    } else {
+      imageCount += 1;
+    }
+  }
+  return { imageCount, documentCount };
+}
+
+function serializeAttachmentForMessage(att) {
+  if (isDocumentAttachment(att)) {
+    return {
+      id: att.id,
+      kind: 'document',
+      name: att.name,
+      type: att.type,
+      ext: att.ext,
+      size: att.size,
+      isPlainText: Boolean(att.isPlainText),
+      bytes: att.bytes,
+      ...(typeof att.textContent === 'string' ? { textContent: att.textContent } : {})
+    };
+  }
+  return {
+    id: att.id,
+    kind: 'image',
+    dataUrl: att.dataUrl,
+    name: att.name,
+    type: att.type,
+    ext: att.ext,
+    size: att.size
+  };
+}
+
+function serializeLegacyImagesForMessage(items = []) {
+  return items
+    .filter(isImageAttachment)
+    .map(img => ({
+      id: img.id,
+      dataUrl: img.dataUrl,
+      name: img.name,
+      type: img.type
+    }));
+}
+
 export async function broadcastMessage(text, autoSubmit = true) {
   if (!broadcastGate.tryAcquire()) {
     return;
@@ -2480,23 +2592,27 @@ export async function broadcastMessage(text, autoSubmit = true) {
   const fillBtn = document.getElementById('fill-input-btn');
   const statusEl = document.getElementById('send-status');
 
-  const hasImages = uploadedImages.length > 0;
+  const hasAttachments = uploadedAttachments.length > 0;
+  const hasDocuments = uploadedAttachments.some(isDocumentAttachment);
   const hasFailedPanels = failedFillPanelIds.size > 0;
   const broadcastParams = getPanelBroadcastActionParams({
-    hasImages,
+    hasImages: hasAttachments,
+    hasAttachments,
     hasFailedPanels,
     autoSubmit
   });
   const { isFillAction, shouldAutoSubmit, waitForActionResult } = broadcastParams;
 
   try {
-    if (!text.trim() && !hasImages) {
+    if (!text.trim() && !hasAttachments) {
       // If input is empty and autoSubmit is true, just trigger send buttons
       if (autoSubmit) {
         await triggerSendButtons();
         return;
       }
-      showToast('Please enter a message or upload an image');
+      showToast(
+        getLocalizedText('msgEnterMessageOrAttachment', 'Please enter a message or attach a file')
+      );
       return;
     }
 
@@ -2515,17 +2631,17 @@ export async function broadcastMessage(text, autoSubmit = true) {
     statusEl.textContent = shouldAutoSubmit ? 'Sending...' : 'Filling...';
     statusEl.className = 'send-status';
 
-    cleanStalePanelRetryState(panels, pendingFillImageIdsByPanel, failedFillPanelIds);
+    cleanStalePanelRetryState(panels, pendingFillAttachmentIdsByPanel, failedFillPanelIds);
 
     const isSendAllRetryPass = Boolean(autoSubmit && failedFillPanelIds.size > 0);
-    const targetPanels = hasImages && !autoSubmit
+    const targetPanels = hasAttachments && !autoSubmit
       ? getFillTargetPanels(panels, failedFillPanelIds)
       : panels;
-    const imageSkippedPanels = hasImages
+    const preSkippedPanels = hasAttachments
       ? targetPanels.filter(panel => !supportsImageUpload(panel.providerId))
       : [];
     const previousFailedPanelIds = new Set(failedFillPanelIds);
-    const attemptedImagesByPanel = new Map();
+    const attemptedAttachmentsByPanel = new Map();
     if (waitForActionResult) {
       targetPanels.forEach(panel => sendFocusFillingPanelIds.add(panel.id));
     }
@@ -2536,22 +2652,22 @@ export async function broadcastMessage(text, autoSubmit = true) {
       targetPanels.map(panel => {
         const wasPanelFailed = previousFailedPanelIds.has(panel.id);
         const isPanelRetry = wasPanelFailed || isSendAllRetryPass;
-        const panelSupportsImages = supportsImageUpload(panel.providerId);
-        let panelImages = [];
-        let fallbackImages = null;
-        if (hasImages && panelSupportsImages) {
-          if (wasPanelFailed && pendingFillImageIdsByPanel.has(panel.id)) {
-            const pendingIds = new Set(pendingFillImageIdsByPanel.get(panel.id));
-            panelImages = uploadedImages.filter(img => pendingIds.has(img.id));
-            fallbackImages = uploadedImages;
+        const panelSupportsAttachments = supportsImageUpload(panel.providerId);
+        let panelAttachments = [];
+        let fallbackAttachments = null;
+        if (hasAttachments && panelSupportsAttachments) {
+          if (wasPanelFailed && pendingFillAttachmentIdsByPanel.has(panel.id)) {
+            const pendingIds = new Set(pendingFillAttachmentIdsByPanel.get(panel.id));
+            panelAttachments = uploadedAttachments.filter(att => pendingIds.has(att.id));
+            fallbackAttachments = uploadedAttachments;
           } else if (isSendAllRetryPass && !wasPanelFailed) {
-            panelImages = [];
-            fallbackImages = uploadedImages;
+            panelAttachments = [];
+            fallbackAttachments = uploadedAttachments;
           } else {
-            panelImages = uploadedImages;
+            panelAttachments = uploadedAttachments;
           }
         }
-        attemptedImagesByPanel.set(panel.id, panelImages);
+        attemptedAttachmentsByPanel.set(panel.id, panelAttachments);
 
         const releaseFocusTracking = () => {
           // Uploads can outlast the restore timers; hold focus until each
@@ -2561,26 +2677,35 @@ export async function broadcastMessage(text, autoSubmit = true) {
           }
         };
 
-        if (hasImages && !panelSupportsImages && !text.trim()) {
+        if (hasAttachments && !panelSupportsAttachments && !text.trim()) {
           return Promise.resolve({
             ok: true,
+            skipped: true,
             panelId: panel.id,
             provider: panel.providerId,
-            succeededImageIds: []
+            reason: 'unsupported',
+            succeededImageIds: [],
+            succeededAttachmentIds: [],
+            skippedAttachments: uploadedAttachments.map(att => ({
+              id: att.id,
+              name: att.name,
+              reason: 'unsupported'
+            }))
           }).finally(releaseFocusTracking);
         }
 
-        const imageCount = fallbackImages
-          ? Math.max(panelImages.length, fallbackImages.length)
-          : panelImages.length;
+        const timeoutItems = fallbackAttachments && fallbackAttachments.length > panelAttachments.length
+          ? fallbackAttachments
+          : panelAttachments;
+        const counts = countAttachmentKinds(timeoutItems);
         const panelTimeoutMs = isFillAction
-          ? getPanelActionResultTimeoutMs(imageCount)
+          ? getPanelActionResultTimeoutMs(counts)
           : 8000;
 
         return sendToPanel(
           panel,
           text,
-          panelImages,
+          panelAttachments,
           shouldAutoSubmit,
           requestId,
           isPanelRetry,
@@ -2588,37 +2713,57 @@ export async function broadcastMessage(text, autoSubmit = true) {
           {
             isFillAction,
             waitForActionResult,
-            fallbackImages
+            fallbackAttachments
           }
         ).finally(releaseFocusTracking);
       })
     );
     const rawNormalizedResults = normalizePanelResults(panelResults, targetPanels);
-    const runtimeUnsupportedPanels = [];
-    const normalizedResults = hasImages
+    const runtimeSkippedPanels = [];
+    const normalizedResults = hasAttachments
       ? rawNormalizedResults.map(result => {
           if (
             result &&
             !result.ok &&
-            result.reason === 'unsupported' &&
+            (result.reason === 'unsupported' || result.reason === 'type-not-accepted') &&
             isCustomWebProvider(result.provider)
           ) {
             const panel = panels.find(candidate => candidate.id === result.panelId);
-            if (panel && !imageSkippedPanels.some(skipped => skipped.id === panel.id)) {
-              runtimeUnsupportedPanels.push(panel);
+            if (panel && !preSkippedPanels.some(skipped => skipped.id === panel.id)) {
+              runtimeSkippedPanels.push({ panel, skippedAttachments: result.skippedAttachments || [] });
             }
             return {
               ok: true,
+              skipped: !text.trim(),
               panelId: result.panelId,
               provider: result.provider,
-              succeededImageIds: []
+              reason: result.reason,
+              succeededImageIds: result.succeededImageIds || [],
+              succeededAttachmentIds: result.succeededAttachmentIds || result.succeededImageIds || [],
+              ...(Array.isArray(result.skippedAttachments) && result.skippedAttachments.length > 0
+                ? { skippedAttachments: result.skippedAttachments }
+                : {})
             };
+          }
+          if (
+            result &&
+            result.ok &&
+            (result.skipped === true || (Array.isArray(result.skippedAttachments) && result.skippedAttachments.length > 0))
+          ) {
+            const panel = panels.find(candidate => candidate.id === result.panelId);
+            if (
+              panel &&
+              !preSkippedPanels.some(skipped => skipped.id === panel.id) &&
+              !runtimeSkippedPanels.some(entry => entry.panel.id === panel.id)
+            ) {
+              runtimeSkippedPanels.push({ panel, skippedAttachments: result.skippedAttachments || [] });
+            }
           }
           return result;
         })
       : rawNormalizedResults;
 
-    if (hasImages) {
+    if (hasAttachments) {
       if (fillPayloadRevision !== payloadRevisionAtStart) {
         statusEl.textContent = 'Input changed; fill again';
         statusEl.className = 'send-status partial';
@@ -2629,59 +2774,98 @@ export async function broadcastMessage(text, autoSubmit = true) {
         return;
       }
 
-      const allImageSkippedPanels = [...imageSkippedPanels, ...runtimeUnsupportedPanels];
-      if (allImageSkippedPanels.length > 0) {
-        const skippedNames = allImageSkippedPanels.map(
-          panel => getProviderById(panel.providerId)?.name || panel.providerId
-        );
-        showToast(
-          getLocalizedText(
-            'msgImagesSkippedForPanels',
-            'Images were not sent to: $1',
-            [formatProviderList(skippedNames, getSnapshotLocale())]
-          )
-        );
-      }
-
       normalizedResults.forEach(result => {
         if (!result?.panelId) return;
-        const attempted = attemptedImagesByPanel.get(result.panelId) || uploadedImages;
-        const attemptedIds = Array.isArray(result.attemptedImageIds) && result.attemptedImageIds.length > 0
-          ? result.attemptedImageIds
-          : (attempted.length > 0 ? attempted : uploadedImages).map(img => img.id);
+        const attempted = attemptedAttachmentsByPanel.get(result.panelId) || uploadedAttachments;
+        const reportedAttemptedIds = Array.isArray(result.attemptedAttachmentIds) && result.attemptedAttachmentIds.length > 0
+          ? result.attemptedAttachmentIds
+          : result.attemptedImageIds;
+        const attemptedIds = Array.isArray(reportedAttemptedIds) && reportedAttemptedIds.length > 0
+          ? reportedAttemptedIds
+          : (attempted.length > 0 ? attempted : uploadedAttachments).map(att => att.id);
+        const reportedSucceededIds = Array.isArray(result.succeededAttachmentIds)
+          ? result.succeededAttachmentIds
+          : result.succeededImageIds;
 
-        if (result.ok) {
+        if (result.ok || result.skipped) {
           failedFillPanelIds.delete(result.panelId);
-          pendingFillImageIdsByPanel.delete(result.panelId);
+          pendingFillAttachmentIdsByPanel.delete(result.panelId);
         } else {
           failedFillPanelIds.add(result.panelId);
-          const pendingIds = calculatePendingImageIds(attemptedIds, result.succeededImageIds);
-          pendingFillImageIdsByPanel.set(result.panelId, pendingIds);
+          const pendingIds = calculatePendingAttachmentIds(attemptedIds, reportedSucceededIds);
+          pendingFillAttachmentIdsByPanel.set(result.panelId, pendingIds);
         }
       });
 
-      const summary = summarizeFillResults(panels, normalizedResults, previousFailedPanelIds);
+      // Retry Failed re-targets only failed panels; summarize and decide
+      // clearing from every panel's latest outcome for this payload revision.
+      fillOutcomeState = mergePanelFillOutcomes(fillOutcomeState, {
+        revision: fillPayloadRevision,
+        panels,
+        results: normalizedResults
+      });
+      const mergedResults = [...fillOutcomeState.outcomes.values()];
+      const summary = summarizeFillResults(panels, mergedResults, previousFailedPanelIds);
       const totalCount = panels.length;
-      const { successfulCount, failedCount } = summary;
+      const { successfulCount, skippedCount, failedCount } = summary;
+      const hasText = Boolean(text.trim());
 
-      if (summary.allSucceeded) {
-        statusEl.textContent = `Filled ${successfulCount} input${successfulCount > 1 ? 's' : ''}`;
-        statusEl.className = 'send-status success';
-        setFillRetryState([]);
-        pendingFillImageIdsByPanel.clear();
-      } else if (successfulCount > 0) {
-        statusEl.textContent = `Filled ${successfulCount}/${totalCount}; ${failedCount} failed`;
+      const allSkippedEntries = [
+        ...preSkippedPanels.map(panel => ({ panel, skippedAttachments: [] })),
+        ...runtimeSkippedPanels
+      ];
+
+      if (summary.allSkipped && !hasText) {
+        statusEl.textContent = 'Skipped: unsupported document';
         statusEl.className = 'send-status partial';
-        setFillRetryState(summary.failedPanelIds);
+        setFillRetryState([]);
+        pendingFillAttachmentIdsByPanel.clear();
+        showToast(
+          getLocalizedText(
+            'msgAllPanelsSkippedDocuments',
+            'None of the active panels support the attached document(s).'
+          )
+        );
       } else {
-        statusEl.textContent = `Fill failed: ${failedCount}/${totalCount} panels failed`;
-        statusEl.className = 'send-status error';
-        setFillRetryState(summary.failedPanelIds);
+        if (allSkippedEntries.length > 0) {
+          const skippedLabels = allSkippedEntries.map(({ panel }) => {
+            const baseName = getProviderById(panel.providerId)?.name || panel.providerId;
+            if (isGoogleProvider(panel.providerId) && currentGoogleProviderMode === GOOGLE_PROVIDER_MODE_SEARCH) {
+              return `${baseName} (Search)`;
+            }
+            return baseName;
+          });
+          const listStr = formatProviderList(skippedLabels, getSnapshotLocale());
+          showToast(
+            hasDocuments
+              ? getLocalizedText('msgDocumentsSkippedForPanels', 'Skipped documents for: $1', [listStr])
+              : getLocalizedText('msgImagesSkippedForPanels', 'Images were not sent to: $1', [listStr])
+          );
+        }
+
+        if (summary.allSucceeded) {
+          if (skippedCount > 0) {
+            statusEl.textContent = `Filled ${successfulCount}/${totalCount} (${skippedCount} skipped)`;
+          } else {
+            statusEl.textContent = `Filled ${successfulCount} input${successfulCount > 1 ? 's' : ''}`;
+          }
+          statusEl.className = 'send-status success';
+          setFillRetryState([]);
+          pendingFillAttachmentIdsByPanel.clear();
+        } else if (successfulCount > 0) {
+          statusEl.textContent = `Filled ${successfulCount}/${totalCount}; ${failedCount} failed`;
+          statusEl.className = 'send-status partial';
+          setFillRetryState(summary.failedPanelIds);
+        } else {
+          statusEl.textContent = `Fill failed: ${failedCount}/${totalCount} panels failed`;
+          statusEl.className = 'send-status error';
+          setFillRetryState(summary.failedPanelIds);
+        }
       }
 
       if (failedCount > 0) {
         const resultsByPanelId = new Map(
-          normalizedResults.map(result => [result.panelId, result])
+          mergedResults.map(result => [result.panelId, result])
         );
         const failedPanels = panels
           .filter(panel => summary.failedPanelIds.has(panel.id))
@@ -2690,17 +2874,17 @@ export async function broadcastMessage(text, autoSubmit = true) {
             provider: panel.providerId,
             reason: resultsByPanelId.get(panel.id)?.reason || 'injection-error'
           }));
-        console.warn('[Multi-Panel] Image fill failed for panels:', failedPanels);
+        console.warn('[Multi-Panel] Attachment fill failed for panels:', failedPanels);
       }
 
       if (successfulCount > 0) {
         rememberSnapshotPrompt(text);
       }
 
-      if (shouldClearFillPayload(summary)) {
+      if (shouldClearFillPayload(summary, { hasText })) {
         document.getElementById('unified-input').value = '';
         resizeTextarea();
-        clearAllImages();
+        clearAllAttachments();
       }
 
       setTimeout(() => {
@@ -2751,9 +2935,9 @@ export async function broadcastMessage(text, autoSubmit = true) {
       document.getElementById('unified-input').value = '';
       resizeTextarea();
 
-      // Clear images after successful fill/send
-      if (uploadedImages.length > 0) {
-        clearAllImages();
+      // Clear attachments after successful fill/send
+      if (uploadedAttachments.length > 0) {
+        clearAllAttachments();
       }
     }
   } catch (error) {
@@ -2775,7 +2959,7 @@ export async function broadcastMessage(text, autoSubmit = true) {
 export async function sendToPanel(
   panel,
   text,
-  images = [],
+  attachments = [],
   autoSubmit = true,
   requestId = null,
   isRetry = false,
@@ -2788,23 +2972,28 @@ export async function sendToPanel(
       panelId: panel.id,
       provider: panel.providerId,
       reason: 'control-not-found',
-      succeededImageIds: []
+      succeededImageIds: [],
+      succeededAttachmentIds: []
     };
   }
 
   const isFillAction = options.isFillAction === true;
   const waitForActionResult = options.waitForActionResult === true;
-  const fallbackImages = Array.isArray(options.fallbackImages) && options.fallbackImages.length > 0
-    ? options.fallbackImages
-    : null;
-  const expectedImageIds = (fallbackImages || images).map(img => img.id).filter(Boolean);
+  const fallbackAttachments = Array.isArray(options.fallbackAttachments) && options.fallbackAttachments.length > 0
+    ? options.fallbackAttachments
+    : (Array.isArray(options.fallbackImages) && options.fallbackImages.length > 0
+      ? options.fallbackImages
+      : null);
+  const expectedAttachmentIds = (fallbackAttachments || attachments).map(att => att.id).filter(Boolean);
+  const includeAttachmentProtocol = attachments.length > 0 || Boolean(fallbackAttachments);
 
   const waiter = waitForActionResult
     ? createPanelActionResultWaiter({
       target: window,
       panel,
       requestId,
-      expectedImageIds,
+      expectedImageIds: expectedAttachmentIds,
+      ...(includeAttachmentProtocol ? { expectedAttachmentIds } : {}),
       action: 'fill',
       timeoutMs
     })
@@ -2813,27 +3002,25 @@ export async function sendToPanel(
   try {
     const messageType = determinePanelMessageType({ isFillAction });
 
-    const imagesPayload = images.map(img => ({
-      id: img.id,
-      dataUrl: img.dataUrl,
-      name: img.name,
-      type: img.type
-    }));
+    const attachmentsPayload = attachments.map(serializeAttachmentForMessage);
+    const imagesPayload = serializeLegacyImagesForMessage(attachments);
 
-    const fallbackImagesPayload = waitForActionResult && fallbackImages
-      ? fallbackImages.map(img => ({
-        id: img.id,
-        dataUrl: img.dataUrl,
-        name: img.name,
-        type: img.type
-      }))
+    const fallbackAttachmentsPayload = waitForActionResult && fallbackAttachments
+      ? fallbackAttachments.map(serializeAttachmentForMessage)
+      : null;
+    const fallbackImagesPayload = waitForActionResult && fallbackAttachments
+      ? serializeLegacyImagesForMessage(fallbackAttachments)
       : null;
 
     postToPanelFrame(panel, {
       type: messageType,
       text,
       images: imagesPayload,
-      ...(fallbackImagesPayload ? { fallbackImages: fallbackImagesPayload } : {}),
+      ...(includeAttachmentProtocol ? { attachments: attachmentsPayload } : {}),
+      ...(fallbackImagesPayload && fallbackImagesPayload.length > 0
+        ? { fallbackImages: fallbackImagesPayload }
+        : {}),
+      ...(fallbackAttachmentsPayload ? { fallbackAttachments: fallbackAttachmentsPayload } : {}),
       autoSubmit,
       requestId,
       action: waitForActionResult ? 'fill' : undefined,
@@ -2850,7 +3037,8 @@ export async function sendToPanel(
       ok: true,
       panelId: panel.id,
       provider: panel.providerId,
-      succeededImageIds: expectedImageIds
+      succeededImageIds: expectedAttachmentIds,
+      ...(includeAttachmentProtocol ? { succeededAttachmentIds: expectedAttachmentIds } : {})
     };
   } catch (error) {
     console.error(`Error sending to ${panel.providerId}:`, error);
@@ -2862,7 +3050,8 @@ export async function sendToPanel(
         panelId: panel.id,
         provider: panel.providerId,
         reason: 'injection-error',
-        succeededImageIds: []
+        succeededImageIds: [],
+        ...(includeAttachmentProtocol ? { succeededAttachmentIds: [] } : {})
       };
   }
 }
@@ -2873,8 +3062,8 @@ async function clearAllInputs() {
   document.getElementById('unified-input').value = '';
   resizeTextarea();
 
-  // Clear uploaded images
-  clearAllImages();
+  // Clear uploaded attachments
+  clearAllAttachments();
 
   // Send clear message to all panels
   panels.forEach(panel => {
@@ -3604,49 +3793,103 @@ function setupShareSnapshot() {
   });
 }
 
-// ===== Image Management =====
-const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB per image
-const MAX_IMAGE_COUNT = 10;
+// ===== Attachment Management (Images + Documents) =====
 
-async function addImage(file) {
-  try {
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      showToast('Please select an image file');
-      return false;
-    }
-
-    // Validate file size
-    if (file.size > MAX_IMAGE_SIZE) {
+function showAttachmentValidationError(file, validationResult) {
+  const fileName = file?.name || 'file';
+  switch (validationResult?.errorCode) {
+    case 'image-too-large':
       showToast('Image size must be less than 20MB');
+      break;
+    case 'document-too-large':
+      showToast(getLocalizedText('msgDocumentTooLarge', 'Document size must be less than 10MB'));
+      break;
+    case 'total-size-exceeded':
+      showToast(
+        getLocalizedText('msgAttachmentTotalSizeExceeded', 'Total attachment size cannot exceed 25MB')
+      );
+      break;
+    case 'max-count':
+      showToast(
+        getLocalizedText('msgAttachmentMaxCount', 'Maximum $1 attachments allowed', [
+          String(MAX_ATTACHMENT_COUNT)
+        ])
+      );
+      break;
+    case 'max-document-count':
+      showToast(
+        getLocalizedText('msgDocumentMaxCount', 'Maximum $1 documents allowed', [
+          String(MAX_DOCUMENT_COUNT)
+        ])
+      );
+      break;
+    case 'invalid-file-content':
+      showToast(
+        getLocalizedText(
+          'msgAttachmentInvalidContent',
+          'File content does not match its format: $1',
+          [fileName]
+        )
+      );
+      break;
+    default:
+      showToast(
+        getLocalizedText('msgAttachmentUnsupportedType', 'Unsupported file type: $1', [fileName])
+      );
+      break;
+  }
+}
+
+async function addAttachment(file) {
+  try {
+    const validation = await validateAttachmentFile(file, uploadedAttachments);
+    if (!validation.ok) {
+      showAttachmentValidationError(file, validation);
       return false;
     }
 
-    // Validate image count
-    if (uploadedImages.length >= MAX_IMAGE_COUNT) {
-      showToast(`Maximum ${MAX_IMAGE_COUNT} images allowed`);
-      return false;
+    const attachmentId = Date.now().toString() + '_' + Math.random().toString(36).slice(2, 11);
+
+    if (validation.kind === 'image') {
+      // Read through a Blob carrying the normalized MIME so an empty or
+      // non-canonical file.type still yields a `data:image/...` URL.
+      const imageBlob = file.type === validation.mimeType
+        ? file
+        : file.slice(0, file.size, validation.mimeType);
+      const dataUrl = await fileToDataUrl(imageBlob);
+      uploadedAttachments.push({
+        id: attachmentId,
+        kind: 'image',
+        name: file.name || 'image.png',
+        type: validation.mimeType,
+        ext: validation.ext,
+        size: validation.size,
+        dataUrl
+      });
+    } else {
+      uploadedAttachments.push({
+        id: attachmentId,
+        kind: 'document',
+        name: file.name || `document${validation.ext || '.txt'}`,
+        type: validation.mimeType,
+        ext: validation.ext,
+        size: validation.size,
+        isPlainText: validation.isPlainText,
+        badge: validation.badge,
+        badgeTone: validation.badgeTone,
+        bytes: validation.bytes,
+        ...(typeof validation.textContent === 'string'
+          ? { textContent: validation.textContent }
+          : {})
+      });
     }
 
-    // Convert to base64
-    const dataUrl = await fileToDataUrl(file);
-
-    // Add to uploadedImages array with string ID
-    const imageId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
-    uploadedImages.push({
-      id: imageId,
-      name: file.name,
-      type: file.type,
-      dataUrl: dataUrl
-    });
     resetFillRetryState();
-
-    // Render preview
-    renderImagePreviews();
+    renderAttachmentPreviews();
     return true;
   } catch (error) {
-    console.error('Error adding image:', error);
-    showToast('Failed to add image');
+    console.error('Error adding attachment:', error);
+    showToast('Failed to add attachment');
     return false;
   }
 }
@@ -3660,44 +3903,100 @@ function fileToDataUrl(file) {
   });
 }
 
-function removeImage(imageId) {
-  uploadedImages = uploadedImages.filter(img => img.id !== imageId);
+function removeAttachment(attachmentId) {
+  uploadedAttachments = uploadedAttachments.filter(att => att.id !== attachmentId);
   resetFillRetryState();
-  renderImagePreviews();
+  renderAttachmentPreviews();
 }
 
-function clearAllImages() {
-  uploadedImages = [];
+function clearAllAttachments() {
+  uploadedAttachments = [];
   resetFillRetryState();
-  renderImagePreviews();
+  renderAttachmentPreviews();
 }
 
-function renderImagePreviews() {
+function renderAttachmentPreviews() {
   const container = document.getElementById('image-preview-container');
+  if (!container) {
+    return;
+  }
   // Build nodes instead of markup: the extension CSP blocks inline handlers,
   // and file names must never be parsed as HTML.
-  container.replaceChildren(...uploadedImages.map(createImagePreviewItem));
+  container.replaceChildren(
+    ...uploadedAttachments.map(att =>
+      isDocumentAttachment(att)
+        ? createDocumentPreviewChip(att)
+        : createImagePreviewItem(att)
+    )
+  );
 }
 
 function createImagePreviewItem(img) {
   const item = document.createElement('div');
   item.className = 'image-preview-item';
   item.dataset.imageId = img.id;
+  item.dataset.attachmentId = img.id;
+  item.dataset.attachmentKind = 'image';
 
   const preview = document.createElement('img');
   preview.src = img.dataUrl;
   preview.alt = img.name;
 
+  const removeLabel = getLocalizedText('ariaRemoveAttachment', 'Remove $1', [img.name]);
   const removeButton = document.createElement('button');
   removeButton.type = 'button';
   removeButton.className = 'remove-image';
-  removeButton.title = 'Remove';
+  removeButton.title = removeLabel;
+  removeButton.setAttribute('aria-label', removeLabel);
   // Constant markup (no user data), kept as markup so icon-name tooling can find it.
   removeButton.innerHTML = '<span class="material-symbols-outlined">close</span>';
-  removeButton.addEventListener('click', () => removeImage(img.id));
+  removeButton.addEventListener('click', () => removeAttachment(img.id));
 
   item.append(preview, removeButton);
   return item;
+}
+
+function createDocumentPreviewChip(doc) {
+  const badgeInfo = getAttachmentBadge(doc);
+  const chip = document.createElement('div');
+  chip.className = 'attachment-doc-chip';
+  chip.dataset.attachmentId = doc.id;
+  chip.dataset.attachmentKind = 'document';
+  if (doc.ext) {
+    chip.dataset.attachmentExt = doc.ext;
+  }
+
+  const badge = document.createElement('span');
+  badge.className = `attachment-doc-badge attachment-doc-badge--${badgeInfo.tone}`;
+  badge.setAttribute('aria-hidden', 'true');
+  badge.textContent = badgeInfo.label;
+
+  const meta = document.createElement('div');
+  meta.className = 'attachment-doc-meta';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'attachment-doc-name';
+  nameEl.textContent = doc.name;
+  nameEl.title = doc.name;
+
+  const sizeEl = document.createElement('span');
+  sizeEl.className = 'attachment-doc-size';
+  sizeEl.textContent = formatFileSize(doc.size);
+
+  meta.append(nameEl, sizeEl);
+
+  const removeLabel = getLocalizedText('ariaRemoveAttachment', 'Remove $1', [doc.name]);
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'attachment-doc-remove';
+  removeButton.title = removeLabel;
+  removeButton.setAttribute('aria-label', removeLabel);
+  // Constant markup (no user data), kept as markup so icon-name tooling can find it.
+  removeButton.innerHTML = '<span class="material-symbols-outlined">close</span>';
+  removeButton.addEventListener('click', () => removeAttachment(doc.id));
+
+  chip.append(badge, meta, removeButton);
+  return chip;
 }
 
 // Create new chat for all panels
@@ -4157,7 +4456,7 @@ function setupEventListeners() {
   document.getElementById('prompt-library-btn').addEventListener('click', openPromptModal);
   document.getElementById('close-prompt-modal').addEventListener('click', closePromptModal);
 
-  // Image upload button
+  // Unified attachment upload button (images + documents)
   const imageUploadBtn = document.getElementById('image-upload-btn');
   const imageFileInput = document.getElementById('image-file-input');
   const inputWrapper = document.querySelector('.input-wrapper');
@@ -4167,15 +4466,15 @@ function setupEventListeners() {
   });
 
   imageFileInput.addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.target.files || []);
     for (const file of files) {
-      await addImage(file);
+      await addAttachment(file);
     }
     // Clear input to allow re-uploading the same file
     e.target.value = '';
   });
 
-  // Drag and drop support
+  // Drag and drop support (mixed images + documents)
   inputWrapper.addEventListener('dragover', (e) => {
     e.preventDefault();
     inputWrapper.classList.add('drag-over');
@@ -4190,9 +4489,9 @@ function setupEventListeners() {
     e.preventDefault();
     inputWrapper.classList.remove('drag-over');
 
-    const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+    const files = Array.from(e.dataTransfer?.files || []);
     for (const file of files) {
-      await addImage(file);
+      await addAttachment(file);
     }
   });
 
@@ -4301,17 +4600,39 @@ function setupEventListeners() {
     }
   });
 
-  // Paste image support (must be after inputTextarea is defined)
+  // Paste attachment support (images + copied documents from file manager; plain text unaffected)
   inputTextarea.addEventListener('paste', async (e) => {
-    const items = Array.from(e.clipboardData.items);
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) {
-          await addImage(file);
-        }
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) {
+      return;
+    }
+    const pastedFiles = [];
+    const seen = new Set();
+    const pushUnique = (file) => {
+      if (!file) return;
+      const key = `${file.name}:${file.size}:${file.type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        pastedFiles.push(file);
       }
+    };
+
+    for (const item of Array.from(clipboardData.items || [])) {
+      if (item.kind === 'file') {
+        pushUnique(item.getAsFile());
+      }
+    }
+    for (const file of Array.from(clipboardData.files || [])) {
+      pushUnique(file);
+    }
+
+    if (pastedFiles.length === 0) {
+      return;
+    }
+
+    e.preventDefault();
+    for (const file of pastedFiles) {
+      await addAttachment(file);
     }
   });
 

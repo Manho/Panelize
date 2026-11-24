@@ -1188,5 +1188,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "Todas las IA activadas ya están abiertas"
+  },
+  "btnAttachFilesTitle": {
+    "message": "Adjuntar imágenes o documentos"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "Documentos omitidos para: $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "Ninguno de los paneles activos admite los documentos adjuntos."
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "Tipo de archivo no compatible: $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "El contenido del archivo no coincide con su formato: $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "El tamaño del documento debe ser inferior a 10 MB"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "El tamaño total de los adjuntos no puede superar los 25 MB"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "Se permiten como máximo $1 adjuntos"
+  },
+  "msgDocumentMaxCount": {
+    "message": "Se permiten como máximo $1 documentos"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "Los documentos grandes o binarios no se conservaron al cambiar de modo de vista."
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "Escribe un mensaje o adjunta un archivo"
+  },
+  "ariaRemoveAttachment": {
+    "message": "Quitar $1"
   }
 }

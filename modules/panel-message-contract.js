@@ -37,6 +37,7 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
       'type',
       'text',
       'images',
+      'attachments',
       'autoSubmit',
       'requestId',
       'action',
@@ -59,6 +60,8 @@ export const HOST_TO_FRAME_MESSAGES = Object.freeze([
       'text',
       'images',
       'fallbackImages',
+      'attachments',
+      'fallbackAttachments',
       'autoSubmit',
       'requestId',
       'action',
@@ -191,6 +194,9 @@ export const FRAME_TO_HOST_MESSAGES = Object.freeze([
       'status',
       'succeededImageIds',
       'attemptedImageIds',
+      'succeededAttachmentIds',
+      'attemptedAttachmentIds',
+      'skippedAttachments',
       'reason'
     ],
     senderFiles: [

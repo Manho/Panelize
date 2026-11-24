@@ -642,3 +642,110 @@ html.snapshot-capture-active .messages-scroll::-webkit-scrollbar {
 .composer-action-btn .material-symbols-outlined {
   font-size: 19px;
 }
+
+/* Compact plain-text document chips & skipped-binary notice */
+.staged-notice {
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: var(--badge-bg);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.staged-doc-chip,
+.turn-doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.staged-doc-chip {
+  height: 44px;
+}
+
+.turn-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.turn-docs:last-child {
+  margin-bottom: 0;
+}
+
+.api-doc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  background: var(--badge-bg);
+  color: var(--badge-text);
+}
+
+.api-doc-badge--csv {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+:root[data-theme="dark"] .api-doc-badge--csv {
+  background: #1c3522;
+  color: #81c995;
+}
+
+.api-doc-meta {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.api-doc-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-doc-size {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.staged-doc-remove-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.staged-doc-remove-btn:hover {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}

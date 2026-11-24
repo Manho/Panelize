@@ -45,6 +45,7 @@
 
   const ACTION_FAILURE_REASONS = {
     UNSUPPORTED: 'unsupported',
+    TYPE_NOT_ACCEPTED: 'type-not-accepted',
     CONTROL_NOT_FOUND: 'control-not-found',
     PREVIEW_TIMEOUT: 'preview-timeout',
     INJECTION_ERROR: 'injection-error',
@@ -395,22 +396,39 @@
 
   function postActionResult(requestId, providerId, result) {
     if (!requestId || !providerId) return;
+    const isSkipped = Boolean(result.skipped);
+    const hasSkippedAttachments =
+      Array.isArray(result.skippedAttachments) && result.skippedAttachments.length > 0;
+    const includeAttachmentProtocol = Boolean(
+      result.includeAttachmentProtocol || isSkipped || hasSkippedAttachments
+    );
     const message = {
       type: FRAME_TO_HOST.PANELIZE_ACTION_RESULT,
       context: MULTI_PANEL_ACTION_RESULT_CONTEXT,
       requestId,
       provider: providerId,
       action: 'fill',
-      status: result.ok ? 'succeeded' : 'failed',
+      status: isSkipped ? 'skipped' : (result.ok ? 'succeeded' : 'failed'),
     };
     if (Array.isArray(result.succeededImageIds)) {
       message.succeededImageIds = result.succeededImageIds;
+      if (includeAttachmentProtocol) {
+        message.succeededAttachmentIds = result.succeededImageIds;
+      }
     }
     if (!result.ok && Array.isArray(result.attemptedImageIds)) {
       message.attemptedImageIds = result.attemptedImageIds;
+      if (includeAttachmentProtocol) {
+        message.attemptedAttachmentIds = result.attemptedImageIds;
+      }
     }
-    if (!result.ok) {
-      message.reason = result.reason || ACTION_FAILURE_REASONS.INJECTION_ERROR;
+    if (hasSkippedAttachments) {
+      message.skippedAttachments = result.skippedAttachments;
+    }
+    if (!result.ok || isSkipped) {
+      message.reason =
+        result.reason ||
+        (isSkipped ? ACTION_FAILURE_REASONS.UNSUPPORTED : ACTION_FAILURE_REASONS.INJECTION_ERROR);
     }
     postToMultiPanelHost(message);
   }
@@ -1451,25 +1469,187 @@
     }
   }
 
-  // ===== Generic Image Upload & Attachment Cleanup =====
+  // ===== Generic Image & Document Upload & Attachment Cleanup =====
 
   const IMAGE_ACCEPT_HINT_RE =
     /image\/|\*\s*\/\s*\*|\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)\b/i;
 
+  const EXTENSION_TO_MIME = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.avif': 'image/avif',
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.markdown': 'text/markdown',
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+    '.yaml': 'text/yaml',
+    '.yml': 'text/yaml',
+    '.xml': 'application/xml',
+    '.tsv': 'text/tab-separated-values',
+    '.log': 'text/plain',
+  };
+
   const REMOVE_ATTACHMENT_RE =
     /\b(remove|delete|discard)\b.*\b(image|file|attachment|photo|upload|media)\b|^remove\s+\S+|\b(remove|delete)[\s_-]*(attachment|image|file|media|upload)\b|(移除|删除)(图片|附件|文件)/i;
 
-  function createFileFromImagePayload(image) {
-    if (!image || typeof image.dataUrl !== 'string') {
+  function getAttachmentExt(item) {
+    if (typeof item?.ext === 'string' && /^\.[a-z0-9]+$/i.test(item.ext.trim())) {
+      return item.ext.trim().toLowerCase();
+    }
+    const name = typeof item?.name === 'string' ? item.name.trim() : '';
+    const dotIdx = name.lastIndexOf('.');
+    return dotIdx > 0 && dotIdx < name.length - 1 ? name.slice(dotIdx).toLowerCase() : '';
+  }
+
+  function isDocumentAttachment(item) {
+    if (!item || typeof item !== 'object') {
+      return false;
+    }
+    if (item.kind === 'document') {
+      return true;
+    }
+    if (item.kind === 'image') {
+      return false;
+    }
+    const mime = String(item.type || '').split(';')[0].trim().toLowerCase();
+    if (mime.startsWith('image/')) {
+      return false;
+    }
+    if (typeof item.dataUrl === 'string' && /^data:image\//i.test(item.dataUrl)) {
+      return false;
+    }
+    return Boolean(item.bytes || typeof item.textContent === 'string');
+  }
+
+  function matchesInputAccept(input, fileOrMeta) {
+    if (!input || input.tagName !== 'INPUT' || (input.type || '').toLowerCase() !== 'file') {
+      return false;
+    }
+    if (input.disabled || input.getAttribute('aria-disabled') === 'true') {
+      return false;
+    }
+    const acceptAttr = (input.getAttribute('accept') || '').trim();
+    if (!acceptAttr) {
+      return true;
+    }
+
+    const fileExt = getAttachmentExt(fileOrMeta);
+    let fileMime = String(fileOrMeta?.type || '').split(';')[0].trim().toLowerCase();
+    if (!fileMime && fileExt && EXTENSION_TO_MIME[fileExt]) {
+      fileMime = EXTENSION_TO_MIME[fileExt];
+    }
+
+    const tokens = acceptAttr
+      .split(',')
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean);
+    if (tokens.length === 0) {
+      return true;
+    }
+
+    for (let i = 0; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      if (token === '*/*') {
+        return true;
+      }
+      if (token.startsWith('.')) {
+        if (fileExt && fileExt === token) {
+          return true;
+        }
+        if (!fileExt && fileMime && EXTENSION_TO_MIME[token] === fileMime) {
+          return true;
+        }
+        continue;
+      }
+      if (token.endsWith('/*')) {
+        const prefix = token.slice(0, -1);
+        if (fileMime && fileMime.startsWith(prefix)) {
+          return true;
+        }
+        continue;
+      }
+      const normalizedToken = token.split(';')[0].trim();
+      if (normalizedToken && fileMime && fileMime === normalizedToken) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function toLocalUint8Array(value) {
+    if (!value || typeof value !== 'object') {
       return null;
     }
-    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/.exec(image.dataUrl.trim());
+    const tag = Object.prototype.toString.call(value);
+    if (tag === '[object ArrayBuffer]' || value instanceof ArrayBuffer) {
+      return new Uint8Array(value);
+    }
+    if (
+      ArrayBuffer.isView(value) ||
+      (value.buffer && typeof value.byteLength === 'number' && typeof value.byteOffset === 'number')
+    ) {
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    }
+    return null;
+  }
+
+  function createFileFromAttachmentPayload(item) {
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+
+    const ext = getAttachmentExt(item);
+    const localBytes = toLocalUint8Array(item.bytes);
+    if (localBytes) {
+      const mimeType =
+        (typeof item.type === 'string' && item.type.trim()) ||
+        EXTENSION_TO_MIME[ext] ||
+        'application/octet-stream';
+      const safeName =
+        typeof item.name === 'string' && item.name.trim().length > 0
+          ? item.name.trim()
+          : `document${ext || '.bin'}`;
+      try {
+        return new File([localBytes], safeName, { type: mimeType, lastModified: Date.now() });
+      } catch {
+        return null;
+      }
+    }
+
+    if (typeof item.textContent === 'string' && isDocumentAttachment(item)) {
+      const mimeType =
+        (typeof item.type === 'string' && item.type.trim()) ||
+        EXTENSION_TO_MIME[ext] ||
+        'text/plain';
+      const safeName =
+        typeof item.name === 'string' && item.name.trim().length > 0
+          ? item.name.trim()
+          : `document${ext || '.txt'}`;
+      try {
+        return new File([item.textContent], safeName, { type: mimeType, lastModified: Date.now() });
+      } catch {
+        return null;
+      }
+    }
+
+    if (typeof item.dataUrl !== 'string') {
+      return null;
+    }
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/.exec(item.dataUrl.trim());
     if (!match) {
       return null;
     }
     try {
-      const mimeType = typeof image.type === 'string' && image.type.startsWith('image/')
-        ? image.type
+      const mimeType = typeof item.type === 'string' && item.type.startsWith('image/')
+        ? item.type
         : match[1];
       const cleanBase64 = match[2].replace(/\s+/g, '');
       const binary = atob(cleanBase64);
@@ -1479,8 +1659,8 @@
       }
       const fallbackExt = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png';
       const safeName =
-        typeof image.name === 'string' && image.name.trim().length > 0
-          ? image.name.trim()
+        typeof item.name === 'string' && item.name.trim().length > 0
+          ? item.name.trim()
           : `image.${fallbackExt}`;
       return new File([bytes], safeName, { type: mimeType, lastModified: Date.now() });
     } catch {
@@ -1488,46 +1668,103 @@
     }
   }
 
-  function isImageAcceptingFileInput(input) {
-    if (!input || input.tagName !== 'INPUT' || (input.type || '').toLowerCase() !== 'file') {
-      return false;
-    }
-    if (input.disabled || input.getAttribute('aria-disabled') === 'true') {
-      return false;
-    }
-    const accept = (input.getAttribute('accept') || '').trim();
-    if (!accept) {
-      return true;
-    }
-    return IMAGE_ACCEPT_HINT_RE.test(accept);
+  function isEnabledFileInput(input) {
+    return Boolean(
+      input &&
+      input.tagName === 'INPUT' &&
+      (input.type || '').toLowerCase() === 'file' &&
+      !input.disabled &&
+      input.getAttribute('aria-disabled') !== 'true'
+    );
   }
 
-  function findImageFileInput(composer) {
-    if (composer) {
-      const scopes = collectComposerScopes(composer);
-      for (let i = 0; i < scopes.length; i += 1) {
-        const inputs = querySelectorAllDeep('input[type="file"]', scopes[i].node).filter(
-          isImageAcceptingFileInput
-        );
-        if (inputs.length > 0) {
-          const explicitImg = inputs.find((inp) =>
-            IMAGE_ACCEPT_HINT_RE.test(inp.getAttribute('accept') || '')
-          );
-          return explicitImg || inputs[0];
-        }
+  function getOwningForm(element) {
+    if (!element) return null;
+    if (element.form) return element.form;
+    return typeof element.closest === 'function' ? element.closest('form') : null;
+  }
+
+  /**
+   * Returns enabled file inputs grouped into ownership tiers, nearest first:
+   * 0. inputs owned by the composer's own form (or, without a form, in-scope
+   *    inputs that no form owns);
+   * 1. remaining in-scope inputs not owned by a different form;
+   * 2. document-level inputs not owned by any form;
+   * 3. inputs owned by an unrelated form (e.g. a library import form).
+   * Each tier is a list of groups. In-scope tiers keep one group per composer
+   * scope in nearest-ancestor order so a closer container is never pooled with
+   * a sibling container further up the tree.
+   */
+  function collectFileInputTiers(composer) {
+    const scopes = composer ? collectComposerScopes(composer) : [];
+    const scopeGroupCount = scopes.length + 1;
+    const makeScopeGroups = () => Array.from({ length: scopeGroupCount }, () => []);
+    const tiers = [makeScopeGroups(), makeScopeGroups(), [[]], [[]]];
+    const outOfScopeGroup = scopeGroupCount - 1;
+    const seen = new Set();
+    const composerForm = composer ? getOwningForm(composer) : null;
+    const place = (input, scopeIndex) => {
+      if (seen.has(input)) return;
+      seen.add(input);
+      const inScope = scopeIndex !== null;
+      const owner = getOwningForm(input);
+      if (owner && owner !== composerForm) {
+        tiers[3][0].push(input);
+      } else if (inScope && (composerForm ? owner === composerForm : !owner)) {
+        tiers[0][scopeIndex].push(input);
+      } else if (inScope) {
+        tiers[1][scopeIndex].push(input);
+      } else if (owner && owner === composerForm) {
+        tiers[0][outOfScopeGroup].push(input);
+      } else {
+        tiers[2][0].push(input);
+      }
+    };
+    for (let i = 0; i < scopes.length; i += 1) {
+      const inputs = querySelectorAllDeep('input[type="file"]', scopes[i].node).filter(
+        isEnabledFileInput
+      );
+      for (let j = 0; j < inputs.length; j += 1) {
+        place(inputs[j], i);
       }
     }
-
     const docInputs = querySelectorAllDeep('input[type="file"]', document).filter(
-      isImageAcceptingFileInput
+      isEnabledFileInput
     );
-    if (docInputs.length === 0) {
-      return null;
+    for (let i = 0; i < docInputs.length; i += 1) {
+      place(docInputs[i], null);
     }
-    const explicitDocImg = docInputs.find((inp) =>
-      IMAGE_ACCEPT_HINT_RE.test(inp.getAttribute('accept') || '')
-    );
-    return explicitDocImg || docInputs[0];
+    return tiers;
+  }
+
+  function collectCandidateFileInputs(composer) {
+    return collectFileInputTiers(composer).flat(2);
+  }
+
+  function findFileInputForAttachment(composer, fileOrMeta) {
+    const tiers = collectFileInputTiers(composer);
+    if (tiers.every((tier) => tier.every((group) => group.length === 0))) {
+      return { input: null, hadAnyFileInput: false };
+    }
+    const isDoc = isDocumentAttachment(fileOrMeta);
+    // Composer ownership wins over accept specificity, and the nearest scope
+    // wins within a tier: explicit-MIME preference only applies among inputs
+    // of the first scope group that accepts the file.
+    for (let t = 0; t < tiers.length; t += 1) {
+      for (let g = 0; g < tiers[t].length; g += 1) {
+        const matching = tiers[t][g].filter((inp) => matchesInputAccept(inp, fileOrMeta));
+        if (matching.length === 0) {
+          continue;
+        }
+        const explicitMatch = matching.find((inp) => {
+          const accept = (inp.getAttribute('accept') || '').trim();
+          if (!accept) return false;
+          return isDoc ? matchesInputAccept(inp, fileOrMeta) : IMAGE_ACCEPT_HINT_RE.test(accept);
+        });
+        return { input: explicitMatch || matching[0], hadAnyFileInput: true };
+      }
+    }
+    return { input: null, hadAnyFileInput: true };
   }
 
   function assignFilesToFileInput(fileInput, files) {
@@ -1588,7 +1825,42 @@
     return results;
   }
 
-  function inspectComposerAttachments(composer) {
+  function countFilenamePreviewMatches(composer, fileNames = []) {
+    const normalizedNames = (fileNames || [])
+      .map((name) => (typeof name === 'string' ? name.trim().toLowerCase() : ''))
+      .filter(Boolean);
+    if (normalizedNames.length === 0) {
+      return 0;
+    }
+    const candidates = queryAcrossComposerScopes(
+      composer,
+      '[data-file-name], [data-filename], [title], [aria-label], [class*="file"], [class*="attachment"], [class*="chip"], [role="listitem"]'
+    );
+    const matchedNames = new Set();
+    for (let i = 0; i < candidates.length; i += 1) {
+      const el = candidates[i];
+      if (el === composer || el.closest?.('textarea, input, [contenteditable="true"]')) {
+        continue;
+      }
+      const haystack = [
+        el.getAttribute('data-file-name') || '',
+        el.getAttribute('data-filename') || '',
+        el.getAttribute('title') || '',
+        el.getAttribute('aria-label') || '',
+        (el.textContent || '').length <= 240 ? (el.textContent || '') : '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      for (let j = 0; j < normalizedNames.length; j += 1) {
+        if (haystack.includes(normalizedNames[j])) {
+          matchedNames.add(normalizedNames[j]);
+        }
+      }
+    }
+    return matchedNames.size;
+  }
+
+  function inspectComposerAttachments(composer, fileNames = []) {
     const previewImages = queryAcrossComposerScopes(composer, 'img').filter((img) => {
       const src = img.getAttribute('src') || '';
       return src.startsWith('blob:') || src.startsWith('data:image/');
@@ -1612,17 +1884,25 @@
       }
     }
 
+    const filenameMatches = countFilenamePreviewMatches(composer, fileNames);
+
     const busyIndicators = queryAcrossComposerScopes(
       composer,
       '[role="progressbar"], [aria-busy="true"], [data-uploading="true"]'
     );
 
-    const count = Math.max(previewImages.length, removeCount);
+    const count = Math.max(previewImages.length, removeCount, filenameMatches);
     const pending = disabledPreviewCount > 0 || busyIndicators.length > 0;
     return { count, pending };
   }
 
-  async function waitForComposerUploadSettle(composer, baselineCount, expectedAdded, timeoutMs = 5500) {
+  async function waitForComposerUploadSettle(
+    composer,
+    baselineCount,
+    expectedAdded,
+    timeoutMs = 5500,
+    fileNames = []
+  ) {
     const targetCount = baselineCount + expectedAdded;
     const deadline = Date.now() + timeoutMs;
     let bestAdded = 0;
@@ -1630,7 +1910,7 @@
     while (Date.now() < deadline) {
       await sleep(45);
       const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
-      const state = inspectComposerAttachments(activeComposer);
+      const state = inspectComposerAttachments(activeComposer, fileNames);
       const added = Math.max(0, state.count - baselineCount);
       if (added > bestAdded) {
         bestAdded = added;
@@ -1666,12 +1946,12 @@
     };
   }
 
-  async function tryPasteOrDropFiles(composer, files) {
+  async function tryPasteOrDropFiles(composer, files, fileNames = [], preferDropOnly = false) {
     if (!composer || files.length === 0) {
       return { handled: false, ok: false, addedCount: 0 };
     }
 
-    const baseline = inspectComposerAttachments(composer).count;
+    const baseline = inspectComposerAttachments(composer, fileNames).count;
     try {
       composer.focus({ preventScroll: true });
     } catch {
@@ -1680,41 +1960,43 @@
 
     const dt = buildFileDataTransfer(files);
 
-    // 1. Try synthetic ClipboardEvent('paste')
-    let pasteIntercepted = false;
-    try {
-      let pasteEvent;
+    if (!preferDropOnly) {
+      // 1. Try synthetic ClipboardEvent('paste')
+      let pasteIntercepted = false;
       try {
-        pasteEvent = new ClipboardEvent('paste', {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          clipboardData: dt instanceof DataTransfer ? dt : undefined,
-        });
+        let pasteEvent;
+        try {
+          pasteEvent = new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clipboardData: dt instanceof DataTransfer ? dt : undefined,
+          });
+        } catch {
+          pasteEvent = new Event('paste', { bubbles: true, cancelable: true, composed: true });
+        }
+        if (!pasteEvent.clipboardData || !pasteEvent.clipboardData.files || pasteEvent.clipboardData.files.length === 0) {
+          Object.defineProperty(pasteEvent, 'clipboardData', {
+            configurable: true,
+            value: dt,
+          });
+        }
+        const notCancelled = composer.dispatchEvent(pasteEvent);
+        pasteIntercepted = !notCancelled || Boolean(pasteEvent.defaultPrevented);
       } catch {
-        pasteEvent = new Event('paste', { bubbles: true, cancelable: true, composed: true });
+        pasteIntercepted = false;
       }
-      if (!pasteEvent.clipboardData || !pasteEvent.clipboardData.files || pasteEvent.clipboardData.files.length === 0) {
-        Object.defineProperty(pasteEvent, 'clipboardData', {
-          configurable: true,
-          value: dt,
-        });
+
+      if (pasteIntercepted) {
+        const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
+        return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
       }
-      const notCancelled = composer.dispatchEvent(pasteEvent);
-      pasteIntercepted = !notCancelled || Boolean(pasteEvent.defaultPrevented);
-    } catch {
-      pasteIntercepted = false;
-    }
 
-    if (pasteIntercepted) {
-      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
-      return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
-    }
-
-    await sleep(10);
-    if (inspectComposerAttachments(composer).count > baseline) {
-      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
-      return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
+      await sleep(10);
+      if (inspectComposerAttachments(composer, fileNames).count > baseline) {
+        const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
+        return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
+      }
     }
 
     // 2. Try synthetic DragEvent('drop')
@@ -1744,108 +2026,370 @@
     }
 
     if (dropIntercepted) {
-      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
+      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
       return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
     }
 
     await sleep(10);
-    if (inspectComposerAttachments(composer).count > baseline) {
-      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500);
+    if (inspectComposerAttachments(composer, fileNames).count > baseline) {
+      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
       return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
     }
 
     return { handled: false, ok: false, addedCount: 0 };
   }
 
-  async function uploadImagesToComposer(composer, images) {
+  function toSkippedEntry(entry, reason) {
+    return {
+      ...(typeof entry.id === 'string' ? { id: entry.id } : {}),
+      name: entry.name,
+      reason,
+    };
+  }
+
+  function snapshotPerNameEvidence(composer, entries) {
+    return entries.map((entry) => countFilenamePreviewMatches(composer, [entry.name]));
+  }
+
+  function normalizeEntryName(entry) {
+    return typeof entry.name === 'string' ? entry.name.trim().toLowerCase() : '';
+  }
+
+  /**
+   * Filters candidate entries down to IDs that per-name evidence can support.
+   * Per-name evidence is a distinct-name signal, so entries sharing a basename
+   * are indistinguishable: a same-name group never receives more ACKs than the
+   * net aggregate preview increase left after unique-name ACKs.
+   */
+  function capSameNameAcknowledgments(entries, candidateIndexes, previewDelta) {
+    const nameCounts = new Map();
+    for (let i = 0; i < entries.length; i += 1) {
+      const key = normalizeEntryName(entries[i]);
+      nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+    }
+    const accepted = new Set();
+    let uniqueAcked = 0;
+    for (let k = 0; k < candidateIndexes.length; k += 1) {
+      const idx = candidateIndexes[k];
+      if (nameCounts.get(normalizeEntryName(entries[idx])) === 1) {
+        accepted.add(idx);
+        uniqueAcked += 1;
+      }
+    }
+    let remaining = Math.max(0, previewDelta - uniqueAcked);
+    for (let k = 0; k < candidateIndexes.length; k += 1) {
+      const idx = candidateIndexes[k];
+      if (accepted.has(idx) || nameCounts.get(normalizeEntryName(entries[idx])) === 1) continue;
+      if (remaining <= 0) continue;
+      accepted.add(idx);
+      remaining -= 1;
+    }
+    const ids = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      if (accepted.has(i) && typeof entries[i].id === 'string') {
+        ids.push(entries[i].id);
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Returns IDs of entries whose own filename preview appeared after the
+   * baseline snapshot. Used for partial batches: an aggregate preview count
+   * never identifies which file of the batch completed.
+   */
+  function collectEntriesWithNewEvidence(composer, entries, baselineEvidence, baselineCount = 0) {
+    const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
+    const names = entries.map((entry) => entry.name);
+    const previewDelta = Math.max(0, inspectComposerAttachments(activeComposer, names).count - baselineCount);
+    const candidates = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (typeof entry.id !== 'string') continue;
+      if (countFilenamePreviewMatches(activeComposer, [entry.name]) > (baselineEvidence[i] || 0)) {
+        candidates.push(i);
+      }
+    }
+    return capSameNameAcknowledgments(entries, candidates, previewDelta);
+  }
+
+  /**
+   * After a batch settles, keeps only entries still present in the final
+   * staged set: entries missing from a preserved `input.files` are dropped,
+   * and documents must show their own filename preview whenever the page
+   * renders filename previews for this batch.
+   */
+  function collectVerifiedBatchIds(composer, fileInput, entries, baselineEvidence, baselineCount) {
+    const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
+    const stagedNameCounts = new Map();
+    const stagedFiles = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
+    for (let i = 0; i < stagedFiles.length; i += 1) {
+      const key = typeof stagedFiles[i]?.name === 'string' ? stagedFiles[i].name.trim().toLowerCase() : '';
+      stagedNameCounts.set(key, (stagedNameCounts.get(key) || 0) + 1);
+    }
+    const finalEvidence = entries.map((entry) => countFilenamePreviewMatches(activeComposer, [entry.name]));
+    const hasNewEvidence = finalEvidence.map((count, i) => count > (baselineEvidence[i] || 0));
+    const pageShowsFilenames = entries.some(
+      (entry, i) => isDocumentAttachment(entry.meta) && hasNewEvidence[i]
+    );
+    const candidates = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (typeof entry.id !== 'string') continue;
+      if (stagedFiles.length > 0) {
+        const key = normalizeEntryName(entry);
+        const remaining = stagedNameCounts.get(key) || 0;
+        if (remaining <= 0) continue;
+        stagedNameCounts.set(key, remaining - 1);
+      }
+      if (pageShowsFilenames && isDocumentAttachment(entry.meta) && !hasNewEvidence[i]) {
+        continue;
+      }
+      candidates.push(i);
+    }
+    const names = entries.map((entry) => entry.name);
+    const previewDelta = Math.max(0, inspectComposerAttachments(activeComposer, names).count - baselineCount);
+    return capSameNameAcknowledgments(entries, candidates, previewDelta);
+  }
+
+  async function uploadEntryBatchToFileInput(composer, fileInput, groupEntries, settleTimeoutMs) {
+    const groupNames = groupEntries.map((e) => e.name);
+    const baseline = inspectComposerAttachments(composer, groupNames).count;
+    const baselineEvidence = snapshotPerNameEvidence(composer, groupEntries);
+    if (!assignFilesToFileInput(fileInput, groupEntries.map((entry) => entry.file))) {
+      return { ok: false, reason: ACTION_FAILURE_REASONS.INJECTION_ERROR, succeededIds: [] };
+    }
+    const settled = await waitForComposerUploadSettle(
+      composer,
+      baseline,
+      groupEntries.length,
+      settleTimeoutMs,
+      groupNames
+    );
+    if (settled.ok) {
+      const expectedIds = groupEntries.map((entry) => entry.id).filter((id) => typeof id === 'string');
+      const verifiedIds = collectVerifiedBatchIds(
+        composer,
+        fileInput,
+        groupEntries,
+        baselineEvidence,
+        baseline
+      );
+      if (verifiedIds.length === expectedIds.length) {
+        return { ok: true, succeededIds: verifiedIds };
+      }
+      return { ok: false, reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT, succeededIds: verifiedIds };
+    }
+    return {
+      ok: false,
+      reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+      succeededIds: collectEntriesWithNewEvidence(composer, groupEntries, baselineEvidence, baseline),
+    };
+  }
+
+  async function uploadEntriesSequentiallyToFileInput(composer, fileInput, groupEntries, settleTimeoutMs) {
+    const succeededIds = [];
+    for (let i = 0; i < groupEntries.length; i += 1) {
+      const entry = groupEntries[i];
+      const currentInput = findFileInputForAttachment(composer, entry.meta).input || fileInput;
+      const baseline = inspectComposerAttachments(composer, [entry.name]).count;
+      if (!assignFilesToFileInput(currentInput, [entry.file])) {
+        return { ok: false, reason: ACTION_FAILURE_REASONS.INJECTION_ERROR, succeededIds };
+      }
+      const settled = await waitForComposerUploadSettle(
+        composer,
+        baseline,
+        1,
+        settleTimeoutMs,
+        [entry.name]
+      );
+      if (!settled.ok) {
+        return { ok: false, reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT, succeededIds };
+      }
+      if (typeof entry.id === 'string') {
+        succeededIds.push(entry.id);
+      }
+    }
+    return { ok: true, succeededIds };
+  }
+
+  async function uploadAttachmentsToComposer(composer, attachments, hasAttachmentProtocol = false) {
     const entries = [];
-    for (let i = 0; i < images.length; i += 1) {
-      const img = images[i];
-      const file = createFileFromImagePayload(img);
+    for (let i = 0; i < attachments.length; i += 1) {
+      const att = attachments[i];
+      const file = createFileFromAttachmentPayload(att);
       if (!file) {
         return {
           ok: false,
           reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
           succeededImageIds: [],
+          skippedAttachments: [],
         };
       }
-      entries.push({ id: img.id, file });
+      entries.push({ id: att.id, name: att.name || file.name, meta: att, file });
     }
 
-    const fileInput = findImageFileInput(composer);
-    if (fileInput) {
-      if (entries.length === 1 || fileInput.multiple) {
-        const baseline = inspectComposerAttachments(composer).count;
-        const files = entries.map((entry) => entry.file);
-        if (!assignFilesToFileInput(fileInput, files)) {
-          return {
-            ok: false,
-            reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
-            succeededImageIds: [],
-          };
-        }
-        const settled = await waitForComposerUploadSettle(composer, baseline, entries.length, 5500);
-        const succeededImageIds = entries
-          .slice(0, settled.addedCount)
-          .map((entry) => entry.id)
-          .filter((id) => typeof id === 'string');
-        return settled.ok
-          ? { ok: true, succeededImageIds }
-          : {
-              ok: false,
-              reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
-              succeededImageIds,
-            };
-      }
+    const hasDocument = entries.some((entry) => isDocumentAttachment(entry.meta));
+    const settleTimeoutMs = hasDocument ? 8500 : 5500;
+    const allInputs = collectCandidateFileInputs(composer);
 
-      // Single-file input with multiple images: upload sequentially
-      const succeededImageIds = [];
+    if (allInputs.length > 0) {
+      const acceptedByInput = new Map();
+      const skippedAttachments = [];
+
       for (let i = 0; i < entries.length; i += 1) {
-        const currentInput = findImageFileInput(composer) || fileInput;
-        const baseline = inspectComposerAttachments(composer).count;
-        if (!assignFilesToFileInput(currentInput, [entries[i].file])) {
-          return {
-            ok: false,
-            reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
-            succeededImageIds,
-          };
+        const entry = entries[i];
+        const { input } = findFileInputForAttachment(composer, entry.meta);
+        if (!input) {
+          skippedAttachments.push(toSkippedEntry(entry, ACTION_FAILURE_REASONS.TYPE_NOT_ACCEPTED));
+          continue;
         }
-        const settled = await waitForComposerUploadSettle(composer, baseline, 1, 5500);
-        if (!settled.ok) {
-          return {
-            ok: false,
-            reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
-            succeededImageIds,
-          };
+        if (!acceptedByInput.has(input)) {
+          acceptedByInput.set(input, []);
         }
-        if (typeof entries[i].id === 'string') {
-          succeededImageIds.push(entries[i].id);
+        acceptedByInput.get(input).push(entry);
+      }
+
+      if (acceptedByInput.size === 0) {
+        return {
+          ok: true,
+          skipped: true,
+          reason: ACTION_FAILURE_REASONS.TYPE_NOT_ACCEPTED,
+          succeededImageIds: [],
+          skippedAttachments,
+        };
+      }
+
+      const succeededImageIds = [];
+      for (const [fileInput, groupEntries] of acceptedByInput.entries()) {
+        const imageEntries = groupEntries.filter((entry) => !isDocumentAttachment(entry.meta));
+        const documentEntries = groupEntries.filter((entry) => isDocumentAttachment(entry.meta));
+        const steps = [];
+        if (imageEntries.length > 0) {
+          steps.push(
+            imageEntries.length === 1 || fileInput.multiple
+              ? () => uploadEntryBatchToFileInput(composer, fileInput, imageEntries, settleTimeoutMs)
+              : () => uploadEntriesSequentiallyToFileInput(composer, fileInput, imageEntries, settleTimeoutMs)
+          );
+        }
+        if (documentEntries.length > 0) {
+          // A multiple input receives the whole document batch in one assignment:
+          // replacement-style pickers render only the latest `input.files`, so
+          // separate assignments would discard earlier documents. The batch path
+          // ACKs only entries verified in the final staged set. Single-file
+          // inputs go one at a time so each preview delta maps to one ID.
+          steps.push(
+            fileInput.multiple
+              ? () => uploadEntryBatchToFileInput(composer, fileInput, documentEntries, settleTimeoutMs)
+              : () => uploadEntriesSequentiallyToFileInput(composer, fileInput, documentEntries, settleTimeoutMs)
+          );
+        }
+        for (let s = 0; s < steps.length; s += 1) {
+          const stepResult = await steps[s]();
+          succeededImageIds.push(...stepResult.succeededIds);
+          if (!stepResult.ok) {
+            return {
+              ok: false,
+              reason: stepResult.reason,
+              succeededImageIds,
+              skippedAttachments,
+            };
+          }
         }
       }
-      return { ok: true, succeededImageIds };
+
+      return { ok: true, succeededImageIds, skippedAttachments };
     }
 
-    // No <input type="file"> in DOM: attempt paste/drop on composer
-    const fallback = await tryPasteOrDropFiles(composer, entries.map((entry) => entry.file));
-    if (!fallback.handled) {
-      return {
-        ok: false,
-        reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
-        succeededImageIds: [],
-      };
+    // No <input type="file"> in DOM: paste images through the image path and
+    // drop each document separately, combining per-attachment outcomes.
+    const imageEntries = entries.filter((entry) => !isDocumentAttachment(entry.meta));
+    const documentEntries = entries.filter((entry) => isDocumentAttachment(entry.meta));
+    const succeededImageIds = [];
+    const skippedAttachments = [];
+
+    if (imageEntries.length > 0) {
+      const imageBaselineEvidence = snapshotPerNameEvidence(composer, imageEntries);
+      const imageBaselineCount = inspectComposerAttachments(
+        composer,
+        imageEntries.map((entry) => entry.name)
+      ).count;
+      const imageResult = await tryPasteOrDropFiles(
+        composer,
+        imageEntries.map((entry) => entry.file),
+        imageEntries.map((entry) => entry.name),
+        false
+      );
+      if (!imageResult.handled) {
+        if (!(hasAttachmentProtocol && documentEntries.length > 0)) {
+          return {
+            ok: false,
+            reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
+            succeededImageIds: [],
+            skippedAttachments: [],
+          };
+        }
+        imageEntries.forEach((entry) => {
+          skippedAttachments.push(toSkippedEntry(entry, ACTION_FAILURE_REASONS.UNSUPPORTED));
+        });
+      } else if (!imageResult.ok) {
+        return {
+          ok: false,
+          reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+          succeededImageIds: collectEntriesWithNewEvidence(
+            composer,
+            imageEntries,
+            imageBaselineEvidence,
+            imageBaselineCount
+          ),
+          skippedAttachments,
+        };
+      } else {
+        succeededImageIds.push(
+          ...imageEntries.map((entry) => entry.id).filter((id) => typeof id === 'string')
+        );
+      }
     }
 
-    const succeededImageIds = entries
-      .slice(0, fallback.addedCount)
-      .map((entry) => entry.id)
-      .filter((id) => typeof id === 'string');
-    return fallback.ok
-      ? { ok: true, succeededImageIds }
-      : {
+    for (let i = 0; i < documentEntries.length; i += 1) {
+      const entry = documentEntries[i];
+      const activeComposer = composer.isConnected ? composer : findComposerElement() || composer;
+      const docResult = await tryPasteOrDropFiles(activeComposer, [entry.file], [entry.name], true);
+      if (!docResult.handled) {
+        if (!hasAttachmentProtocol) {
+          return {
+            ok: false,
+            reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
+            succeededImageIds,
+            skippedAttachments,
+          };
+        }
+        skippedAttachments.push(toSkippedEntry(entry, ACTION_FAILURE_REASONS.UNSUPPORTED));
+        continue;
+      }
+      if (!docResult.ok) {
+        return {
           ok: false,
           reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
           succeededImageIds,
+          skippedAttachments,
         };
+      }
+      if (typeof entry.id === 'string') {
+        succeededImageIds.push(entry.id);
+      }
+    }
+
+    if (skippedAttachments.length === entries.length) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
+        succeededImageIds: [],
+        skippedAttachments,
+      };
+    }
+    return { ok: true, succeededImageIds, skippedAttachments };
   }
 
   function clearComposerAttachments(composer) {
@@ -1868,14 +2412,29 @@
   // ===== Message Dispatch =====
 
   async function handleFillWithResult(eventData, providerId) {
-    const { text, images, fallbackImages, autoSubmit, requestId, retry = false } = eventData;
-    const hasImages = Array.isArray(images) && images.length > 0;
-    const normalizedFallbackImages = Array.isArray(fallbackImages) ? fallbackImages : [];
-    const fallbackSucceededIds = normalizedFallbackImages
-      .map((img) => img?.id)
+    const {
+      text,
+      images,
+      fallbackImages,
+      attachments,
+      fallbackAttachments,
+      autoSubmit,
+      requestId,
+      retry = false,
+    } = eventData;
+    const hasAttachmentProtocol = Array.isArray(attachments);
+    const incomingAttachments = hasAttachmentProtocol
+      ? attachments
+      : (Array.isArray(images) ? images : []);
+    const normalizedFallbackAttachments = Array.isArray(fallbackAttachments)
+      ? fallbackAttachments
+      : (Array.isArray(fallbackImages) ? fallbackImages : []);
+    const hasAttachments = incomingAttachments.length > 0;
+    const fallbackSucceededIds = normalizedFallbackAttachments
+      .map((att) => att?.id)
       .filter((id) => typeof id === 'string');
     const hasText = typeof text === 'string' && text.length > 0;
-    const hasFallbackRetry = Boolean(retry && normalizedFallbackImages.length > 0);
+    const hasFallbackRetry = Boolean(retry && normalizedFallbackAttachments.length > 0);
 
     if (requestId && providerId) {
       startUserInteractionTracking(requestId, providerId);
@@ -1888,48 +2447,66 @@
         ok: false,
         reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
         succeededImageIds: [],
+        includeAttachmentProtocol: hasAttachmentProtocol,
       });
       return;
     }
 
-    if (!hasImages && !hasText && !hasFallbackRetry) {
+    if (!hasAttachments && !hasText && !hasFallbackRetry) {
       postActionResult(requestId, providerId, {
         ok: false,
         reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
         succeededImageIds: [],
+        includeAttachmentProtocol: hasAttachmentProtocol,
       });
       return;
     }
 
-    const composer = await findComposerWithRetry(hasImages || hasFallbackRetry ? 600 : 1000);
+    const composer = await findComposerWithRetry(hasAttachments || hasFallbackRetry ? 600 : 1000);
     if (!composer) {
       postActionResult(requestId, providerId, {
         ok: false,
         reason: ACTION_FAILURE_REASONS.CONTROL_NOT_FOUND,
         succeededImageIds: [],
+        includeAttachmentProtocol: hasAttachmentProtocol,
       });
       return;
     }
 
+    const fallbackNames = normalizedFallbackAttachments.map((att) => att?.name).filter(Boolean);
     const composerClearedOnRetry = Boolean(
       hasFallbackRetry &&
       isComposerEmpty(composer) &&
-      inspectComposerAttachments(composer).count === 0
+      inspectComposerAttachments(composer, fallbackNames).count === 0
     );
-    const effectiveImages = composerClearedOnRetry
-      ? normalizedFallbackImages
-      : (Array.isArray(images) ? images : []);
+    const effectiveAttachments = composerClearedOnRetry
+      ? normalizedFallbackAttachments
+      : incomingAttachments;
     const effectiveRetry = composerClearedOnRetry ? false : Boolean(retry);
     const failureAttemptedIds = composerClearedOnRetry
-      ? effectiveImages.map((img) => img?.id).filter((id) => typeof id === 'string')
+      ? effectiveAttachments.map((att) => att?.id).filter((id) => typeof id === 'string')
       : undefined;
 
-    let succeededImageIds = effectiveImages.length === 0 && hasFallbackRetry
+    let succeededImageIds = effectiveAttachments.length === 0 && hasFallbackRetry
       ? fallbackSucceededIds
       : [];
-    if (effectiveImages.length > 0) {
-      const uploadResult = await uploadImagesToComposer(composer, effectiveImages);
+    let skippedAttachments = [];
+    let allAttachmentsSkipped = false;
+    let skippedReason = ACTION_FAILURE_REASONS.UNSUPPORTED;
+
+    if (effectiveAttachments.length > 0) {
+      const uploadResult = await uploadAttachmentsToComposer(
+        composer,
+        effectiveAttachments,
+        hasAttachmentProtocol
+      );
       succeededImageIds = uploadResult.succeededImageIds || [];
+      skippedAttachments = uploadResult.skippedAttachments || [];
+      allAttachmentsSkipped = Boolean(uploadResult.skipped);
+      if (uploadResult.reason) {
+        skippedReason = uploadResult.reason;
+      }
+
       if (!uploadResult.ok) {
         if (hasText) {
           const refreshedComposer = composer.isConnected ? composer : findComposerElement();
@@ -1944,6 +2521,8 @@
           reason: uploadResult.reason || ACTION_FAILURE_REASONS.INJECTION_ERROR,
           succeededImageIds,
           attemptedImageIds: failureAttemptedIds,
+          skippedAttachments,
+          includeAttachmentProtocol: hasAttachmentProtocol,
         });
         return;
       }
@@ -1957,6 +2536,8 @@
           reason: ACTION_FAILURE_REASONS.CONTROL_NOT_FOUND,
           succeededImageIds,
           attemptedImageIds: failureAttemptedIds,
+          skippedAttachments,
+          includeAttachmentProtocol: hasAttachmentProtocol,
         });
         return;
       }
@@ -1969,20 +2550,36 @@
           reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
           succeededImageIds,
           attemptedImageIds: failureAttemptedIds,
+          skippedAttachments,
+          includeAttachmentProtocol: hasAttachmentProtocol,
         });
         return;
       }
     }
 
-    if (autoSubmit === true) {
+    if (autoSubmit === true && !allAttachmentsSkipped) {
       await sleep(80);
       const activeComposer = composer.isConnected ? composer : findComposerElement();
       await triggerSendWithSettle(activeComposer, { waitForEnabledMs: 700 });
     }
 
+    if (allAttachmentsSkipped && !hasText) {
+      postActionResult(requestId, providerId, {
+        ok: true,
+        skipped: true,
+        reason: skippedReason,
+        succeededImageIds,
+        skippedAttachments,
+        includeAttachmentProtocol: true,
+      });
+      return;
+    }
+
     postActionResult(requestId, providerId, {
       ok: true,
       succeededImageIds,
+      skippedAttachments,
+      includeAttachmentProtocol: hasAttachmentProtocol || skippedAttachments.length > 0,
     });
   }
 

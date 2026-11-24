@@ -1182,5 +1182,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "已啟用的AI皆已開啟"
+  },
+  "btnAttachFilesTitle": {
+    "message": "附加圖片或文件"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "以下面板已略過文件：$1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "目前開啟的面板皆不支援所選文件格式。"
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "不支援的檔案格式：$1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "檔案內容與格式不符：$1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "單個文件大小不能超過 10MB"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "附件總大小不能超過 25MB"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "最多可附加 $1 個檔案"
+  },
+  "msgDocumentMaxCount": {
+    "message": "最多可附加 $1 個文件"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "切換檢視模式時未保留大型或二進位文件，請重新附加。"
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "請輸入訊息或附加檔案"
+  },
+  "ariaRemoveAttachment": {
+    "message": "移除 $1"
   }
 }

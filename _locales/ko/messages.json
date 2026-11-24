@@ -1188,5 +1188,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "활성화된 모든 AI가 이미 열려 있습니다"
+  },
+  "btnAttachFilesTitle": {
+    "message": "이미지 또는 문서 첨부"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "문서를 건너뛴 패널: $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "열려 있는 패널 중 첨부한 문서를 지원하는 패널이 없습니다."
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "지원하지 않는 파일 형식: $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "파일 내용이 형식과 일치하지 않습니다: $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "문서 크기는 10MB 미만이어야 합니다"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "전체 첨부 파일 크기는 25MB를 초과할 수 없습니다"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "최대 $1개의 파일을 첨부할 수 있습니다"
+  },
+  "msgDocumentMaxCount": {
+    "message": "최대 $1개의 문서를 첨부할 수 있습니다"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "보기 모드를 전환할 때 대용량 또는 바이너리 문서는 유지되지 않았습니다."
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "메시지를 입력하거나 파일을 첨부하세요"
+  },
+  "ariaRemoveAttachment": {
+    "message": "$1 제거"
   }
 }
