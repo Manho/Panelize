@@ -102,10 +102,10 @@
         <button id="prompt-library-btn" class="input-btn" title="Prompt Library">
           <span class="material-symbols-outlined">auto_awesome</span>
         </button>
-        <button id="image-upload-btn" class="input-btn" title="Upload Images">
-          <span class="material-symbols-outlined">add_photo_alternate</span>
+        <button id="image-upload-btn" class="input-btn" data-i18n-title="btnAttachFilesTitle" title="Attach images or documents" aria-label="Attach images or documents">
+          <span class="material-symbols-outlined">attach_file</span>
         </button>
-        <input type="file" id="image-file-input" accept="image/*" multiple style="display: none;">
+        <input type="file" id="image-file-input" accept="image/*,.pdf,.docx,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.tsv,.log" multiple style="display: none;">
         <div class="input-wrapper">
           <div id="image-preview-container" class="image-preview-container"></div>
           <textarea id="unified-input" placeholder="Enter your question to send to all AI providers..." rows="1"></textarea>

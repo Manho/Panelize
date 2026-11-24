@@ -1203,5 +1203,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "All enabled AIs are already open"
+  },
+  "btnAttachFilesTitle": {
+    "message": "Attach images or documents"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "Skipped documents for: $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "None of the active panels support the attached document(s)."
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "Unsupported file type: $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "File content does not match its format: $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "Document size must be less than 10MB"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "Total attachment size cannot exceed 25MB"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "Maximum $1 attachments allowed"
+  },
+  "msgDocumentMaxCount": {
+    "message": "Maximum $1 documents allowed"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "Large or binary documents were not preserved when switching view mode."
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "Please enter a message or attach a file"
+  },
+  "ariaRemoveAttachment": {
+    "message": "Remove $1"
   }
 }

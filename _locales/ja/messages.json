@@ -1188,5 +1188,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "有効な AI はすべて開いています"
+  },
+  "btnAttachFilesTitle": {
+    "message": "画像またはドキュメントを添付"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "ドキュメントをスキップしたパネル: $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "開いているパネルはいずれも添付ドキュメントに対応していません。"
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "未対応のファイル形式: $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "ファイル内容が形式と一致しません: $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "ドキュメントサイズは10MB未満にしてください"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "添付ファイルの合計サイズは25MB以下にしてください"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "添付ファイルは最大$1件までです"
+  },
+  "msgDocumentMaxCount": {
+    "message": "ドキュメントは最大$1件までです"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "表示モードの切り替え時に大きいファイルやバイナリドキュメントは保持されませんでした。"
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "メッセージを入力するかファイルを添付してください"
+  },
+  "ariaRemoveAttachment": {
+    "message": "$1 を削除"
   }
 }

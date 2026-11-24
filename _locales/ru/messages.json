@@ -1188,5 +1188,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "Все включённые ИИ уже открыты"
+  },
+  "btnAttachFilesTitle": {
+    "message": "Прикрепить изображения или документы"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "Документы пропущены для: $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "Ни одна из открытых панелей не поддерживает прикреплённые документы."
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "Неподдерживаемый тип файла: $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "Содержимое файла не соответствует его формату: $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "Размер документа не должен превышать 10 МБ"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "Общий размер вложений не должен превышать 25 МБ"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "Можно прикрепить не более $1 вложений"
+  },
+  "msgDocumentMaxCount": {
+    "message": "Можно прикрепить не более $1 документов"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "Крупные или бинарные документы не были сохранены при переключении режима просмотра."
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "Введите сообщение или прикрепите файл"
+  },
+  "ariaRemoveAttachment": {
+    "message": "Удалить $1"
   }
 }

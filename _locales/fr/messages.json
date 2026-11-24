@@ -1188,5 +1188,41 @@
   },
   "menuAllEnabledProvidersOpen": {
     "message": "Toutes les IA activées sont déjà ouvertes"
+  },
+  "btnAttachFilesTitle": {
+    "message": "Joindre des images ou des documents"
+  },
+  "msgDocumentsSkippedForPanels": {
+    "message": "Documents ignorés pour : $1"
+  },
+  "msgAllPanelsSkippedDocuments": {
+    "message": "Aucun des panneaux actifs ne prend en charge les documents joints."
+  },
+  "msgAttachmentUnsupportedType": {
+    "message": "Type de fichier non pris en charge : $1"
+  },
+  "msgAttachmentInvalidContent": {
+    "message": "Le contenu du fichier ne correspond pas à son format : $1"
+  },
+  "msgDocumentTooLarge": {
+    "message": "La taille du document doit être inférieure à 10 Mo"
+  },
+  "msgAttachmentTotalSizeExceeded": {
+    "message": "La taille totale des pièces jointes ne peut pas dépasser 25 Mo"
+  },
+  "msgAttachmentMaxCount": {
+    "message": "Maximum $1 pièces jointes autorisées"
+  },
+  "msgDocumentMaxCount": {
+    "message": "Maximum $1 documents autorisés"
+  },
+  "msgAttachmentsOmittedOnModeSwitch": {
+    "message": "Les documents volumineux ou binaires n’ont pas été conservés lors du changement de mode."
+  },
+  "msgEnterMessageOrAttachment": {
+    "message": "Veuillez saisir un message ou joindre un fichier"
+  },
+  "ariaRemoveAttachment": {
+    "message": "Supprimer $1"
   }
 }

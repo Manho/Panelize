@@ -2480,3 +2480,247 @@ html.snapshot-hide-cursor *::after {
 [data-theme="dark"] .menu-custom-ai-hint {
   color: #94a3b8;
 }
+
+/* ===== Unified Mixed Attachment Preview Bar (Images + Documents) ===== */
+.input-wrapper {
+  min-width: 0;
+}
+
+.image-preview-container {
+  gap: 6px;
+  max-height: 104px;
+  align-items: center;
+  max-width: 100%;
+}
+
+.image-preview-item {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+}
+
+.image-preview-item .remove-image {
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+}
+
+.image-preview-item .remove-image .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.image-preview-item:focus-within .remove-image,
+.image-preview-item .remove-image:focus-visible {
+  opacity: 1;
+}
+
+.attachment-doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  min-width: 128px;
+  max-width: 196px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(26, 26, 26, 0.14);
+  background: #ffffff;
+  color: #1a1a1a;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.attachment-doc-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.attachment-doc-badge--pdf {
+  background: #fdecea;
+  color: #b71c1c;
+}
+
+.attachment-doc-badge--docx {
+  background: #ebf2fe;
+  color: #1f5fd1;
+}
+
+.attachment-doc-badge--csv {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.attachment-doc-badge--text {
+  background: #eceae4;
+  color: #4a4843;
+}
+
+.attachment-doc-meta {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachment-doc-name {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-doc-size {
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: #6b6862;
+  white-space: nowrap;
+}
+
+.attachment-doc-remove {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #75726b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  opacity: 0.72;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.attachment-doc-remove .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.attachment-doc-chip:hover .attachment-doc-remove,
+.attachment-doc-chip:focus-within .attachment-doc-remove {
+  opacity: 1;
+}
+
+.attachment-doc-remove:hover {
+  background: rgba(211, 47, 47, 0.12);
+  color: #c62828;
+  opacity: 1;
+}
+
+.attachment-doc-remove:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+[data-theme="dark"] .attachment-doc-chip {
+  background: #262624;
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #eceae4;
+}
+
+[data-theme="dark"] .attachment-doc-badge--pdf {
+  background: #3f2021;
+  color: #f28b82;
+}
+
+[data-theme="dark"] .attachment-doc-badge--docx {
+  background: #1a3052;
+  color: #8ab4f8;
+}
+
+[data-theme="dark"] .attachment-doc-badge--csv {
+  background: #1c3522;
+  color: #81c995;
+}
+
+[data-theme="dark"] .attachment-doc-badge--text {
+  background: #33322f;
+  color: #d2cfc8;
+}
+
+[data-theme="dark"] .attachment-doc-size {
+  color: #a6a39c;
+}
+
+[data-theme="dark"] .attachment-doc-remove {
+  color: #a6a39c;
+}
+
+[data-theme="dark"] .attachment-doc-remove:hover {
+  background: rgba(242, 139, 130, 0.18);
+  color: #f28b82;
+}
+
+[data-theme="dark"] .attachment-doc-remove:focus-visible {
+  outline-color: #64b5f6;
+}
+
+@media (max-width: 640px) {
+  #input-bar {
+    padding: 8px 10px;
+  }
+
+  .input-container {
+    gap: 6px;
+  }
+
+  .input-btn,
+  .clear-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .input-actions {
+    gap: 6px;
+  }
+
+  .fill-btn,
+  .send-btn {
+    padding: 8px 10px;
+  }
+
+  .fill-btn .btn-text {
+    display: none;
+  }
+
+  .attachment-doc-chip {
+    min-width: 112px;
+    max-width: 156px;
+    gap: 6px;
+    padding: 0 6px;
+  }
+
+  .image-preview-item .remove-image,
+  .attachment-doc-remove {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 440px) {
+  .send-btn .btn-text {
+    display: none;
+  }
+
+  .send-status {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
