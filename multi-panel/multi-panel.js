@@ -2846,6 +2846,7 @@ export async function sendToPanel(
       ? options.fallbackImages
       : null);
   const expectedAttachmentIds = (fallbackAttachments || attachments).map(att => att.id).filter(Boolean);
+  const includeAttachmentProtocol = attachments.length > 0 || Boolean(fallbackAttachments);
 
   const waiter = waitForActionResult
     ? createPanelActionResultWaiter({
@@ -2853,7 +2854,7 @@ export async function sendToPanel(
       panel,
       requestId,
       expectedImageIds: expectedAttachmentIds,
-      expectedAttachmentIds,
+      ...(includeAttachmentProtocol ? { expectedAttachmentIds } : {}),
       action: 'fill',
       timeoutMs
     })
@@ -2876,7 +2877,7 @@ export async function sendToPanel(
       type: messageType,
       text,
       images: imagesPayload,
-      attachments: attachmentsPayload,
+      ...(includeAttachmentProtocol ? { attachments: attachmentsPayload } : {}),
       ...(fallbackImagesPayload && fallbackImagesPayload.length > 0
         ? { fallbackImages: fallbackImagesPayload }
         : {}),
@@ -2898,7 +2899,7 @@ export async function sendToPanel(
       panelId: panel.id,
       provider: panel.providerId,
       succeededImageIds: expectedAttachmentIds,
-      succeededAttachmentIds: expectedAttachmentIds
+      ...(includeAttachmentProtocol ? { succeededAttachmentIds: expectedAttachmentIds } : {})
     };
   } catch (error) {
     console.error(`Error sending to ${panel.providerId}:`, error);
@@ -2911,7 +2912,7 @@ export async function sendToPanel(
         provider: panel.providerId,
         reason: 'injection-error',
         succeededImageIds: [],
-        succeededAttachmentIds: []
+        ...(includeAttachmentProtocol ? { succeededAttachmentIds: [] } : {})
       };
   }
 }

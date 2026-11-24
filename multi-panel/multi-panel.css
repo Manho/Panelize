@@ -2700,8 +2700,8 @@ html.snapshot-hide-cursor *::after {
   }
 
   .attachment-doc-chip {
-    min-width: 112px;
-    max-width: 156px;
+    min-width: 0;
+    max-width: min(156px, 100%);
     gap: 6px;
     padding: 0 6px;
   }
@@ -2713,6 +2713,10 @@ html.snapshot-hide-cursor *::after {
 }
 
 @media (max-width: 440px) {
+  .attachment-doc-chip {
+    max-width: 100%;
+  }
+
   .send-btn .btn-text {
     display: none;
   }
