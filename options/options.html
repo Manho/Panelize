@@ -3,15 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title data-i18n="optionsPageTitle">Panelize - Settings</title>
   <link rel="stylesheet" href="../libs/material-symbols/material-symbols-outlined.css">
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1 data-i18n="headerSettingsTitle">Settings: Panelize</h1>
-      <p data-i18n="headerSettingsSubtitle">Customize your multi-AI comparison experience</p>
+    <header class="page-header">
+      <div class="page-header-brand">
+        <img class="page-header-logo" src="../icons/icon-48.png" alt="" width="36" height="36" aria-hidden="true">
+        <div class="page-header-copy">
+          <h1 data-i18n="headerSettingsTitle">Settings: Panelize</h1>
+          <p data-i18n="headerSettingsSubtitle">Customize your multi-AI comparison experience</p>
+        </div>
+      </div>
     </header>
 
     <div class="content">
@@ -65,7 +71,7 @@
       <!-- Multi-Panel Comparison -->
       <section class="section">
         <h2 class="section-title" data-i18n="sectionMultiPanel">Multi-Panel Comparison</h2>
-        <p style="font-size: 14px; color: #666; margin-bottom: 16px;" data-i18n="descMultiPanel">
+        <p class="section-description" data-i18n="descMultiPanel">
           Compare responses from multiple AI providers side by side in a full-page view
         </p>
 
@@ -346,10 +352,10 @@
         </div>
 
         <!-- Enter Key Behavior -->
-        <p style="font-size: 14px; color: #666; margin-top: 24px; margin-bottom: 8px;" data-i18n="descEnterBehavior1">
+        <p class="section-description section-description--spaced" data-i18n="descEnterBehavior1">
           Customize how Enter and modifier keys work when typing in AI provider input fields.
         </p>
-        <p style="font-size: 13px; color: #888; margin-bottom: 16px;" data-i18n-html="descEnterBehavior2">
+        <p class="section-subdescription" data-i18n-html="descEnterBehavior2">
           <strong>Applies to:</strong> ChatGPT, Claude, Gemini, Grok, DeepSeek, Kimi, Doubao, Qwen (China), Qwen (Global), Zhipu (China), Z.ai (Global), Yuanbao, Google AI Studio, and Google (AI Mode).
         </p>
 
@@ -431,28 +437,35 @@
       <!-- Prompt Library -->
       <section class="section">
         <h2 class="section-title" data-i18n="sectionPromptLibrary">Prompt Library</h2>
-        <p style="font-size: 14px; color: #666; margin-bottom: 16px;" data-i18n="descPromptLibrary">
+        <p class="section-description" data-i18n="descPromptLibrary">
           Import curated meta-prompts for AI workflows, research, coding, and analysis
         </p>
 
         <div class="library-import-card">
           <div class="library-header">
-            <h3 data-i18n="labelDefaultPromptLibrary">Default Prompt Library</h3>
+            <div class="library-title-group">
+              <span class="library-header-icon" aria-hidden="true">
+                <span class="material-symbols-outlined">auto_awesome</span>
+              </span>
+              <h3 data-i18n="labelDefaultPromptLibrary">Default Prompt Library</h3>
+            </div>
           </div>
           <p class="library-description" data-i18n="descDefaultPromptLibrary">
             Meta-prompts for prompt refinement, planning, coding, testing, research, writing, and more.
             Includes variables support for dynamic templates.
           </p>
-          <div class="btn-group">
+          <div class="btn-group library-actions-primary">
             <button class="btn btn-primary" id="import-default-library" data-i18n="btnImportDefault">Import Default Prompts</button>
             <button class="btn btn-secondary" id="import-custom-library" data-i18n="btnImportCustom">Import Custom Prompts</button>
           </div>
-          <p class="library-helper" data-i18n="descCustomPromptGuide">
-            Need help formatting custom prompts? Open the guide or download a JSON template.
-          </p>
-          <div class="btn-group">
-            <button class="btn btn-secondary" id="open-custom-prompt-guide" type="button" data-i18n="btnOpenPromptGuide">Open Guide</button>
-            <button class="btn btn-secondary" id="download-custom-prompt-template" type="button" data-i18n="btnDownloadPromptTemplate">Download Template</button>
+          <div class="library-resources">
+            <p class="library-helper" data-i18n="descCustomPromptGuide">
+              Need help formatting custom prompts? Open the guide or download a JSON template.
+            </p>
+            <div class="btn-group library-actions-secondary">
+              <button class="btn btn-ghost" id="open-custom-prompt-guide" type="button" data-i18n="btnOpenPromptGuide">Open Guide</button>
+              <button class="btn btn-ghost" id="download-custom-prompt-template" type="button" data-i18n="btnDownloadPromptTemplate">Download Template</button>
+            </div>
           </div>
           <input type="file" id="import-custom-library-file" accept=".json" style="display: none;" />
         </div>
@@ -519,9 +532,9 @@
       </section>
 
       <!-- Danger Zone -->
-      <section class="section">
-        <h2 class="section-title" style="color: #d32f2f;" data-i18n="sectionDangerZone">Danger Zone</h2>
-        <p style="font-size: 14px; color: #d32f2f; margin-bottom: 16px;" data-i18n="descDangerZone">
+      <section class="section section-danger">
+        <h2 class="section-title section-title--danger" data-i18n="sectionDangerZone">Danger Zone</h2>
+        <p class="section-description section-description--danger" data-i18n="descDangerZone">
           These actions cannot be undone. Use with caution.
         </p>
 
@@ -570,10 +583,10 @@
                data-i18n="linkDownloadLatest">Download Latest Version</a>
           </div>
 
-          <p style="font-size: 14px; color: #666; margin-bottom: 8px; margin-top: 16px;" data-i18n="descAbout1">
+          <p class="about-description" data-i18n="descAbout1">
             Panelize lets you compare multiple AI chatbots side-by-side in one window.
           </p>
-          <p style="font-size: 12px; color: #999;" data-i18n="descAbout2">
+          <p class="about-footnote" data-i18n="descAbout2">
             Built with privacy-first architecture. All data stored locally.
           </p>
 

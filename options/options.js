@@ -2580,11 +2580,16 @@ function fitSelectWidth(select) {
     (parseFloat(computedStyle.paddingRight) || 0);
   const horizontalBorder = (parseFloat(computedStyle.borderLeftWidth) || 0) +
     (parseFloat(computedStyle.borderRightWidth) || 0);
-  const safetyAllowance = 8;
+  const usesBaseSelect = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+    && CSS.supports('appearance', 'base-select');
+  // Base-select renders `::picker-icon` in normal flex flow alongside the label.
+  const pickerIconAllowance = usesBaseSelect ? 26 : 0;
+  const safetyAllowance = 10;
+  const minWidth = select.classList.contains('google-mode-select') ? 76 : 104;
 
   select.style.width = `${Math.max(
-    56,
-    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + safetyAllowance)
+    minWidth,
+    Math.ceil(measuredWidth + horizontalPadding + horizontalBorder + pickerIconAllowance + safetyAllowance)
   )}px`;
 }
 
@@ -3652,6 +3657,7 @@ function setupEventListeners() {
       const storedLayout = result.multiPanelLayout;
       const hasOption = Array.from(multiPanelLayoutSelect.options).some(option => option.value === storedLayout);
       multiPanelLayoutSelect.value = hasOption ? storedLayout : '1x3';
+      fitSelectWidth(multiPanelLayoutSelect);
     });
 
     multiPanelLayoutSelect.addEventListener('change', async (e) => {
