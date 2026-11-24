@@ -1691,70 +1691,78 @@
    * 1. remaining in-scope inputs not owned by a different form;
    * 2. document-level inputs not owned by any form;
    * 3. inputs owned by an unrelated form (e.g. a library import form).
+   * Each tier is a list of groups. In-scope tiers keep one group per composer
+   * scope in nearest-ancestor order so a closer container is never pooled with
+   * a sibling container further up the tree.
    */
   function collectFileInputTiers(composer) {
-    const tiers = [[], [], [], []];
+    const scopes = composer ? collectComposerScopes(composer) : [];
+    const scopeGroupCount = scopes.length + 1;
+    const makeScopeGroups = () => Array.from({ length: scopeGroupCount }, () => []);
+    const tiers = [makeScopeGroups(), makeScopeGroups(), [[]], [[]]];
+    const outOfScopeGroup = scopeGroupCount - 1;
     const seen = new Set();
     const composerForm = composer ? getOwningForm(composer) : null;
-    const place = (input, inScope) => {
+    const place = (input, scopeIndex) => {
       if (seen.has(input)) return;
       seen.add(input);
+      const inScope = scopeIndex !== null;
       const owner = getOwningForm(input);
       if (owner && owner !== composerForm) {
-        tiers[3].push(input);
+        tiers[3][0].push(input);
       } else if (inScope && (composerForm ? owner === composerForm : !owner)) {
-        tiers[0].push(input);
+        tiers[0][scopeIndex].push(input);
       } else if (inScope) {
-        tiers[1].push(input);
+        tiers[1][scopeIndex].push(input);
       } else if (owner && owner === composerForm) {
-        tiers[0].push(input);
+        tiers[0][outOfScopeGroup].push(input);
       } else {
-        tiers[2].push(input);
+        tiers[2][0].push(input);
       }
     };
-    if (composer) {
-      const scopes = collectComposerScopes(composer);
-      for (let i = 0; i < scopes.length; i += 1) {
-        const inputs = querySelectorAllDeep('input[type="file"]', scopes[i].node).filter(
-          isEnabledFileInput
-        );
-        for (let j = 0; j < inputs.length; j += 1) {
-          place(inputs[j], true);
-        }
+    for (let i = 0; i < scopes.length; i += 1) {
+      const inputs = querySelectorAllDeep('input[type="file"]', scopes[i].node).filter(
+        isEnabledFileInput
+      );
+      for (let j = 0; j < inputs.length; j += 1) {
+        place(inputs[j], i);
       }
     }
     const docInputs = querySelectorAllDeep('input[type="file"]', document).filter(
       isEnabledFileInput
     );
     for (let i = 0; i < docInputs.length; i += 1) {
-      place(docInputs[i], false);
+      place(docInputs[i], null);
     }
     return tiers;
   }
 
   function collectCandidateFileInputs(composer) {
-    return collectFileInputTiers(composer).flat();
+    return collectFileInputTiers(composer).flat(2);
   }
 
   function findFileInputForAttachment(composer, fileOrMeta) {
     const tiers = collectFileInputTiers(composer);
-    if (tiers.every((tier) => tier.length === 0)) {
+    if (tiers.every((tier) => tier.every((group) => group.length === 0))) {
       return { input: null, hadAnyFileInput: false };
     }
     const isDoc = isDocumentAttachment(fileOrMeta);
-    // Composer ownership wins over accept specificity: explicit-MIME preference
-    // only applies among inputs of the nearest tier that accepts the file.
+    // Composer ownership wins over accept specificity, and the nearest scope
+    // wins within a tier: explicit-MIME preference only applies among inputs
+    // of the first scope group that accepts the file.
     for (let t = 0; t < tiers.length; t += 1) {
-      const matching = tiers[t].filter((inp) => matchesInputAccept(inp, fileOrMeta));
-      if (matching.length === 0) {
-        continue;
+      for (let g = 0; g < tiers[t].length; g += 1) {
+        const matching = tiers[t][g].filter((inp) => matchesInputAccept(inp, fileOrMeta));
+        if (matching.length === 0) {
+          continue;
+        }
+        const explicitMatch = matching.find((inp) => {
+          const accept = (inp.getAttribute('accept') || '').trim();
+          if (!accept) return false;
+          return isDoc ? matchesInputAccept(inp, fileOrMeta) : IMAGE_ACCEPT_HINT_RE.test(accept);
+        });
+        return { input: explicitMatch || matching[0], hadAnyFileInput: true };
       }
-      const explicitMatch = matching.find((inp) => {
-        const accept = (inp.getAttribute('accept') || '').trim();
-        if (!accept) return false;
-        return isDoc ? matchesInputAccept(inp, fileOrMeta) : IMAGE_ACCEPT_HINT_RE.test(accept);
-      });
-      return { input: explicitMatch || matching[0], hadAnyFileInput: true };
     }
     return { input: null, hadAnyFileInput: true };
   }
@@ -2043,22 +2051,105 @@
     return entries.map((entry) => countFilenamePreviewMatches(composer, [entry.name]));
   }
 
+  function normalizeEntryName(entry) {
+    return typeof entry.name === 'string' ? entry.name.trim().toLowerCase() : '';
+  }
+
+  /**
+   * Filters candidate entries down to IDs that per-name evidence can support.
+   * Per-name evidence is a distinct-name signal, so entries sharing a basename
+   * are indistinguishable: a same-name group never receives more ACKs than the
+   * net aggregate preview increase left after unique-name ACKs.
+   */
+  function capSameNameAcknowledgments(entries, candidateIndexes, previewDelta) {
+    const nameCounts = new Map();
+    for (let i = 0; i < entries.length; i += 1) {
+      const key = normalizeEntryName(entries[i]);
+      nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+    }
+    const accepted = new Set();
+    let uniqueAcked = 0;
+    for (let k = 0; k < candidateIndexes.length; k += 1) {
+      const idx = candidateIndexes[k];
+      if (nameCounts.get(normalizeEntryName(entries[idx])) === 1) {
+        accepted.add(idx);
+        uniqueAcked += 1;
+      }
+    }
+    let remaining = Math.max(0, previewDelta - uniqueAcked);
+    for (let k = 0; k < candidateIndexes.length; k += 1) {
+      const idx = candidateIndexes[k];
+      if (accepted.has(idx) || nameCounts.get(normalizeEntryName(entries[idx])) === 1) continue;
+      if (remaining <= 0) continue;
+      accepted.add(idx);
+      remaining -= 1;
+    }
+    const ids = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      if (accepted.has(i) && typeof entries[i].id === 'string') {
+        ids.push(entries[i].id);
+      }
+    }
+    return ids;
+  }
+
   /**
    * Returns IDs of entries whose own filename preview appeared after the
    * baseline snapshot. Used for partial batches: an aggregate preview count
    * never identifies which file of the batch completed.
    */
-  function collectEntriesWithNewEvidence(composer, entries, baselineEvidence) {
+  function collectEntriesWithNewEvidence(composer, entries, baselineEvidence, baselineCount = 0) {
     const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
-    const ids = [];
+    const names = entries.map((entry) => entry.name);
+    const previewDelta = Math.max(0, inspectComposerAttachments(activeComposer, names).count - baselineCount);
+    const candidates = [];
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i];
       if (typeof entry.id !== 'string') continue;
       if (countFilenamePreviewMatches(activeComposer, [entry.name]) > (baselineEvidence[i] || 0)) {
-        ids.push(entry.id);
+        candidates.push(i);
       }
     }
-    return ids;
+    return capSameNameAcknowledgments(entries, candidates, previewDelta);
+  }
+
+  /**
+   * After a batch settles, keeps only entries still present in the final
+   * staged set: entries missing from a preserved `input.files` are dropped,
+   * and documents must show their own filename preview whenever the page
+   * renders filename previews for this batch.
+   */
+  function collectVerifiedBatchIds(composer, fileInput, entries, baselineEvidence, baselineCount) {
+    const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
+    const stagedNameCounts = new Map();
+    const stagedFiles = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
+    for (let i = 0; i < stagedFiles.length; i += 1) {
+      const key = typeof stagedFiles[i]?.name === 'string' ? stagedFiles[i].name.trim().toLowerCase() : '';
+      stagedNameCounts.set(key, (stagedNameCounts.get(key) || 0) + 1);
+    }
+    const finalEvidence = entries.map((entry) => countFilenamePreviewMatches(activeComposer, [entry.name]));
+    const hasNewEvidence = finalEvidence.map((count, i) => count > (baselineEvidence[i] || 0));
+    const pageShowsFilenames = entries.some(
+      (entry, i) => isDocumentAttachment(entry.meta) && hasNewEvidence[i]
+    );
+    const candidates = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (typeof entry.id !== 'string') continue;
+      if (stagedFiles.length > 0) {
+        const key = normalizeEntryName(entry);
+        const remaining = stagedNameCounts.get(key) || 0;
+        if (remaining <= 0) continue;
+        stagedNameCounts.set(key, remaining - 1);
+      }
+      if (pageShowsFilenames && isDocumentAttachment(entry.meta) && !hasNewEvidence[i]) {
+        continue;
+      }
+      candidates.push(i);
+    }
+    const names = entries.map((entry) => entry.name);
+    const previewDelta = Math.max(0, inspectComposerAttachments(activeComposer, names).count - baselineCount);
+    return capSameNameAcknowledgments(entries, candidates, previewDelta);
   }
 
   async function uploadEntryBatchToFileInput(composer, fileInput, groupEntries, settleTimeoutMs) {
@@ -2076,15 +2167,23 @@
       groupNames
     );
     if (settled.ok) {
-      return {
-        ok: true,
-        succeededIds: groupEntries.map((entry) => entry.id).filter((id) => typeof id === 'string'),
-      };
+      const expectedIds = groupEntries.map((entry) => entry.id).filter((id) => typeof id === 'string');
+      const verifiedIds = collectVerifiedBatchIds(
+        composer,
+        fileInput,
+        groupEntries,
+        baselineEvidence,
+        baseline
+      );
+      if (verifiedIds.length === expectedIds.length) {
+        return { ok: true, succeededIds: verifiedIds };
+      }
+      return { ok: false, reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT, succeededIds: verifiedIds };
     }
     return {
       ok: false,
       reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
-      succeededIds: collectEntriesWithNewEvidence(composer, groupEntries, baselineEvidence),
+      succeededIds: collectEntriesWithNewEvidence(composer, groupEntries, baselineEvidence, baseline),
     };
   }
 
@@ -2174,9 +2273,15 @@
           );
         }
         if (documentEntries.length > 0) {
-          // Documents go one at a time so each preview delta maps to one attachment ID.
-          steps.push(() =>
-            uploadEntriesSequentiallyToFileInput(composer, fileInput, documentEntries, settleTimeoutMs)
+          // A multiple input receives the whole document batch in one assignment:
+          // replacement-style pickers render only the latest `input.files`, so
+          // separate assignments would discard earlier documents. The batch path
+          // ACKs only entries verified in the final staged set. Single-file
+          // inputs go one at a time so each preview delta maps to one ID.
+          steps.push(
+            fileInput.multiple
+              ? () => uploadEntryBatchToFileInput(composer, fileInput, documentEntries, settleTimeoutMs)
+              : () => uploadEntriesSequentiallyToFileInput(composer, fileInput, documentEntries, settleTimeoutMs)
           );
         }
         for (let s = 0; s < steps.length; s += 1) {
@@ -2205,6 +2310,10 @@
 
     if (imageEntries.length > 0) {
       const imageBaselineEvidence = snapshotPerNameEvidence(composer, imageEntries);
+      const imageBaselineCount = inspectComposerAttachments(
+        composer,
+        imageEntries.map((entry) => entry.name)
+      ).count;
       const imageResult = await tryPasteOrDropFiles(
         composer,
         imageEntries.map((entry) => entry.file),
@@ -2227,7 +2336,12 @@
         return {
           ok: false,
           reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
-          succeededImageIds: collectEntriesWithNewEvidence(composer, imageEntries, imageBaselineEvidence),
+          succeededImageIds: collectEntriesWithNewEvidence(
+            composer,
+            imageEntries,
+            imageBaselineEvidence,
+            imageBaselineCount
+          ),
           skippedAttachments,
         };
       } else {

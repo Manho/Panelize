@@ -3775,7 +3775,39 @@
     return false;
   }
 
-  function countFilenamePreviewEvidence(root, fileName) {
+  const REJECTION_UI_SELECTOR = [
+    '[role="alert"]',
+    '[role="alertdialog"]',
+    '[role="status"]',
+    '[aria-live="assertive"]',
+    '[class*="toast"]',
+    '[class*="snackbar"]',
+    '[class*="snack-bar"]',
+    'mat-snack-bar-container',
+    'simple-snack-bar',
+  ].join(', ');
+  const REJECTION_TEXT_RE =
+    /\b(?:fail(?:ed|ure|s)?|errors?|unsupported|not supported|rejected|unable|cannot|can't|couldn't|could not|too large)\b/i;
+
+  /**
+   * True when an element is page-level rejection UI (alerts, status toasts,
+   * snackbars) or carries failure wording beyond the file name itself, so an
+   * "Upload failed: paper.pdf" banner never counts as an attachment preview.
+   */
+  function isRejectionUiElement(element, normalizedName) {
+    if (element.closest(REJECTION_UI_SELECTOR)) {
+      return true;
+    }
+    const ownText = [
+      getElementAccessibleText(element),
+      (element.getAttribute('data-file-name') || '').toLowerCase(),
+      (element.getAttribute('data-filename') || '').toLowerCase(),
+    ].join(' ');
+    const withoutName = normalizedName ? ownText.split(normalizedName).join(' ') : ownText;
+    return REJECTION_TEXT_RE.test(withoutName);
+  }
+
+  function countFilenamePreviewEvidence(root, fileName, { excludeRejectionUi = false } = {}) {
     if (!root) {
       return 0;
     }
@@ -3790,6 +3822,9 @@
       'img[alt], button, [role="button"], [aria-label], [title], [data-file-name], [data-filename], [class*="file"], [class*="attachment"], [class*="chip"], [role="listitem"]'
     ).forEach(element => {
       if (element.closest('textarea, input, [contenteditable="true"]')) {
+        return;
+      }
+      if (excludeRejectionUi && isRejectionUiElement(element, normalizedName)) {
         return;
       }
       const alt = (element.getAttribute('alt') || '').trim().toLowerCase();
@@ -4138,6 +4173,25 @@
   const KIMI_DOCUMENT_CARD_LOOSE_SELECTOR =
     `${KIMI_DOCUMENT_CARD_SELECTOR}, [class*="file-card"], [class*="file-item"], [class*="attachment-item"]`;
 
+  /**
+   * True for list/container wrappers around document cards. A wrapper inherits
+   * its children's filenames through textContent and must never be counted as
+   * a card itself.
+   */
+  function isKimiCardContainer(element) {
+    if (!element || typeof element.matches !== 'function') {
+      return false;
+    }
+    if (element.matches('[role="list"]')) {
+      return true;
+    }
+    const classes = Array.from(element.classList || []);
+    if (classes.some(cls => /(?:^|[-_])list$/i.test(cls))) {
+      return true;
+    }
+    return Boolean(element.querySelector(KIMI_DOCUMENT_CARD_SELECTOR));
+  }
+
   function hasKimiPendingOrErrorClass(element) {
     const cls = String(element?.className || '').toLowerCase();
     return cls.includes('loading') || cls.includes('uploading') || cls.includes('error') || cls.includes('fail');
@@ -4156,6 +4210,9 @@
     let owner = element;
     let parent = element.parentElement;
     while (parent && parent !== composer && composer.contains(parent)) {
+      if (isKimiCardContainer(parent)) {
+        break;
+      }
       if (parent.matches(KIMI_DOCUMENT_CARD_LOOSE_SELECTOR)) {
         owner = parent;
       }
@@ -4180,11 +4237,15 @@
     }
     const healthyCards = new Set();
     composer.querySelectorAll(KIMI_DOCUMENT_CARD_LOOSE_SELECTOR).forEach(el => {
-      if (el.matches('.image-thumbnail') || isInsideKimiPendingOrErrorCard(el, composer)) {
+      if (
+        el.matches('.image-thumbnail') ||
+        isKimiCardContainer(el) ||
+        isInsideKimiPendingOrErrorCard(el, composer)
+      ) {
         return;
       }
       const card = resolveKimiDocumentCard(el, composer);
-      if (!card.matches('.image-thumbnail')) {
+      if (!card.matches('.image-thumbnail') && !isKimiCardContainer(card)) {
         healthyCards.add(card);
       }
     });
@@ -4203,7 +4264,7 @@
     // Count each owning card once and ignore anything under a pending/error card.
     const evidenceCards = new Set(healthyCards);
     composer.querySelectorAll('[data-file-name], [data-filename], [title], [aria-label]').forEach(el => {
-      if (isInsideKimiPendingOrErrorCard(el, composer)) {
+      if (isKimiCardContainer(el) || isInsideKimiPendingOrErrorCard(el, composer)) {
         return;
       }
       const raw = (
@@ -4214,7 +4275,10 @@
         ''
       ).trim().toLowerCase();
       if (raw.includes(normalized)) {
-        evidenceCards.add(resolveKimiDocumentCard(el, composer));
+        const card = resolveKimiDocumentCard(el, composer);
+        if (!isKimiCardContainer(card)) {
+          evidenceCards.add(card);
+        }
       }
     });
     return evidenceCards.size;
@@ -4947,14 +5011,17 @@
   /**
    * Dispatches one drop sequence and resolves true only after new filename
    * preview evidence for this document appears, so a drop that no page handler
-   * consumed is never acknowledged as an upload.
+   * consumed is never acknowledged as an upload. Alerts, toasts and other
+   * rejection UI never count as preview evidence.
    */
   async function dropDocumentAndConfirmPreview(target, file, attachmentData) {
     const fileName = attachmentData?.name || file?.name || '';
-    const previousCount = countFilenamePreviewEvidence(document, fileName);
+    const countEvidence = () =>
+      countFilenamePreviewEvidence(document, fileName, { excludeRejectionUi: true });
+    const previousCount = countEvidence();
     dispatchFileDragEvents(target, file);
     return waitForPreviewIncrease(
-      () => countFilenamePreviewEvidence(document, fileName),
+      countEvidence,
       previousCount,
       getPreviewTimeoutMs(attachmentData)
     );

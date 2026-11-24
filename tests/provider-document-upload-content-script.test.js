@@ -257,6 +257,46 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     );
   });
 
+  it('Gemini: never counts a page-level "Upload failed" alert as a document preview', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <div class="input-area">
+        <div id="gemini-uploads"></div>
+        <div class="ql-editor" contenteditable="true"></div>
+      </div>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const dropSpy = vi.fn();
+    editor.addEventListener('drop', (e) => {
+      const name = e.dataTransfer?.files?.[0]?.name;
+      dropSpy(name);
+      const alert = document.createElement('div');
+      alert.setAttribute('role', 'alert');
+      alert.setAttribute('aria-label', `Upload failed: ${name}`);
+      alert.textContent = `Upload failed: ${name}`;
+      document.body.append(alert);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-pdf-drop-alert' });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(dropSpy).toHaveBeenCalledTimes(1);
+    expect(window.parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'gemini-pdf-drop-alert', status: 'succeeded' }),
+      EXTENSION_ORIGIN
+    );
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'gemini-pdf-drop-alert',
+        provider: 'gemini',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
   it('Gemini: prefers real file input for documents when present', async () => {
     window.happyDOM.setURL('https://gemini.google.com/app');
     document.body.innerHTML = `
@@ -406,6 +446,67 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         status: 'failed',
         reason: 'preview-timeout',
         succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Kimi: never counts a .file-card-list wrapper around an errored card as a completed card', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    document.body.innerHTML = `
+      <div id="chat-box">
+        <div class="chat-editor">
+          <div class="chat-input-editor" contenteditable="true"></div>
+          <input class="hidden-input" type="file" multiple />
+          <div id="kimi-previews"></div>
+        </div>
+      </div>
+    `;
+    const fileInput = document.querySelector('input.hidden-input');
+    let nextState = 'error';
+    fileInput.addEventListener('change', () => {
+      const card = document.createElement('div');
+      card.className = `file-card ${nextState}`;
+      const title = document.createElement('div');
+      title.className = 'file-card-title';
+      title.title = fileInput.files[0].name;
+      title.textContent = fileInput.files[0].name;
+      card.append(title);
+      const list = document.createElement('div');
+      list.className = 'file-card-list';
+      list.append(card);
+      document.getElementById('kimi-previews').append(list);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'kimi-pdf-error-list' });
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(window.parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'kimi-pdf-error-list', status: 'succeeded' }),
+      EXTENSION_ORIGIN
+    );
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'kimi-pdf-error-list',
+        provider: 'kimi',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+
+    // A successful card inside the same list wrapper is still counted.
+    document.getElementById('kimi-previews').replaceChildren();
+    window.parent.postMessage.mockClear();
+    nextState = 'success';
+    dispatchDocFill({ attachments: [makePdfAttachment('doc-pdf-2', 'other.pdf')], requestId: 'kimi-pdf-success-list' });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'kimi-pdf-success-list',
+        provider: 'kimi',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-2'],
       }),
       EXTENSION_ORIGIN
     );
@@ -774,6 +875,53 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     expect(window.parent.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: 'aistudio-pdf-drop-unhandled',
+        provider: 'aistudio',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Google AI Studio: never counts an "Upload failed" alert or failure banner as a document preview', async () => {
+    window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat');
+    document.body.innerHTML = `
+      <ms-prompt-box>
+        <div id="aistudio-chunks"></div>
+        <div class="prompt-box-container" msfilecopypaste>
+          <textarea formcontrolname="promptText"></textarea>
+        </div>
+      </ms-prompt-box>
+    `;
+    const dropTarget = document.querySelector('[msfilecopypaste]');
+    const dropped = [];
+    dropTarget.addEventListener('drop', (e) => {
+      const name = e.dataTransfer?.files?.[0]?.name;
+      dropped.push(name);
+      const alert = document.createElement('div');
+      alert.setAttribute('role', 'alert');
+      alert.textContent = `Upload failed: ${name}`;
+      document.body.append(alert);
+      // A banner without an alert role still carries failure wording.
+      const banner = document.createElement('div');
+      banner.className = 'upload-banner';
+      banner.setAttribute('title', `Upload failed: ${name}`);
+      banner.textContent = `Upload failed: ${name}`;
+      document.getElementById('aistudio-chunks').append(banner);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'aistudio-pdf-drop-alert' });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(dropped).toEqual(['paper.pdf']);
+    expect(window.parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'aistudio-pdf-drop-alert', status: 'succeeded' }),
+      EXTENSION_ORIGIN
+    );
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'aistudio-pdf-drop-alert',
         provider: 'aistudio',
         status: 'failed',
         reason: 'preview-timeout',
