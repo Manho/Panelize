@@ -5,6 +5,7 @@ import {
   getProviderCompanionCookieOrigins,
   getProviderDescriptor,
   getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain,
   hasProviderDescriptor,
   listProviderDescriptors
 } from '../modules/provider-registry.js';
@@ -375,6 +376,70 @@ function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) 
   return origins.filter(
     (pattern) => !usedList.some((usedPattern) => originPatternCovers(pattern, usedPattern))
   );
+}
+
+function getCandidateParentWildcardOrigins(origin) {
+  if (typeof origin !== 'string' || origin.length === 0) {
+    return [];
+  }
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return [];
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return [];
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  const parentDomain =
+    getSafeParentCookieDomain(hostname) ||
+    (getSafeParentCookieDomain(`sub.${hostname}`) === hostname ? hostname : null);
+  if (!parentDomain) {
+    return [];
+  }
+  return [`https://*.${parentDomain}/*`, `http://*.${parentDomain}/*`];
+}
+
+async function filterGrantedPermissionOrigins(origins) {
+  if (!Array.isArray(origins) || origins.length === 0 || !chrome?.permissions?.contains) {
+    return [];
+  }
+  const granted = [];
+  for (const pattern of origins) {
+    const hasGrant = await chrome.permissions.contains({ origins: [pattern] }).catch(() => false);
+    if (hasGrant) {
+      granted.push(pattern);
+    }
+  }
+  return granted;
+}
+
+async function resolvePermissionOriginsToRevoke(
+  origins,
+  { origin = null, excludeProviderId = null } = {}
+) {
+  const unusedDirectOrigins = getUnusedPermissionOrigins(origins, { excludeProviderId });
+  const originStillUsed = Boolean(
+    origin && isOriginUsedByAnyProvider(origin, { excludeProviderId })
+  );
+  const resolved = originStillUsed
+    ? await filterGrantedPermissionOrigins(unusedDirectOrigins)
+    : [...unusedDirectOrigins];
+
+  const candidateWildcards = getUnusedPermissionOrigins(
+    getCandidateParentWildcardOrigins(origin).filter((pattern) => !resolved.includes(pattern)),
+    { excludeProviderId }
+  );
+  if (candidateWildcards.length > 0) {
+    const grantedWildcards = await filterGrantedPermissionOrigins(candidateWildcards);
+    for (const pattern of grantedWildcards) {
+      if (!resolved.includes(pattern)) {
+        resolved.push(pattern);
+      }
+    }
+  }
+  return resolved;
 }
 
 async function withTemporaryOriginStripSessionRule(origin, fn) {
@@ -2047,10 +2112,11 @@ async function handleInlineEditSubmit(event, inlineState) {
       if (
         previousOrigin &&
         previousOrigin !== urlCheck.origin &&
-        !isOriginUsedByAnyProvider(previousOrigin) &&
         chrome?.permissions?.remove
       ) {
-        const originsToRevoke = getUnusedPermissionOrigins(previousPermissionOrigins);
+        const originsToRevoke = await resolvePermissionOriginsToRevoke(previousPermissionOrigins, {
+          origin: previousOrigin
+        });
         if (originsToRevoke.length > 0) {
           await chrome.permissions.remove({ origins: originsToRevoke }).catch((error) => {
             console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
@@ -2452,8 +2518,10 @@ export async function deleteCustomProviderEntry(providerId) {
   await chrome.storage.sync.set(syncUpdates);
   await requestOptionalProviderAccessSync();
 
-  if (origin && !isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
-    const originsToRevoke = getUnusedPermissionOrigins(removedPermissionOrigins);
+  if (origin && chrome?.permissions?.remove) {
+    const originsToRevoke = await resolvePermissionOriginsToRevoke(removedPermissionOrigins, {
+      origin
+    });
     if (originsToRevoke.length > 0) {
       await chrome.permissions.remove({ origins: originsToRevoke }).catch((error) => {
         console.warn(`Failed to revoke permission for ${origin}:`, error);

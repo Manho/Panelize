@@ -357,7 +357,8 @@ describe('modules/embedded-frame-cookies.js', () => {
     expect(getSafeParentCookieDomain('deep.sub.xiaomimimo.com')).toBe('xiaomimimo.com');
     expect(getSafeParentCookieDomain('AISTUDIO.XIAOMIMIMO.COM')).toBe('xiaomimimo.com');
 
-    // Multi-part public suffixes (eTLD+1 requires 3 labels)
+    // Multi-part public suffixes (eTLD+1 requires 3 labels), including generic
+    // second-level domains under any 2-letter ccTLD such as com.co.
     expect(getSafeParentCookieDomain('app.example.co.uk')).toBe('example.co.uk');
     expect(getSafeParentCookieDomain('studio.corp.com.cn')).toBe('corp.com.cn');
     expect(getSafeParentCookieDomain('a.b.corp.gov.cn')).toBe('corp.gov.cn');
@@ -369,15 +370,44 @@ describe('modules/embedded-frame-cookies.js', () => {
     expect(getSafeParentCookieDomain('chat.example.org.cn')).toBe('example.org.cn');
     expect(getSafeParentCookieDomain('chat.example.com.hk')).toBe('example.com.hk');
     expect(getSafeParentCookieDomain('chat.example.com.tw')).toBe('example.com.tw');
+    expect(getSafeParentCookieDomain('app.foo.com.co')).toBe('foo.com.co');
+    expect(getSafeParentCookieDomain('chat.example.ne.jp')).toBe('example.ne.jp');
+    expect(getSafeParentCookieDomain('chat.example.org.tw')).toBe('example.org.tw');
+    expect(getSafeParentCookieDomain('chat.example.com.br')).toBe('example.com.br');
+    expect(getSafeParentCookieDomain('chat.example.com.mx')).toBe('example.com.mx');
 
-    // Apex domains (must not broaden)
+    // Apex domains (must not broaden), including generic ccTLD 2nd-level suffixes
     expect(getSafeParentCookieDomain('chatglm.cn')).toBeNull();
     expect(getSafeParentCookieDomain('xiaomimimo.com')).toBeNull();
     expect(getSafeParentCookieDomain('example.co.uk')).toBeNull();
     expect(getSafeParentCookieDomain('corp.com.cn')).toBeNull();
+    expect(getSafeParentCookieDomain('foo.com.co')).toBeNull();
+    expect(getSafeParentCookieDomain('foo.ne.jp')).toBeNull();
+    expect(getSafeParentCookieDomain('foo.org.tw')).toBeNull();
 
-    // Shared-hosting public suffixes (must never broaden)
+    // Shared-hosting / private public suffixes (must never broaden)
     for (const host of [
+      'myblog.blogspot.com',
+      'sub.myblog.blogspot.com',
+      'myblog.blogspot.co.uk',
+      'myblog.blogspot.jp',
+      'myblog.blogspot.com.br',
+      'foo.eu.org',
+      'sub.foo.eu.org',
+      'shop.myshopify.com',
+      'site.wordpress.com',
+      'news.substack.com',
+      'blog.tumblr.com',
+      'site.webflow.io',
+      'app.replit.app',
+      'app.repl.co',
+      'app.deno.dev',
+      'app.fly.dev',
+      'app.railway.app',
+      'app.streamlit.app',
+      'demo.gradio.live',
+      'demo.ngrok-free.app',
+      'demo.trycloudflare.com',
       'foo.github.io',
       'sub.foo.github.io',
       'foo.pages.dev',

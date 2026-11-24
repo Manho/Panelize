@@ -235,41 +235,32 @@ const LOCAL_OR_INTERNAL_TLDS = new Set([
   'invalid'
 ]);
 
-// Common 2-label public suffixes where eTLD+1 requires 3 labels (e.g. example.co.uk).
+// Generic second-level labels under any 2-letter ccTLD (e.g. com.co, com.cn,
+// co.uk, ne.jp, org.tw, com.br, com.mx) where eTLD+1 requires 3 labels.
+const GENERIC_CCTLD_SECOND_LEVEL_PATTERN =
+  /^(?:com|co|org|or|net|ne|gov|go|edu|ed|ac|ad|mil|nom|sch|gen|ind|web|id|biz|info|gob|nic|ltd|plc|me)\.[a-z]{2}$/;
+
+// Additional non-generic 2-label ccTLD public suffixes where eTLD+1 requires 3 labels.
 const MULTI_PART_PUBLIC_SUFFIXES = new Set([
-  'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn', 'mil.cn',
-  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'net.uk', 'ltd.uk', 'plc.uk',
-  'co.jp', 'ne.jp', 'or.jp', 'go.jp', 'ac.jp', 'ed.jp', 'gr.jp', 'lg.jp',
-  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'asn.au', 'id.au',
-  'com.hk', 'org.hk', 'edu.hk', 'gov.hk', 'net.hk', 'idv.hk',
-  'com.tw', 'org.tw', 'edu.tw', 'gov.tw', 'net.tw', 'idv.tw',
-  'co.kr', 'or.kr', 'ne.kr', 'go.kr', 'ac.kr', 're.kr',
-  'com.sg', 'org.sg', 'edu.sg', 'gov.sg', 'net.sg',
-  'co.in', 'org.in', 'net.in', 'gov.in', 'ac.in', 'edu.in', 'res.in',
-  'com.br', 'org.br', 'net.br', 'gov.br', 'edu.br',
-  'co.nz', 'org.nz', 'net.nz', 'govt.nz', 'ac.nz',
-  'com.mx', 'org.mx', 'gob.mx', 'edu.mx',
-  'co.za', 'org.za', 'gov.za', 'ac.za',
-  'co.il', 'org.il', 'gov.il', 'ac.il',
-  'co.id', 'or.id', 'go.id', 'ac.id',
-  'com.my', 'org.my', 'gov.my', 'edu.my',
-  'com.tr', 'org.tr', 'gov.tr', 'edu.tr',
-  'com.ar', 'org.ar', 'gov.ar', 'edu.ar',
-  'com.pl', 'org.pl', 'net.pl', 'gov.pl',
-  'com.ua', 'org.ua', 'net.ua', 'gov.ua',
-  'com.ru', 'org.ru', 'net.ru',
-  'com.vn', 'org.vn', 'gov.vn', 'edu.vn',
-  'co.th', 'or.th', 'go.th', 'ac.th',
-  'com.ph', 'org.ph', 'gov.ph', 'edu.ph',
-  'com.ng', 'org.ng', 'gov.ng', 'edu.ng',
-  'com.eg', 'org.eg', 'gov.eg', 'edu.eg',
-  'com.sa', 'org.sa', 'gov.sa', 'edu.sa',
-  'eu.org'
+  'gr.jp', 'lg.jp',
+  'asn.au',
+  'idv.hk',
+  'idv.tw',
+  're.kr',
+  'res.in',
+  'govt.nz'
 ]);
 
-// Multi-tenant shared hosting and cloud public suffixes that must never be
+// Multi-tenant shared hosting and private public suffixes that must never be
 // broadened to a parent wildcard cookie scope.
 const SHARED_HOSTING_PUBLIC_SUFFIXES = [
+  'blogspot.com',
+  'eu.org',
+  'myshopify.com',
+  'wordpress.com',
+  'substack.com',
+  'tumblr.com',
+  'webflow.io',
   'github.io',
   'gitlab.io',
   'bitbucket.io',
@@ -294,6 +285,8 @@ const SHARED_HOSTING_PUBLIC_SUFFIXES = [
   'repl.co',
   'glitch.me',
   'deno.dev',
+  'streamlit.app',
+  'gradio.live',
   'run.app',
   'r2.dev',
   'ngrok.io',
@@ -335,13 +328,22 @@ export function getSafeParentCookieDomain(hostname) {
     }
   }
   const lastTwo = labels.slice(-2).join('.');
-  if (MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo)) {
+  const isMultiPartSuffix =
+    MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo) || GENERIC_CCTLD_SECOND_LEVEL_PATTERN.test(lastTwo);
+  let candidateParent;
+  if (isMultiPartSuffix) {
     if (labels.length <= 3) {
       return null;
     }
-    return labels.slice(-3).join('.');
+    candidateParent = labels.slice(-3).join('.');
+  } else {
+    candidateParent = lastTwo;
   }
-  return lastTwo;
+  // Fail closed for country-specific Blogger/Blogspot public suffixes (blogspot.*).
+  if (candidateParent.startsWith('blogspot.')) {
+    return null;
+  }
+  return candidateParent;
 }
 
 /**

@@ -1015,6 +1015,85 @@ describe('B3.2 custom web providers in Options', () => {
     expect(chrome.permissions.remove).toHaveBeenCalledWith({
       origins: ['https://chat.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*'],
     });
+    expect(grantedOrigins.has('https://*.xiaomimimo.com/*')).toBe(true);
+
+    // 4) Delete MiMo API (the final sibling) -> must revoke BOTH its exact origin
+    //    AND the retained https://*.xiaomimimo.com/* wildcard so nothing leaks.
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(mimoApiRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://api.xiaomimimo.com/*', 'https://*.xiaomimimo.com/*'],
+    });
+    expect(grantedOrigins.has('https://api.xiaomimimo.com/*')).toBe(false);
+    expect(grantedOrigins.has('https://*.xiaomimimo.com/*')).toBe(false);
+    expect(grantedOrigins.has('http://*.xiaomimimo.com/*')).toBe(false);
+  });
+
+  it('does not leak a web provider parent wildcard after deleting both the web provider and an exact-host API sibling', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const webRecord = {
+      id: 'custom-4444444444',
+      name: 'Example Studio Web',
+      url: 'https://aistudio.example.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+    const sameHostApiRecord = {
+      id: 'custom-5555555555',
+      kind: 'api',
+      name: 'Example Studio API',
+      endpointUrl: 'https://aistudio.example.com/v1/chat/completions',
+      model: 'example-model',
+      hasApiKey: false,
+      frameRuleId: 10001,
+      createdAt: 1700000001000,
+    };
+
+    const { grantedSet } = installChromeEnv({
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [webRecord, sameHostApiRecord],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', webRecord.id, sameHostApiRecord.id],
+      },
+      grantedOrigins: [
+        'https://aistudio.example.com/*',
+        'https://*.example.com/*',
+        'http://*.example.com/*',
+      ],
+    });
+    chrome.runtime.sendMessage.mockResolvedValue({ success: true });
+
+    const optionsMod = await import('../options/options.js');
+    await vi.waitFor(() => {
+      expect(document.querySelector(`[data-provider-id="${webRecord.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`[data-provider-id="${sameHostApiRecord.id}"]`)).not.toBeNull();
+    });
+
+    // Step 1: Delete web provider while same-host API sibling remains ->
+    // revokes unused http://*.example.com/* immediately while retaining exact origin and https://*.example.com/* for API sibling.
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(webRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['http://*.example.com/*'],
+    });
+    expect(grantedSet.has('https://aistudio.example.com/*')).toBe(true);
+    expect(grantedSet.has('https://*.example.com/*')).toBe(true);
+    expect(grantedSet.has('http://*.example.com/*')).toBe(false);
+
+    // Step 2: Delete same-host API sibling -> revokes BOTH exact origin AND retained https://*.example.com/* wildcard.
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(sameHostApiRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://aistudio.example.com/*', 'https://*.example.com/*'],
+    });
+    expect(grantedSet.has('https://aistudio.example.com/*')).toBe(false);
+    expect(grantedSet.has('https://*.example.com/*')).toBe(false);
+    expect(grantedSet.has('http://*.example.com/*')).toBe(false);
   });
 
   it('lets legacy HTTPS-only Zhipu users opt into companion http://chatglm.cn/* from the provider toggle while keeping Zhipu enabled if declined', async () => {
