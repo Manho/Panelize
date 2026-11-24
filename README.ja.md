@@ -211,6 +211,12 @@ Panelize は、1つのプロンプトを ChatGPT、Claude、Gemini、Grok、Deep
 
 ---
 
+## サポート
+
+Panelize は無料でオープンソースのプロジェクトです。お役に立ちましたら、[コーヒーをおごる ↗](https://www.creem.io/product/prod_251L781OFoY218MIE84jx1) から継続的な開発をご支援いただけます。
+
+---
+
 ## License
 
 MIT License。詳細は [LICENSE](LICENSE) を参照してください。

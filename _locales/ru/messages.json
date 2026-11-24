@@ -275,6 +275,9 @@
   "linkDownloadLatest": {
     "message": "Скачать последнюю версию"
   },
+  "linkSupportPanelize": {
+    "message": "Угостить кофе ↗"
+  },
   "descAbout1": {
     "message": "Panelize предоставляет быстрый доступ к нескольким ИИ-помощникам в одной удобной боковой панели."
   },

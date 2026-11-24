@@ -275,6 +275,9 @@
   "linkDownloadLatest": {
     "message": "下载最新版本"
   },
+  "linkSupportPanelize": {
+    "message": "请作者喝杯咖啡 ↗"
+  },
   "descAbout1": {
     "message": "Panelize 让您在一个窗口中并排比较多个 AI 聊天机器人。"
   },

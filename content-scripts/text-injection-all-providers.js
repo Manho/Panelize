@@ -298,6 +298,7 @@
   const SEND_BUTTON_SELECTORS = {
     chatgpt: [
       'button[data-testid="send-button"]',
+      'button[data-testid="fruitjuice-send-button"]',
       'button[aria-label="Send prompt"]',
       'button[aria-label="Send message"]',
       'button[aria-label="Send"]',
@@ -836,8 +837,12 @@
         return;
       }
 
+      const previousUrl = lastReportedUrl;
       lastReportedUrl = currentUrl;
       postProviderLocation();
+      if (previousUrl && detectProvider() === 'chatgpt') {
+        handleChatgptRouteChange(previousUrl, currentUrl);
+      }
     };
 
     const wrapHistoryMethod = (methodName) => {
@@ -1381,8 +1386,10 @@
     }));
   }
 
-  function clearRichTextInput(provider, element) {
-    element.focus();
+  function clearRichTextInput(provider, element, { focus = true } = {}) {
+    if (focus !== false) {
+      element.focus();
+    }
 
     if (provider !== 'kimi' && provider !== 'doubao') {
       element.innerHTML = '';
@@ -1857,6 +1864,13 @@
           
           // Check if element or its parent is disabled
           if (isProviderSendControlEnabled(provider, targetElement)) {
+            const chatgptCandidateText = provider === 'chatgpt'
+              ? readChatgptEditorText(findProviderInput('chatgpt'))
+              : '';
+            const chatgptStartHref = provider === 'chatgpt' ? window.location.href : '';
+            const chatgptWasBusyBeforeSend = provider === 'chatgpt'
+              ? Boolean(findChatgptBusyButton())
+              : false;
             console.log('[Text Injection] Clicking send button:', selector);
             if (provider === 'chatglm') {
               // ChatGLM submits from its mousedown handler; HTMLElement.click() skips it.
@@ -1869,6 +1883,11 @@
               }));
             } else {
               targetElement.click();
+            }
+            if (provider === 'chatgpt' && chatgptCandidateText.trim().length > 0) {
+              confirmAndRecordChatgptSend(chatgptCandidateText, chatgptStartHref, {
+                wasBusyBeforeSend: chatgptWasBusyBeforeSend
+              });
             }
             return true;
           } else {
@@ -2204,15 +2223,191 @@
   }
 
   // ChatGPT persists the new-chat composer draft (it survives the New chat button,
-  // reloads, and is restored with the last sent prompt), so a Multi-Panel New Chat
-  // must clear it explicitly. The composer re-renders after navigation and may
-  // restore the draft late, so clear a few times, stopping once the user types.
-  const CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS = [0, 250, 600, 1200, 2000];
+  // reloads, and is restored with the last sent prompt), so both Multi-Panel New
+  // Chat and post-send reloads must clear it explicitly. The composer re-renders
+  // after navigation and may restore the draft late, so clear across a short
+  // hydration window, stopping once the user types.
+  const CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS = [0, 150, 400, 900, 1800, 3500];
   const CHATGPT_NEW_CHAT_MOUNT_POLL_MS = 250;
   const CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY = 'panelize:chatgpt-pending-new-chat-clear';
   const CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS = 15000;
+  const CHATGPT_SENT_DRAFTS_KEY = 'panelize:chatgpt-sent-drafts';
+  const CHATGPT_SENT_DRAFTS_MAX = 20;
+  const CHATGPT_SENT_DRAFTS_TTL_MS = 24 * 60 * 60 * 1000;
+  const CHATGPT_RELOAD_CLEAR_WINDOW_MS = 15000;
+  const CHATGPT_SEND_CONFIRM_POLL_MS = 150;
+  const CHATGPT_SEND_CONFIRM_MAX_ATTEMPTS = 10;
+  const CHATGPT_NON_EDITING_KEYS = new Set([
+    'Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock',
+    'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+    'Home', 'End', 'PageUp', 'PageDown', 'ContextMenu', 'Pause', 'PrintScreen'
+  ]);
   let chatgptNewChatClearTimerIds = [];
   let chatgptNewChatMountObserver = null;
+  let chatgptActiveClearMatchSentOnly = false;
+
+  function isEmbeddedChatgptFrame() {
+    return window.self !== window.top && detectProvider() === 'chatgpt';
+  }
+
+  function isChatgptHomePath(pathname = window.location?.pathname || '') {
+    return pathname === '' || pathname === '/';
+  }
+
+  function normalizeChatgptDraftText(text) {
+    if (typeof text !== 'string') {
+      return '';
+    }
+    return text.replace(/\r\n?/g, '\n').trim();
+  }
+
+  function readChatgptEditorText(editor) {
+    if (!editor) {
+      return '';
+    }
+    if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+      return editor.value || '';
+    }
+    const blockChildren = Array.from(editor.children || []).filter(
+      child => child.tagName === 'P' || child.tagName === 'DIV'
+    );
+    if (blockChildren.length > 0) {
+      return blockChildren
+        .map(block => {
+          const clone = block.cloneNode(true);
+          clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+          return (clone.textContent || '').replace(/\n$/, '');
+        })
+        .join('\n');
+    }
+    return editor.textContent || '';
+  }
+
+  function getChatgptDraftStorages() {
+    const storages = [];
+    const isTemporaryChat =
+      new URLSearchParams(window.location?.search || '').get('temporary-chat') === 'true';
+    if (!isTemporaryChat) {
+      try {
+        if (window.localStorage) storages.push(window.localStorage);
+      } catch (error) {
+        // Ignore restricted storage contexts.
+      }
+    }
+    try {
+      if (window.sessionStorage) storages.push(window.sessionStorage);
+    } catch (error) {
+      // Ignore restricted storage contexts.
+    }
+    return storages;
+  }
+
+  function readSentChatgptDrafts() {
+    const now = Date.now();
+    const seen = new Set();
+    const entries = [];
+    for (const storage of getChatgptDraftStorages()) {
+      let raw = null;
+      try {
+        raw = storage.getItem(CHATGPT_SENT_DRAFTS_KEY);
+      } catch (error) {
+        continue;
+      }
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) continue;
+        for (const item of parsed) {
+          const text = normalizeChatgptDraftText(item?.text);
+          const at = Number(item?.at);
+          if (!text || !Number.isFinite(at) || now - at > CHATGPT_SENT_DRAFTS_TTL_MS || seen.has(text)) {
+            continue;
+          }
+          seen.add(text);
+          entries.push({ text, at });
+        }
+      } catch (error) {
+        // Ignore malformed storage data.
+      }
+    }
+    entries.sort((a, b) => b.at - a.at);
+    return entries.slice(0, CHATGPT_SENT_DRAFTS_MAX);
+  }
+
+  function recordSentChatgptDraft(rawText) {
+    const text = normalizeChatgptDraftText(rawText);
+    if (!text) {
+      return;
+    }
+    const next = [
+      { text, at: Date.now() },
+      ...readSentChatgptDrafts().filter(entry => entry.text !== text)
+    ].slice(0, CHATGPT_SENT_DRAFTS_MAX);
+    const serialized = JSON.stringify(next);
+    for (const storage of getChatgptDraftStorages()) {
+      try {
+        storage.setItem(CHATGPT_SENT_DRAFTS_KEY, serialized);
+        break;
+      } catch (error) {
+        // Fall through to the next available storage backend.
+      }
+    }
+  }
+
+  function isRecordedSentChatgptDraft(rawText) {
+    const normalized = normalizeChatgptDraftText(rawText);
+    if (!normalized) {
+      return false;
+    }
+    return readSentChatgptDrafts().some(entry => entry.text === normalized);
+  }
+
+  function confirmAndRecordChatgptSend(
+    candidateText,
+    startHref = window.location.href,
+    { wasBusyBeforeSend = false } = {}
+  ) {
+    if (!isEmbeddedChatgptFrame()) {
+      return;
+    }
+    const normalized = normalizeChatgptDraftText(candidateText);
+    if (!normalized) {
+      return;
+    }
+
+    const isConfirmedSent = () => {
+      const editor = findProviderInput('chatgpt');
+      const current = normalizeChatgptDraftText(readChatgptEditorText(editor));
+      if (!current) {
+        return true;
+      }
+      if (!wasBusyBeforeSend && findChatgptBusyButton()) {
+        return true;
+      }
+      if (window.location.href !== startHref && !isChatgptHomePath()) {
+        return true;
+      }
+      return false;
+    };
+
+    if (isConfirmedSent()) {
+      recordSentChatgptDraft(normalized);
+      return;
+    }
+
+    let attempts = 0;
+    const poll = () => {
+      attempts += 1;
+      if (isConfirmedSent()) {
+        recordSentChatgptDraft(normalized);
+        return;
+      }
+      if (attempts < CHATGPT_SEND_CONFIRM_MAX_ATTEMPTS) {
+        setTimeout(poll, CHATGPT_SEND_CONFIRM_POLL_MS);
+      }
+    };
+    setTimeout(poll, CHATGPT_SEND_CONFIRM_POLL_MS);
+  }
 
   function clearPendingChatgptNewChatComposerClearMarker() {
     try {
@@ -2230,21 +2425,26 @@
     }
   }
 
-  function clearChatgptComposerDraftOnce() {
+  function clearChatgptComposerDraftOnce({ matchSentOnly = false, focus = true } = {}) {
     const editor = findProviderInput('chatgpt');
     if (!editor) {
       return false;
     }
-    const currentText = editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT'
-      ? (editor.value || '')
-      : (editor.textContent || '');
+    const currentText = readChatgptEditorText(editor);
     if (currentText.trim().length > 0) {
+      if (matchSentOnly && !isRecordedSentChatgptDraft(currentText)) {
+        return true;
+      }
       if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
         setFormControlValue(editor, '');
       } else {
-        clearRichTextInput('chatgpt', editor);
+        clearRichTextInput('chatgpt', editor, { focus });
       }
-      console.log('[Text Injection] Cleared persisted ChatGPT draft after new chat');
+      console.log(
+        matchSentOnly
+          ? '[Text Injection] Cleared restored sent ChatGPT draft after reload'
+          : '[Text Injection] Cleared persisted ChatGPT draft after new chat'
+      );
     }
     return true;
   }
@@ -2264,6 +2464,7 @@
   function cancelChatgptNewChatComposerClear({ clearReloadMarker = true } = {}) {
     clearChatgptNewChatScheduledTimers();
     disconnectChatgptNewChatMountObserver();
+    chatgptActiveClearMatchSentOnly = false;
     if (clearReloadMarker) {
       clearPendingChatgptNewChatComposerClearMarker();
     }
@@ -2272,20 +2473,50 @@
   }
 
   function handleChatgptNewChatUserInput(event) {
-    if (event.isTrusted) {
-      cancelChatgptNewChatComposerClear();
+    if (!event?.isTrusted) {
+      return;
     }
+    if (event.type === 'keydown') {
+      if (
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        CHATGPT_NON_EDITING_KEYS.has(event.key) ||
+        /^F\d{1,2}$/.test(event.key || '')
+      ) {
+        return;
+      }
+    }
+    cancelChatgptNewChatComposerClear();
   }
 
-  function startChatgptPostMountClearPasses({ consumeReloadMarker = false } = {}) {
+  function startChatgptPostMountClearPasses({
+    consumeReloadMarker = false,
+    matchSentOnly = false,
+    focus = true
+  } = {}) {
     clearChatgptNewChatScheduledTimers();
     disconnectChatgptNewChatMountObserver();
+    chatgptActiveClearMatchSentOnly = matchSentOnly;
     if (consumeReloadMarker) {
       clearPendingChatgptNewChatComposerClearMarker();
     }
+    if (matchSentOnly) {
+      const observeRoot = document.body || document.documentElement;
+      if (typeof MutationObserver === 'function' && observeRoot) {
+        chatgptNewChatMountObserver = new MutationObserver(() => {
+          clearChatgptComposerDraftOnce({ matchSentOnly: true, focus });
+        });
+        chatgptNewChatMountObserver.observe(observeRoot, {
+          childList: true,
+          subtree: true,
+          characterData: true
+        });
+      }
+    }
     CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.forEach((delay, index) => {
       const timerId = setTimeout(() => {
-        clearChatgptComposerDraftOnce();
+        clearChatgptComposerDraftOnce({ matchSentOnly, focus });
         if (index === CHATGPT_NEW_CHAT_CLEAR_DELAYS_MS.length - 1) {
           cancelChatgptNewChatComposerClear({ clearReloadMarker: consumeReloadMarker });
         }
@@ -2296,30 +2527,41 @@
 
   function scheduleChatgptNewChatComposerClear({
     waitForMountUntilMs = 0,
-    consumeReloadMarkerOnMount = false
+    consumeReloadMarkerOnMount = false,
+    matchSentOnly = false,
+    focus = true
   } = {}) {
     cancelChatgptNewChatComposerClear({ clearReloadMarker: false });
+    chatgptActiveClearMatchSentOnly = matchSentOnly;
     document.addEventListener('keydown', handleChatgptNewChatUserInput, true);
     document.addEventListener('beforeinput', handleChatgptNewChatUserInput, true);
 
     if (!waitForMountUntilMs || findProviderInput('chatgpt')) {
-      startChatgptPostMountClearPasses({ consumeReloadMarker: consumeReloadMarkerOnMount });
+      startChatgptPostMountClearPasses({
+        consumeReloadMarker: consumeReloadMarkerOnMount,
+        matchSentOnly,
+        focus
+      });
       return;
     }
 
     const remainingTtlMs = Math.max(0, waitForMountUntilMs - Date.now());
     if (remainingTtlMs === 0) {
-      cancelChatgptNewChatComposerClear({ clearReloadMarker: true });
+      cancelChatgptNewChatComposerClear({ clearReloadMarker: consumeReloadMarkerOnMount });
       return;
     }
 
     const checkMountedOrExpired = () => {
       if (findProviderInput('chatgpt')) {
-        startChatgptPostMountClearPasses({ consumeReloadMarker: consumeReloadMarkerOnMount });
+        startChatgptPostMountClearPasses({
+          consumeReloadMarker: consumeReloadMarkerOnMount,
+          matchSentOnly,
+          focus
+        });
         return true;
       }
       if (Date.now() >= waitForMountUntilMs) {
-        cancelChatgptNewChatComposerClear({ clearReloadMarker: true });
+        cancelChatgptNewChatComposerClear({ clearReloadMarker: consumeReloadMarkerOnMount });
         return true;
       }
       return false;
@@ -2340,7 +2582,7 @@
     const scheduleNextMountPoll = () => {
       const msLeft = waitForMountUntilMs - Date.now();
       if (msLeft <= 0) {
-        cancelChatgptNewChatComposerClear({ clearReloadMarker: true });
+        cancelChatgptNewChatComposerClear({ clearReloadMarker: consumeReloadMarkerOnMount });
         return;
       }
       const pollTimerId = setTimeout(() => {
@@ -2354,8 +2596,98 @@
     scheduleNextMountPoll();
   }
 
+  function scheduleChatgptSentDraftReloadClear() {
+    if (!isEmbeddedChatgptFrame() || !isChatgptHomePath()) {
+      return;
+    }
+    if (
+      (chatgptNewChatClearTimerIds.length > 0 || Boolean(chatgptNewChatMountObserver)) &&
+      !chatgptActiveClearMatchSentOnly
+    ) {
+      return;
+    }
+    if (readSentChatgptDrafts().length === 0) {
+      return;
+    }
+    scheduleChatgptNewChatComposerClear({
+      waitForMountUntilMs: Date.now() + CHATGPT_RELOAD_CLEAR_WINDOW_MS,
+      consumeReloadMarkerOnMount: false,
+      matchSentOnly: true,
+      focus: false
+    });
+  }
+
+  function handleChatgptRouteChange(previousUrl, currentUrl) {
+    if (!isEmbeddedChatgptFrame()) {
+      return;
+    }
+    try {
+      const prevPath = new URL(previousUrl).pathname;
+      const nextPath = new URL(currentUrl).pathname;
+      if (!isChatgptHomePath(prevPath) && isChatgptHomePath(nextPath)) {
+        scheduleChatgptSentDraftReloadClear();
+      }
+    } catch (error) {
+      // Ignore malformed URLs.
+    }
+  }
+
+  function setupChatgptSentDraftTracking() {
+    if (!isEmbeddedChatgptFrame()) {
+      return;
+    }
+    const sendButtonSelector = SEND_BUTTON_SELECTORS.chatgpt.join(', ');
+    const captureFromEditor = () => {
+      const editor = findProviderInput('chatgpt');
+      const text = readChatgptEditorText(editor);
+      if (!text.trim()) {
+        return;
+      }
+      const startHref = window.location.href;
+      const wasBusyBeforeSend = Boolean(findChatgptBusyButton());
+      setTimeout(() => confirmAndRecordChatgptSend(text, startHref, { wasBusyBeforeSend }), 0);
+    };
+
+    document.addEventListener('click', (event) => {
+      const target = event?.target;
+      if (!(target instanceof Element)) return;
+      const sendButton = target.closest(sendButtonSelector);
+      if (!sendButton || !isProviderSendControlEnabled('chatgpt', sendButton)) return;
+      const composerForm = getChatgptComposer()?.findForm();
+      if (composerForm && sendButton.closest('form') !== composerForm) return;
+      captureFromEditor();
+    }, true);
+
+    document.addEventListener('submit', (event) => {
+      const composerForm = getChatgptComposer()?.findForm();
+      if (composerForm && event?.target !== composerForm) return;
+      captureFromEditor();
+    }, true);
+
+    document.addEventListener('keydown', (event) => {
+      if (
+        !event ||
+        event.key !== 'Enter' ||
+        event.shiftKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.isComposing
+      ) {
+        return;
+      }
+      const editor = findProviderInput('chatgpt');
+      if (!editor) return;
+      const target = event.target;
+      if (target !== editor && !(target instanceof Node && editor.contains(target))) {
+        return;
+      }
+      captureFromEditor();
+    }, true);
+  }
+
   function resumePendingChatgptNewChatComposerClear() {
-    if (window.self === window.top || detectProvider() !== 'chatgpt') {
+    if (!isEmbeddedChatgptFrame()) {
       return;
     }
 
@@ -2363,24 +2695,24 @@
     try {
       rawTimestamp = window.sessionStorage?.getItem(CHATGPT_PENDING_NEW_CHAT_CLEAR_KEY) || null;
     } catch (error) {
-      return;
+      rawTimestamp = null;
     }
 
-    if (rawTimestamp === null) {
-      return;
+    if (rawTimestamp !== null) {
+      const timestamp = Number(rawTimestamp);
+      const deadlineMs = timestamp + CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS;
+      if (!Number.isFinite(timestamp) || Date.now() >= deadlineMs) {
+        clearPendingChatgptNewChatComposerClearMarker();
+      } else {
+        scheduleChatgptNewChatComposerClear({
+          waitForMountUntilMs: deadlineMs,
+          consumeReloadMarkerOnMount: true
+        });
+        return;
+      }
     }
 
-    const timestamp = Number(rawTimestamp);
-    const deadlineMs = timestamp + CHATGPT_PENDING_NEW_CHAT_CLEAR_TTL_MS;
-    if (!Number.isFinite(timestamp) || Date.now() >= deadlineMs) {
-      clearPendingChatgptNewChatComposerClearMarker();
-      return;
-    }
-
-    scheduleChatgptNewChatComposerClear({
-      waitForMountUntilMs: deadlineMs,
-      consumeReloadMarkerOnMount: true
-    });
+    scheduleChatgptSentDraftReloadClear();
   }
 
   // Find and click new chat button
@@ -4480,6 +4812,9 @@
     // Handle INJECT_TEXT_WITH_IMAGES messages
     if (event.data.type === 'INJECT_TEXT_WITH_IMAGES' && event.data.context === 'multi-panel') {
       const provider = detectProvider();
+      if (provider === 'chatgpt' && chatgptActiveClearMatchSentOnly) {
+        clearChatgptComposerDraftOnce({ matchSentOnly: true, focus: false });
+      }
       // A fill right after New Chat must not be wiped by the pending draft clear.
       cancelChatgptNewChatComposerClear();
       void handleImageInjection(event)
@@ -4500,6 +4835,9 @@
     // Only handle INJECT_TEXT messages
     if (event.data.type !== 'INJECT_TEXT') {
       return;
+    }
+    if (detectProvider() === 'chatgpt' && chatgptActiveClearMatchSentOnly) {
+      clearChatgptComposerDraftOnce({ matchSentOnly: true, focus: false });
     }
     cancelChatgptNewChatComposerClear();
 
@@ -5631,6 +5969,7 @@
   setupSameOriginAccountNavigation();
   setupProviderLocationReporting();
   setupPageWidthReporting();
+  setupChatgptSentDraftTracking();
   resumePendingChatgptNewChatComposerClear();
   window.addEventListener('message', handleTextInjection);
 })();
