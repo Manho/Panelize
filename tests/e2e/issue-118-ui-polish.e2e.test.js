@@ -112,6 +112,9 @@ test.describe('Issue #118 UI Polish & Standalone postMessage Fix E2E', () => {
       expect(narrowMetrics.barHeight).toBeLessThanOrEqual(56);
       expect(narrowMetrics.inputWidth).toBeGreaterThanOrEqual(120);
       expect(narrowMetrics.sendRight).toBeLessThanOrEqual(narrowMetrics.viewportWidth);
+      // Icon-only buttons must expose their title, not the raw ligature text, as accessible name
+      await expect(page.locator('#fill-input-btn')).toHaveAccessibleName('Fill Input Boxes');
+      await expect(page.locator('#send-all-btn')).toHaveAccessibleName('Send to All');
 
       expect(consoleErrors).toEqual([]);
       expect(pageErrors).toEqual([]);
@@ -170,8 +173,11 @@ test.describe('Issue #118 UI Polish & Standalone postMessage Fix E2E', () => {
       ).toBe(true);
       await page.keyboard.press('Escape');
 
-      await page.locator('#theme-select').selectOption('dark');
-      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+      // Poll the selection: options.js may still be wiring its change listener after first paint
+      await expect(async () => {
+        await page.locator('#theme-select').selectOption('dark');
+        await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark', { timeout: 500 });
+      }).toPass();
       const darkScheme = await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
       expect(darkScheme).toContain('dark');
 
