@@ -3217,10 +3217,23 @@
     if (provider === 'google' && providerMode === GOOGLE_PROVIDER_MODE_SEARCH) {
       console.warn('[Image Injection] Google Search mode does not support attachments, skipping');
       const hasText = Boolean(text && text.trim());
-      if (hasText) {
-        handleGoogleTextInjection(text, autoSubmit, providerMode);
-      }
       const skippedAttachments = toSkippedList(incomingAttachments, IMAGE_INJECTION_REASONS.UNSUPPORTED);
+      if (hasText) {
+        // Retry-aware: a Retry Failed must not append the caption a second time.
+        const textInjected = injectText(
+          provider,
+          text,
+          autoSubmit,
+          providerMode,
+          { skipIfAlreadyPresent: Boolean(retry) }
+        );
+        if (!textInjected) {
+          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND, [], undefined, {
+            includeAttachmentProtocol: hasAttachmentProtocol,
+            skippedAttachments
+          });
+        }
+      }
       return hasText
         ? createImageInjectionSuccess([], {
           includeAttachmentProtocol: true,
@@ -4121,44 +4134,90 @@
     ).length || 0;
   }
 
+  const KIMI_DOCUMENT_CARD_SELECTOR = '.file-card, .file-item, .attachment-card, .attachment-item';
+  const KIMI_DOCUMENT_CARD_LOOSE_SELECTOR =
+    `${KIMI_DOCUMENT_CARD_SELECTOR}, [class*="file-card"], [class*="file-item"], [class*="attachment-item"]`;
+
+  function hasKimiPendingOrErrorClass(element) {
+    const cls = String(element?.className || '').toLowerCase();
+    return cls.includes('loading') || cls.includes('uploading') || cls.includes('error') || cls.includes('fail');
+  }
+
+  /**
+   * Maps a matched node (for example a nested `.file-card-title`) to the card
+   * that owns it. Exact card classes win; otherwise the outermost loosely
+   * matching ancestor inside the composer is used.
+   */
+  function resolveKimiDocumentCard(element, composer) {
+    const exactCard = element.closest(KIMI_DOCUMENT_CARD_SELECTOR);
+    if (exactCard && composer.contains(exactCard)) {
+      return exactCard;
+    }
+    let owner = element;
+    let parent = element.parentElement;
+    while (parent && parent !== composer && composer.contains(parent)) {
+      if (parent.matches(KIMI_DOCUMENT_CARD_LOOSE_SELECTOR)) {
+        owner = parent;
+      }
+      parent = parent.parentElement;
+    }
+    return owner;
+  }
+
+  /** True when the node or any ancestor up to the composer is still uploading or failed. */
+  function isInsideKimiPendingOrErrorCard(element, composer) {
+    for (let node = element; node && node !== composer; node = node.parentElement) {
+      if (hasKimiPendingOrErrorClass(node)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function countKimiDocumentPreviews(composer, fileName = '') {
     if (!composer) {
       return 0;
     }
-    const cards = [...composer.querySelectorAll(
-      '.file-card, .file-item, .attachment-card, .attachment-item, [class*="file-card"], [class*="file-item"], [class*="attachment-item"]'
-    )].filter(el => {
-      if (el.matches('.image-thumbnail')) return false;
-      const cls = String(el.className || '').toLowerCase();
-      return !cls.includes('loading') && !cls.includes('uploading') && !cls.includes('error') && !cls.includes('fail');
-    });
-    if (fileName) {
-      const normalized = fileName.trim().toLowerCase();
-      const matchingCards = cards.filter(el => (el.textContent || '').toLowerCase().includes(normalized));
-      if (matchingCards.length > 0) {
-        return matchingCards.length;
+    const healthyCards = new Set();
+    composer.querySelectorAll(KIMI_DOCUMENT_CARD_LOOSE_SELECTOR).forEach(el => {
+      if (el.matches('.image-thumbnail') || isInsideKimiPendingOrErrorCard(el, composer)) {
+        return;
       }
-      // Also check filename evidence inside composer excluding loading/error thumbnails
-      const evidenceNodes = [...composer.querySelectorAll(
-        '[data-file-name], [data-filename], [title], [aria-label]'
-      )].filter(el => {
-        const host = el.closest('.image-thumbnail, .file-card, .file-item, [class*="file"], [class*="attachment"]') || el;
-        const cls = String(host.className || '').toLowerCase();
-        if (cls.includes('loading') || cls.includes('uploading') || cls.includes('error') || cls.includes('fail')) {
-          return false;
-        }
-        const raw = (
-          el.getAttribute('data-file-name') ||
-          el.getAttribute('data-filename') ||
-          el.getAttribute('title') ||
-          el.getAttribute('aria-label') ||
-          ''
-        ).trim().toLowerCase();
-        return raw.includes(normalized);
-      });
-      return Math.max(cards.length, evidenceNodes.length);
+      const card = resolveKimiDocumentCard(el, composer);
+      if (!card.matches('.image-thumbnail')) {
+        healthyCards.add(card);
+      }
+    });
+    if (!fileName) {
+      return healthyCards.size;
     }
-    return cards.length;
+
+    const normalized = fileName.trim().toLowerCase();
+    const matchingCards = [...healthyCards].filter(card =>
+      (card.textContent || '').toLowerCase().includes(normalized)
+    );
+    if (matchingCards.length > 0) {
+      return matchingCards.length;
+    }
+    // Filename attributes can live outside card text (titles, aria labels).
+    // Count each owning card once and ignore anything under a pending/error card.
+    const evidenceCards = new Set(healthyCards);
+    composer.querySelectorAll('[data-file-name], [data-filename], [title], [aria-label]').forEach(el => {
+      if (isInsideKimiPendingOrErrorCard(el, composer)) {
+        return;
+      }
+      const raw = (
+        el.getAttribute('data-file-name') ||
+        el.getAttribute('data-filename') ||
+        el.getAttribute('title') ||
+        el.getAttribute('aria-label') ||
+        ''
+      ).trim().toLowerCase();
+      if (raw.includes(normalized)) {
+        evidenceCards.add(resolveKimiDocumentCard(el, composer));
+      }
+    });
+    return evidenceCards.size;
   }
 
   function countKimiPendingAttachmentPreviews(composer) {
@@ -4500,9 +4559,11 @@
         if (!editor) {
           return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
         }
-        dispatchFileDragEvents(editor, file);
-        console.log('[Image Injection] Gemini: Document injected via single drop');
-        return createImageInjectionSuccess();
+        const confirmed = await dropDocumentAndConfirmPreview(editor, file, imageData);
+        console.log('[Image Injection] Gemini: Document drop', confirmed ? 'confirmed' : 'not confirmed');
+        return confirmed
+          ? createImageInjectionSuccess()
+          : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
       }
 
       console.log('[Image Injection] Gemini: Starting image injection');
@@ -4601,8 +4662,10 @@
           document.querySelector('ms-prompt-box .prompt-box-container') ||
           findProviderInput('aistudio');
         if (dropTarget) {
-          dispatchFileDragEvents(dropTarget, file);
-          return createImageInjectionSuccess();
+          const confirmed = await dropDocumentAndConfirmPreview(dropTarget, file, imageData);
+          return confirmed
+            ? createImageInjectionSuccess()
+            : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
         }
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
@@ -4679,9 +4742,12 @@
         console.log('[Image Injection] Google: File input triggered');
         return createImageInjectionSuccess();
       }
+      // Sample the menu's inputs before Escape: closing the "+" menu unmounts
+      // them, which would turn an incompatible type into control-not-found.
+      const sawIncompatibleInputs = isDoc && querySelectorAllDeep('input[type="file"]').length > 0;
       await sleep(50);
       closeGoogleComposerMenu();
-      if (isDoc && querySelectorAllDeep('input[type="file"]').length > 0) {
+      if (sawIncompatibleInputs) {
         return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
       }
       console.warn('[Image Injection] Google: No file input found');
@@ -4876,6 +4942,22 @@
     return accepted
       ? createImageInjectionSuccess()
       : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+  }
+
+  /**
+   * Dispatches one drop sequence and resolves true only after new filename
+   * preview evidence for this document appears, so a drop that no page handler
+   * consumed is never acknowledged as an upload.
+   */
+  async function dropDocumentAndConfirmPreview(target, file, attachmentData) {
+    const fileName = attachmentData?.name || file?.name || '';
+    const previousCount = countFilenamePreviewEvidence(document, fileName);
+    dispatchFileDragEvents(target, file);
+    return waitForPreviewIncrease(
+      () => countFilenamePreviewEvidence(document, fileName),
+      previousCount,
+      getPreviewTimeoutMs(attachmentData)
+    );
   }
 
   function dispatchFileDragEvents(target, file) {

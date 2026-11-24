@@ -189,17 +189,32 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     );
   });
 
-  it('Gemini: injects document via single drop (no duplicate paste+drop) when no file input exists', async () => {
+  it('Gemini: acknowledges a single document drop only after a filename chip appears', async () => {
     window.happyDOM.setURL('https://gemini.google.com/app');
-    document.body.innerHTML = `<div class="ql-editor" contenteditable="true"></div>`;
+    document.body.innerHTML = `
+      <div class="input-area">
+        <div id="gemini-uploads"></div>
+        <div class="ql-editor" contenteditable="true"></div>
+      </div>
+    `;
     const editor = document.querySelector('.ql-editor');
     const pasteSpy = vi.fn();
     const dropSpy = vi.fn();
     editor.addEventListener('paste', pasteSpy);
-    editor.addEventListener('drop', (e) => dropSpy(e.dataTransfer?.files?.[0]?.name));
+    editor.addEventListener('drop', (e) => {
+      const name = e.dataTransfer?.files?.[0]?.name;
+      dropSpy(name);
+      setTimeout(() => {
+        const chip = document.createElement('div');
+        chip.className = 'file-preview-chip';
+        chip.dataset.fileName = name;
+        chip.textContent = name;
+        document.getElementById('gemini-uploads').append(chip);
+      }, 400);
+    });
 
     dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-pdf-drop' });
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2500);
 
     expect(pasteSpy).not.toHaveBeenCalled();
     expect(dropSpy).toHaveBeenCalledTimes(1);
@@ -210,6 +225,33 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         provider: 'gemini',
         status: 'succeeded',
         succeededAttachmentIds: ['doc-pdf-1'],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Gemini: reports preview-timeout when no page handler consumes the document drop', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `<div class="ql-editor" contenteditable="true"></div>`;
+    const dropSpy = vi.fn();
+    document.querySelector('.ql-editor').addEventListener('drop', dropSpy);
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-pdf-drop-unhandled' });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(window.parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'gemini-pdf-drop-unhandled' }),
+      EXTENSION_ORIGIN
+    );
+
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(dropSpy).toHaveBeenCalledTimes(1);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'gemini-pdf-drop-unhandled',
+        provider: 'gemini',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
       }),
       EXTENSION_ORIGIN
     );
@@ -298,6 +340,106 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     expect(window.parent.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: 'kimi-pdf',
+        provider: 'kimi',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Kimi: does not count errored or loading cards through a nested filename title', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    document.body.innerHTML = `
+      <div id="chat-box">
+        <div class="chat-editor">
+          <div class="chat-input-editor" contenteditable="true"></div>
+          <input class="hidden-input" type="file" multiple />
+          <div id="kimi-previews"></div>
+        </div>
+      </div>
+    `;
+    const fileInput = document.querySelector('input.hidden-input');
+    let nextState = 'error';
+    fileInput.addEventListener('change', () => {
+      const card = document.createElement('div');
+      card.className = `file-card ${nextState}`;
+      const title = document.createElement('div');
+      title.className = 'file-card-title';
+      title.title = fileInput.files[0].name;
+      title.textContent = fileInput.files[0].name;
+      card.append(title);
+      document.getElementById('kimi-previews').append(card);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'kimi-pdf-error-card' });
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'kimi-pdf-error-card',
+        provider: 'kimi',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+
+    // A wrapper-level pending state also hides the nested title.
+    document.getElementById('kimi-previews').replaceChildren();
+    window.parent.postMessage.mockClear();
+    nextState = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'upload-wrapper uploading';
+    document.getElementById('kimi-previews').append(wrapper);
+    fileInput.addEventListener('change', () => {
+      const last = document.getElementById('kimi-previews').lastElementChild;
+      if (last !== wrapper) wrapper.append(last);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment('doc-pdf-2', 'other.pdf')], requestId: 'kimi-pdf-uploading-card' });
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'kimi-pdf-uploading-card',
+        provider: 'kimi',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Kimi: counts a successful card once even when its title and attributes both name the file', async () => {
+    window.happyDOM.setURL('https://www.kimi.com/');
+    document.body.innerHTML = `
+      <div id="chat-box">
+        <div class="chat-editor">
+          <div class="chat-input-editor" contenteditable="true"></div>
+          <input class="hidden-input" type="file" multiple />
+          <div id="kimi-previews"></div>
+        </div>
+      </div>
+    `;
+    const fileInput = document.querySelector('input.hidden-input');
+    fileInput.addEventListener('change', () => {
+      const card = document.createElement('div');
+      card.className = 'file-card success';
+      card.setAttribute('aria-label', fileInput.files[0].name);
+      const title = document.createElement('div');
+      title.className = 'file-card-title';
+      title.title = fileInput.files[0].name;
+      title.textContent = fileInput.files[0].name;
+      card.append(title);
+      document.getElementById('kimi-previews').append(card);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'kimi-pdf-nested-success' });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'kimi-pdf-nested-success',
         provider: 'kimi',
         status: 'succeeded',
         succeededAttachmentIds: ['doc-pdf-1'],
@@ -577,6 +719,119 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     );
   });
 
+  it('Google AI Studio: acknowledges a dropped document only after its filename preview appears', async () => {
+    window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat');
+    document.body.innerHTML = `
+      <ms-prompt-box>
+        <div id="aistudio-chunks"></div>
+        <div class="prompt-box-container" msfilecopypaste>
+          <textarea formcontrolname="promptText"></textarea>
+        </div>
+      </ms-prompt-box>
+    `;
+    const dropTarget = document.querySelector('[msfilecopypaste]');
+    const dropped = [];
+    dropTarget.addEventListener('drop', (e) => {
+      const name = e.dataTransfer?.files?.[0]?.name;
+      dropped.push(name);
+      setTimeout(() => {
+        const chunk = document.createElement('div');
+        chunk.className = 'file-chunk';
+        chunk.dataset.fileName = name;
+        chunk.textContent = name;
+        document.getElementById('aistudio-chunks').append(chunk);
+      }, 300);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'aistudio-pdf-drop' });
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(dropped).toEqual(['paper.pdf']);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'aistudio-pdf-drop',
+        provider: 'aistudio',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Google AI Studio: reports preview-timeout when the document drop produces no preview', async () => {
+    window.happyDOM.setURL('https://aistudio.google.com/prompts/new_chat');
+    document.body.innerHTML = `
+      <ms-prompt-box>
+        <div class="prompt-box-container" msfilecopypaste>
+          <textarea formcontrolname="promptText"></textarea>
+        </div>
+      </ms-prompt-box>
+    `;
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'aistudio-pdf-drop-unhandled' });
+    await vi.advanceTimersByTimeAsync(12500);
+
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'aistudio-pdf-drop-unhandled',
+        provider: 'aistudio',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Google AI Mode: still skips an incompatible DOCX when Escape unmounts the "+" menu inputs', async () => {
+    window.happyDOM.setURL('https://www.google.com/search?udm=50');
+    document.body.innerHTML = `
+      <div id="google-composer">
+        <textarea class="ITIRGe" aria-label="Ask anything"></textarea>
+        <button id="menu-btn" aria-haspopup="menu" aria-expanded="false">+</button>
+      </div>
+    `;
+    const menuBtn = document.getElementById('menu-btn');
+    markVisible(menuBtn);
+    menuBtn.addEventListener('click', () => {
+      menuBtn.setAttribute('aria-expanded', 'true');
+      const menu = document.createElement('div');
+      menu.id = 'google-plus-menu';
+      const imgInput = document.createElement('input');
+      imgInput.type = 'file';
+      imgInput.accept = 'image/png,image/jpeg';
+      const pdfInput = document.createElement('input');
+      pdfInput.type = 'file';
+      pdfInput.accept = '.pdf,application/pdf';
+      menu.append(imgInput, pdfInput);
+      document.body.append(menu);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      menuBtn.setAttribute('aria-expanded', 'false');
+      document.getElementById('google-plus-menu')?.remove();
+    }, true);
+
+    dispatchDocFill({
+      attachments: [makeDocxAttachment()],
+      providerMode: 'ai',
+      requestId: 'google-ai-docx-escape',
+    });
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(document.getElementById('google-plus-menu')).toBeNull();
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'google-ai-docx-escape',
+        provider: 'google',
+        status: 'skipped',
+        reason: 'type-not-accepted',
+        skippedAttachments: [{ id: 'doc-docx-1', name: 'spec.docx', reason: 'type-not-accepted' }],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
   it('Google AI Mode: routes PDF to the PDF input in "+" menu and skips unsupported DOCX', async () => {
     window.happyDOM.setURL('https://www.google.com/search?udm=50');
     document.body.innerHTML = `
@@ -676,6 +931,64 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     expect(window.parent.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: 'google-search-text-plus-doc',
+        provider: 'google',
+        status: 'succeeded',
+        skippedAttachments: [{ id: 'doc-pdf-1', name: 'paper.pdf', reason: 'unsupported' }],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+  it('Google Search mode fails with control-not-found when the caption cannot be written', async () => {
+    window.happyDOM.setURL('https://www.google.com/');
+    document.body.innerHTML = `<div id="no-search-box"></div>`;
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment()],
+      text: 'search query text',
+      providerMode: 'search',
+      requestId: 'google-search-no-input',
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'google-search-no-input',
+        provider: 'google',
+        status: 'failed',
+        reason: 'control-not-found',
+        skippedAttachments: [{ id: 'doc-pdf-1', name: 'paper.pdf', reason: 'unsupported' }],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Google Search mode does not duplicate the caption on Retry Failed', async () => {
+    window.happyDOM.setURL('https://www.google.com/');
+    document.body.innerHTML = `<input name="q" />`;
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment()],
+      text: 'search query text',
+      providerMode: 'search',
+      requestId: 'google-search-first',
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(document.querySelector('input[name="q"]').value).toBe('search query text');
+
+    window.parent.postMessage.mockClear();
+    dispatchDocFill({
+      attachments: [makePdfAttachment()],
+      text: 'search query text',
+      providerMode: 'search',
+      requestId: 'google-search-retry',
+      retry: true,
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(document.querySelector('input[name="q"]').value).toBe('search query text');
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'google-search-retry',
         provider: 'google',
         status: 'succeeded',
         skippedAttachments: [{ id: 'doc-pdf-1', name: 'paper.pdf', reason: 'unsupported' }],
