@@ -943,4 +943,235 @@ describe('provider image upload adapters', () => {
       succeededImageIds: ['sample-one-id'],
     }, EXTENSION_ORIGIN);
   });
+
+  it('uploads a Gemini Hydrogen image via Upload & tools -> accept-matched hidden-file-input without clicking Open sidebar', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <header>
+        <button
+          id="gemini-sidebar-decoy"
+          type="button"
+          aria-label="Open sidebar"
+          data-test-id="side-nav-sparkle-button"
+        >
+          <mat-icon fonticon="menu"></mat-icon>
+        </button>
+      </header>
+      <input-container>
+        <div class="input-area-container">
+          <div id="gemini-image-previews"></div>
+          <div class="input-area">
+            <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          </div>
+          <uploader>
+            <button id="gemini-upload-tools" type="button" aria-label="Upload & tools">
+              <mat-icon fonticon="add"></mat-icon>
+            </button>
+          </uploader>
+        </div>
+      </input-container>
+    `;
+    const sidebarBtn = document.getElementById('gemini-sidebar-decoy');
+    const uploadToolsBtn = document.getElementById('gemini-upload-tools');
+    [sidebarBtn, uploadToolsBtn].forEach(markVisible);
+
+    const sidebarClickSpy = vi.fn();
+    sidebarBtn.addEventListener('click', sidebarClickSpy);
+    const uploadedImages = [];
+    uploadToolsBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      const imgInput = document.createElement('input');
+      imgInput.type = 'file';
+      imgInput.multiple = true;
+      imgInput.className = 'hidden-file-input ng-star-inserted';
+      imgInput.accept = 'image/*,video/*';
+      imgInput.addEventListener('change', () => {
+        const file = imgInput.files[0];
+        uploadedImages.push(file.name);
+        const preview = document.createElement('uploader-file-preview');
+        preview.className = 'file-preview-chip ng-star-inserted';
+        preview.innerHTML = `<img src="blob:https://gemini.google.com/${encodeURIComponent(file.name)}" />`;
+        document.getElementById('gemini-image-previews').append(preview);
+      });
+      overlay.append(docInput, imgInput);
+      document.body.append(overlay);
+    });
+
+    const onEscape = (event) => {
+      if (event.key === 'Escape') {
+        document.querySelector('.cdk-overlay-pane')?.remove();
+      }
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      dispatchImageInjection({
+        images: SAMPLE_IMAGES.slice(0, 1),
+        requestId: 'gemini-hydrogen-image-only',
+      });
+      await finishSuccessfulInjection();
+
+      expect(sidebarClickSpy).not.toHaveBeenCalled();
+      expect(uploadedImages).toEqual(['sample-one.png']);
+      expect(document.querySelector('.cdk-overlay-pane')).toBeNull();
+      expect(window.parent.postMessage).toHaveBeenCalledWith({
+        type: 'PANELIZE_ACTION_RESULT',
+        context: 'multi-panel-action-result',
+        requestId: 'gemini-hydrogen-image-only',
+        provider: 'gemini',
+        action: 'fill',
+        status: 'succeeded',
+        succeededImageIds: ['sample-one-id'],
+      }, EXTENSION_ORIGIN);
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  // ===== Item #16 regression guards: Gemini classic + Qwen Global image routing =====
+
+  const getLastActionResult = () =>
+    window.parent.postMessage.mock.calls
+      .map(([msg]) => msg)
+      .filter((msg) => msg?.type === 'PANELIZE_ACTION_RESULT')
+      .at(-1);
+
+  it('Qwen Global: an existing document card never masks a newly pasted image preview', async () => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = `
+      <form>
+        <textarea class="message-input-textarea"></textarea>
+        <div class="file-card">paper.pdf</div>
+      </form>
+    `;
+    const form = document.querySelector('form');
+    document.querySelector('textarea').addEventListener('paste', () => {
+      form.insertAdjacentHTML('beforeend', '<img class="vision-item-image" alt="sample-one.png" />');
+    });
+
+    dispatchImageInjection({ requestId: 'qwen-global-card-plus-image' });
+    await finishTimedOutInjection();
+
+    expect(form.querySelectorAll('img.vision-item-image')).toHaveLength(1);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'qwen-global-card-plus-image',
+        status: 'succeeded',
+        succeededImageIds: ['sample-one-id'],
+      })
+    );
+  });
+
+  it('Qwen Global: retry sees an image preview attached directly to form#dropzone-container', async () => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = `
+      <form id="dropzone-container">
+        <div class="message-input-container">
+          <textarea class="message-input-textarea"></textarea>
+          <input type="file" id="filesUpload" multiple />
+        </div>
+        <img class="vision-item-image" alt="sample-one.png" />
+      </form>
+    `;
+    const dropzone = document.getElementById('dropzone-container');
+    const pasteSpy = vi.fn(() => {
+      dropzone.insertAdjacentHTML('beforeend', '<img class="vision-item-image" alt="sample-one.png" />');
+    });
+    document.querySelector('textarea').addEventListener('paste', pasteSpy);
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      fallbackImages: SAMPLE_IMAGES.slice(0, 1),
+      text: 'Retry prompt',
+      autoSubmit: false,
+      retry: true,
+      requestId: 'qwen-global-retry-outer-preview',
+    });
+    await finishSuccessfulInjection();
+
+    expect(pasteSpy).not.toHaveBeenCalled();
+    expect(dropzone.querySelectorAll('img.vision-item-image')).toHaveLength(1);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'qwen-global-retry-outer-preview',
+        status: 'succeeded',
+        succeededImageIds: ['sample-one-id'],
+      })
+    );
+  });
+
+  it('Gemini classic: a consumed .ql-editor paste is never followed by a second drop on the outer dropzone', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <div class="xap-uploader-dropzone" file-drop-zone>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+      </div>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const calls = [];
+    editor.addEventListener('paste', (event) => {
+      event.preventDefault();
+      calls.push('paste');
+    });
+    editor.addEventListener('drop', (event) => event.stopPropagation());
+    document.querySelector('[file-drop-zone]').addEventListener('drop', () => calls.push('outer-drop'));
+
+    dispatchImageInjection({ requestId: 'gemini-classic-paste-consumed' });
+    await finishSuccessfulInjection();
+
+    expect(calls).toEqual(['paste']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededImageIds: ['sample-one-id'] })
+    );
+  });
+
+  it('Gemini classic: falls back to a single outer dropzone drop only when paste is neither consumed nor previewed', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <div class="xap-uploader-dropzone" file-drop-zone>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+      </div>
+    `;
+    const calls = [];
+    document.querySelector('.ql-editor').addEventListener('paste', () => calls.push('paste'));
+    document.querySelector('[file-drop-zone]').addEventListener('drop', () => calls.push('outer-drop'));
+
+    dispatchImageInjection({ requestId: 'gemini-classic-paste-ignored' });
+    await finishSuccessfulInjection();
+
+    expect(calls).toEqual(['paste', 'outer-drop']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededImageIds: ['sample-one-id'] })
+    );
+  });
+
+  it('Gemini classic: an unrelated <aside> image input never preempts the editor paste path', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <aside><input type="file" accept="image/*" /></aside>
+      <div class="ql-editor" contenteditable="true" role="textbox"></div>
+    `;
+    const calls = [];
+    document.querySelector('aside input').addEventListener('change', () => calls.push('aside'));
+    document.querySelector('.ql-editor').addEventListener('paste', (event) => {
+      event.preventDefault();
+      calls.push('paste');
+    });
+
+    dispatchImageInjection({ requestId: 'gemini-classic-aside-image' });
+    await finishSuccessfulInjection();
+
+    expect(calls).toEqual(['paste']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededImageIds: ['sample-one-id'] })
+    );
+  });
 });

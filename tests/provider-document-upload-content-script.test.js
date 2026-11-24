@@ -323,6 +323,313 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     );
   });
 
+  it('Gemini Hydrogen: clicks Upload & tools (never Open sidebar), routes .docx + .png to accept-matched hidden-file-input, dismisses overlay with Escape, confirms extension-stripped Unicode chip, and respects retry cleared check', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <header>
+        <button
+          id="open-sidebar-decoy"
+          type="button"
+          aria-label="Open sidebar"
+          data-test-id="side-nav-sparkle-button"
+          class="mdc-icon-button mat-mdc-icon-button"
+        >
+          <mat-icon fonticon="menu"></mat-icon>
+        </button>
+      </header>
+      <main>
+        <input-container>
+          <div id="gemini-hydrogen-previews"></div>
+          <div class="xap-uploader-dropzone" file-drop-zone>
+            <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          </div>
+          <uploader>
+            <button
+              id="gemini-upload-tools"
+              type="button"
+              aria-label="Upload & tools"
+              class="mdc-icon-button mat-mdc-icon-button"
+            >
+              <mat-icon fonticon="add"></mat-icon>
+            </button>
+          </uploader>
+        </input-container>
+      </main>
+    `;
+
+    const sidebarBtn = document.getElementById('open-sidebar-decoy');
+    const uploadToolsBtn = document.getElementById('gemini-upload-tools');
+    const editor = document.querySelector('.ql-editor');
+    const previewsHost = document.getElementById('gemini-hydrogen-previews');
+    [sidebarBtn, uploadToolsBtn, editor].forEach(markVisible);
+
+    const sidebarClickSpy = vi.fn();
+    sidebarBtn.addEventListener('click', sidebarClickSpy);
+
+    const docUploads = [];
+    const imgUploads = [];
+    const uploadToolsClickSpy = vi.fn();
+
+    uploadToolsBtn.addEventListener('click', () => {
+      uploadToolsClickSpy();
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = `
+        <div role="menu" class="mat-mdc-menu-panel">
+          <button type="button" data-test-id="local-images-files-uploader-button">Upload files</button>
+        </div>
+      `;
+      const docInput1 = document.createElement('input');
+      docInput1.type = 'file';
+      docInput1.multiple = true;
+      docInput1.className = 'hidden-file-input';
+      docInput1.accept = '.txt,.pdf,.doc,.docx,.md,.csv,.json,.yaml,.yml,.xml,.tsv';
+      docInput1.addEventListener('change', () => {
+        const file = docInput1.files[0];
+        docUploads.push(file.name);
+        const stem = file.name.replace(/\.[^.]+$/, '');
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        chip.innerHTML = `
+          <span>DOCX</span>
+          <span class="gem-attachment-text gds-body-s">${stem}</span>
+          <button type="button" aria-label="close ${stem}"></button>
+        `;
+        previewsHost.append(chip);
+      });
+
+      const imgInput = document.createElement('input');
+      imgInput.type = 'file';
+      imgInput.multiple = true;
+      imgInput.className = 'hidden-file-input ng-star-inserted';
+      imgInput.accept = 'image/*,video/*';
+      imgInput.addEventListener('change', () => {
+        const file = imgInput.files[0];
+        imgUploads.push(file.name);
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        chip.innerHTML = `<img src="blob:https://gemini.google.com/${encodeURIComponent(file.name)}" alt="Preview" />`;
+        previewsHost.append(chip);
+      });
+
+      const docInput2 = document.createElement('input');
+      docInput2.type = 'file';
+      docInput2.multiple = true;
+      docInput2.className = 'hidden-file-input ng-star-inserted';
+      docInput2.accept = '.txt,.pdf,.doc,.docx';
+
+      overlay.append(docInput1, imgInput, docInput2);
+      document.body.append(overlay);
+    });
+
+    const onEscape = (event) => {
+      if (event.key === 'Escape') {
+        document.querySelector('.cdk-overlay-pane')?.remove();
+      }
+    };
+    document.addEventListener('keydown', onEscape);
+
+    const cjkDocx = makeDocxAttachment('doc-cjk-1', '日本中部京都红叶之旅_图文行程(1).docx');
+    const pngImg = makeImageAttachment('img-1', 'diagram.png');
+    try {
+      dispatchDocFill({
+        attachments: [cjkDocx, pngImg],
+        text: 'Summarize trip and diagram',
+        requestId: 'gemini-hydrogen-mixed',
+      });
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(sidebarClickSpy).not.toHaveBeenCalled();
+      expect(uploadToolsClickSpy).toHaveBeenCalled();
+      expect(docUploads).toEqual(['日本中部京都红叶之旅_图文行程(1).docx']);
+      expect(imgUploads).toEqual(['diagram.png']);
+      expect(document.querySelector('.cdk-overlay-pane')).toBeNull();
+      expect(editor.textContent).toContain('Summarize trip and diagram');
+      expect(window.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: 'gemini-hydrogen-mixed',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-cjk-1', 'img-1'],
+        }),
+        EXTENSION_ORIGIN
+      );
+
+      // Retry when editor text is cleared while extension-stripped <uploader-file-preview> chips remain must NOT re-upload.
+      editor.textContent = '';
+      window.parent.postMessage.mockClear();
+      dispatchMultiPanelMessage({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        images: [],
+        attachments: [],
+        fallbackAttachments: [cjkDocx, pngImg],
+        text: 'Summarize trip and diagram',
+        autoSubmit: false,
+        retry: true,
+        requestId: 'gemini-hydrogen-retry-untouched',
+      });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(docUploads).toEqual(['日本中部京都红叶之旅_图文行程(1).docx']);
+      expect(imgUploads).toEqual(['diagram.png']);
+      expect(window.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: 'gemini-hydrogen-retry-untouched',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-cjk-1', 'img-1'],
+        }),
+        EXTENSION_ORIGIN
+      );
+
+      // Once both text and preview chips are cleared, retry MUST re-upload fallbackAttachments.
+      editor.textContent = '';
+      previewsHost.replaceChildren();
+      window.parent.postMessage.mockClear();
+      dispatchMultiPanelMessage({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        images: [],
+        attachments: [],
+        fallbackAttachments: [cjkDocx],
+        text: 'Restored trip prompt',
+        autoSubmit: false,
+        retry: true,
+        requestId: 'gemini-hydrogen-retry-cleared',
+      });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(docUploads).toEqual([
+        '日本中部京都红叶之旅_图文行程(1).docx',
+        '日本中部京都红叶之旅_图文行程(1).docx',
+      ]);
+      expect(window.parent.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: 'gemini-hydrogen-retry-cleared',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-cjk-1'],
+        }),
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Gemini Hydrogen: never counts a rejection snackbar/alert as preview evidence after hidden-file-input upload', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <button
+        id="open-sidebar-decoy"
+        type="button"
+        aria-label="Open sidebar"
+        data-test-id="side-nav-sparkle-button"
+        class="mdc-icon-button mat-mdc-icon-button"
+      >
+        <mat-icon fonticon="menu"></mat-icon>
+      </button>
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <uploader>
+          <button id="gemini-upload-tools" type="button" aria-label="Upload & tools">
+            <mat-icon fonticon="add"></mat-icon>
+          </button>
+        </uploader>
+      </input-container>
+    `;
+    const sidebarBtn = document.getElementById('open-sidebar-decoy');
+    const uploadToolsBtn = document.getElementById('gemini-upload-tools');
+    [sidebarBtn, uploadToolsBtn].forEach(markVisible);
+
+    const sidebarClickSpy = vi.fn();
+    sidebarBtn.addEventListener('click', sidebarClickSpy);
+    uploadToolsBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      docInput.addEventListener('change', () => {
+        const stem = docInput.files[0].name.replace(/\.[^.]+$/, '');
+        const snack = document.createElement('mat-snack-bar-container');
+        snack.setAttribute('role', 'alert');
+        snack.innerHTML = `<span class="gem-attachment-text">Upload failed: ${stem}</span>`;
+        document.body.append(snack);
+      });
+      overlay.append(docInput);
+      document.body.append(overlay);
+    });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('doc-pdf-1', 'hydrogen-doc.pdf')],
+      requestId: 'gemini-hydrogen-rejection-alert',
+    });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(sidebarClickSpy).not.toHaveBeenCalled();
+    expect(window.parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'gemini-hydrogen-rejection-alert', status: 'succeeded' }),
+      EXTENSION_ORIGIN
+    );
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'gemini-hydrogen-rejection-alert',
+        provider: 'gemini',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Gemini Hydrogen: falls back to div.xap-uploader-dropzone[file-drop-zone] when no file input mounts and confirms extension-stripped chip', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <div id="gemini-drop-previews"></div>
+        <div class="xap-uploader-dropzone" file-drop-zone>
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        </div>
+      </input-container>
+    `;
+    const dropzone = document.querySelector('div.xap-uploader-dropzone[file-drop-zone]');
+    const editor = document.querySelector('.ql-editor');
+    const editorDropSpy = vi.fn((event) => event.stopPropagation());
+    editor.addEventListener('drop', editorDropSpy);
+    const dropzoneDropSpy = vi.fn((event) => {
+      const name = event.dataTransfer?.files?.[0]?.name || '';
+      const stem = name.replace(/\.[^.]+$/, '');
+      const chip = document.createElement('uploader-file-preview');
+      chip.className = 'file-preview-chip ng-star-inserted';
+      chip.innerHTML = `<span>PDF</span><span class="gem-attachment-text gds-body-s">${stem}</span>`;
+      document.getElementById('gemini-drop-previews').append(chip);
+    });
+    dropzone.addEventListener('drop', dropzoneDropSpy);
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('doc-pdf-1', 'hydrogen-doc.pdf')],
+      requestId: 'gemini-hydrogen-dropzone-fallback',
+    });
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(editorDropSpy).not.toHaveBeenCalled();
+    expect(dropzoneDropSpy).toHaveBeenCalledTimes(1);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'gemini-hydrogen-dropzone-fallback',
+        provider: 'gemini',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
   it('DeepSeek: injects PDF through composer input and confirms non-image filename preview', async () => {
     window.happyDOM.setURL('https://chat.deepseek.com/');
     document.body.innerHTML = `
@@ -995,6 +1302,124 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     );
   });
 
+  it('Qwen Global: delivers document via composer form drop when React #filesUpload ignores synthetic change', async () => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = `
+      <div id="qwen-root">
+        <form id="qwen-composer-form">
+          <div class="message-input-container">
+            <input id="filesUpload" multiple aria-label="Upload files" type="file" style="display: none;" />
+            <textarea class="message-input-textarea message-input-textarea-separation"></textarea>
+            <div id="qwen-doc-previews"></div>
+          </div>
+        </form>
+      </div>
+    `;
+    const form = document.getElementById('qwen-composer-form');
+    const dropped = [];
+    form.addEventListener('drop', (event) => {
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) return;
+      dropped.push(file.name);
+      const card = document.createElement('div');
+      card.className = 'uploaded-doc-card';
+      card.innerHTML = `<span>${file.name}</span>`;
+      document.getElementById('qwen-doc-previews').append(card);
+    });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('doc-pdf-1', 'qwen-drop.pdf')],
+      text: 'Summarize Qwen PDF',
+      requestId: 'qwen-global-drop-form',
+    });
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(dropped).toEqual(['qwen-drop.pdf']);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'qwen-global-drop-form',
+        provider: 'qwen-global',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
+  it('Qwen Global: falls back to textarea composer wrapper drop when no form exists and rejects error alert banners', async () => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = `
+      <div id="qwen-root">
+        <div id="qwen-composer-outer">
+          <div class="message-input-container">
+            <input id="filesUpload" multiple aria-label="Upload files" type="file" style="display: none;" />
+            <textarea class="message-input-textarea message-input-textarea-separation"></textarea>
+            <div id="qwen-doc-previews"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    const outer = document.getElementById('qwen-composer-outer');
+    let rejectNext = false;
+    const dropped = [];
+    outer.addEventListener('drop', (event) => {
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) return;
+      dropped.push(file.name);
+      if (rejectNext) {
+        const alert = document.createElement('div');
+        alert.setAttribute('role', 'alert');
+        alert.textContent = `Upload failed: ${file.name}`;
+        document.body.append(alert);
+        return;
+      }
+      const chip = document.createElement('div');
+      chip.className = 'composer-doc-pill';
+      chip.innerHTML = `<span>${file.name}</span>`;
+      document.getElementById('qwen-doc-previews').append(chip);
+    });
+
+    dispatchDocFill({
+      attachments: [makeDocxAttachment('doc-docx-1', 'qwen-wrapper.docx')],
+      requestId: 'qwen-global-drop-wrapper',
+    });
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(dropped).toEqual(['qwen-wrapper.docx']);
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'qwen-global-drop-wrapper',
+        provider: 'qwen-global',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-docx-1'],
+      }),
+      EXTENSION_ORIGIN
+    );
+
+    rejectNext = true;
+    window.parent.postMessage.mockClear();
+    dispatchDocFill({
+      attachments: [makePdfAttachment('doc-pdf-2', 'rejected.pdf')],
+      requestId: 'qwen-global-alert-reject',
+    });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(window.parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'qwen-global-alert-reject', status: 'succeeded' }),
+      EXTENSION_ORIGIN
+    );
+    expect(window.parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'qwen-global-alert-reject',
+        provider: 'qwen-global',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      }),
+      EXTENSION_ORIGIN
+    );
+  });
+
   it('ChatGLM: injects document into el-upload input and confirms file-list item', async () => {
     window.happyDOM.setURL('https://chatglm.cn/main/alltoolsdetail');
     document.body.innerHTML = `
@@ -1455,6 +1880,287 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         skippedAttachments: [{ id: 'doc-pdf-1', name: 'paper.pdf', reason: 'unsupported' }],
       }),
       EXTENSION_ORIGIN
+    );
+  });
+
+  // ===== Item #16 regression guards: Gemini Hydrogen + Qwen Global routing =====
+
+  const getLastActionResult = () =>
+    window.parent.postMessage.mock.calls
+      .map(([msg]) => msg)
+      .filter((msg) => msg?.type === 'PANELIZE_ACTION_RESULT')
+      .at(-1);
+
+  const dispatchRetryWithFallback = (requestId, ...fallbackAttachments) =>
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT_WITH_IMAGES',
+      context: 'multi-panel',
+      images: [],
+      attachments: [],
+      fallbackAttachments,
+      text: 'Retry prompt',
+      retry: true,
+      autoSubmit: false,
+      requestId,
+    });
+
+  const mountGemini = (markup) => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = markup;
+    document.querySelectorAll('button, textarea, .ql-editor').forEach(markVisible);
+  };
+
+  const mountQwenGlobal = (markup) => {
+    window.happyDOM.setURL('https://chat.qwen.ai/');
+    document.body.innerHTML = markup;
+    document.querySelectorAll('button, textarea').forEach(markVisible);
+  };
+
+  it('Qwen Global: waits for a consumed composer drop instead of re-sending the document through #filesUpload', async () => {
+    mountQwenGlobal(`
+      <form>
+        <textarea class="message-input-textarea"></textarea>
+        <input type="file" id="filesUpload" multiple />
+      </form>
+    `);
+    const form = document.querySelector('form');
+    const calls = [];
+    const addCard = () => form.insertAdjacentHTML('beforeend', '<div class="file-item">paper.pdf</div>');
+    form.addEventListener('drop', (event) => {
+      event.preventDefault();
+      calls.push('drop');
+      setTimeout(addCard, 1400);
+    });
+    document.getElementById('filesUpload').addEventListener('change', () => {
+      calls.push('change');
+      addCard();
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'qwen-global-slow-drop' });
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(calls).toEqual(['drop']);
+    expect(document.querySelectorAll('.file-item')).toHaveLength(1);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'qwen-global-slow-drop',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      })
+    );
+  });
+
+  it('Qwen Global: retry never credits an inline "Upload failed" alert as a staged document', async () => {
+    mountQwenGlobal(`
+      <div class="message-input-container">
+        <div><textarea class="message-input-textarea"></textarea></div>
+        <input type="file" id="filesUpload" multiple />
+        <div role="alert" class="file-error">Upload failed: paper.pdf</div>
+      </div>
+    `);
+    const dropSpy = vi.fn();
+    document.querySelector('.message-input-container').addEventListener('drop', dropSpy);
+
+    dispatchRetryWithFallback('qwen-global-alert-retry', makePdfAttachment());
+    await vi.advanceTimersByTimeAsync(14000);
+
+    expect(dropSpy).toHaveBeenCalledTimes(1);
+    const result = getLastActionResult();
+    expect(result.requestId).toBe('qwen-global-alert-retry');
+    expect(result.status).toBe('failed');
+    expect(result.succeededAttachmentIds).toEqual([]);
+  });
+
+  it('Gemini: ignores an unrelated <aside> image input and keeps the classic document drop fallback', async () => {
+    mountGemini(`
+      <aside><input type="file" accept="image/*" /></aside>
+      <div class="input-area-container">
+        <div class="ql-editor" contenteditable="true"></div>
+        <button aria-label="Upload file">+</button>
+      </div>
+    `);
+    const calls = [];
+    document.querySelector('aside input').addEventListener('change', () => calls.push('aside'));
+    document.querySelector('.ql-editor').addEventListener('drop', () => {
+      calls.push('drop');
+      document
+        .querySelector('.input-area-container')
+        .insertAdjacentHTML('beforeend', '<div class="file-chip">paper.pdf</div>');
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-aside-doc' });
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(calls).toEqual(['drop']);
+    const result = getLastActionResult();
+    expect(result.status).toBe('succeeded');
+    expect(result.succeededAttachmentIds).toEqual(['doc-pdf-1']);
+    expect(result.skippedAttachments).toBeUndefined();
+  });
+
+  it('Gemini: never clicks an attachment chip remove button while looking for the upload trigger', async () => {
+    mountGemini(`
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <div class="file-preview-chip"><button aria-label="close upload plan">x</button></div>
+        <uploader>
+          <button id="localized-upload" aria-label="Dateien hinzufügen"><mat-icon fonticon="add"></mat-icon></button>
+        </uploader>
+      </input-container>
+    `);
+    const picked = [];
+    const removeBtn = document.querySelector('.file-preview-chip button');
+    removeBtn.addEventListener('click', () => {
+      picked.push('removed');
+      removeBtn.parentElement.remove();
+    });
+    document.getElementById('localized-upload').addEventListener('click', () => {
+      picked.push('upload');
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<div class="cdk-overlay-pane"><input type="file" class="hidden-file-input" accept=".pdf,.docx" /></div>'
+      );
+      document.querySelector('.cdk-overlay-pane input').addEventListener('change', () => {
+        document
+          .querySelector('input-container')
+          .insertAdjacentHTML('beforeend', '<uploader-file-preview class="file-preview-chip"><span class="gem-attachment-text">paper</span></uploader-file-preview>');
+      });
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-chip-remove' });
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(picked).toEqual(['upload']);
+    expect(document.querySelector('button[aria-label="close upload plan"]')).not.toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-pdf-1'] })
+    );
+  });
+
+  it('Gemini: a one-letter stem never erases the failure wording of an "Upload failed: a.pdf" chip', async () => {
+    mountGemini('<input-container><div class="ql-editor" contenteditable="true" role="textbox"></div></input-container>');
+    document.querySelector('.ql-editor').addEventListener('drop', () => {
+      document
+        .querySelector('input-container')
+        .insertAdjacentHTML('beforeend', '<div class="file-preview-chip">Upload failed: a.pdf</div>');
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment('a', 'a.pdf')], requestId: 'gemini-short-stem' });
+    await vi.advanceTimersByTimeAsync(16000);
+
+    const result = getLastActionResult();
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('preview-timeout');
+    expect(result.succeededAttachmentIds).toEqual([]);
+  });
+
+  it('Gemini: two CJK documents sharing a displayed stem each confirm their own new chip', async () => {
+    mountGemini(`
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <input type="file" class="hidden-file-input" accept=".pdf,.docx" />
+      </input-container>
+    `);
+    document.querySelector('input[type="file"]').addEventListener('change', () => {
+      document
+        .querySelector('input-container')
+        .insertAdjacentHTML('beforeend', '<uploader-file-preview class="file-preview-chip"><span class="gem-attachment-text">日本(1)</span></uploader-file-preview>');
+    });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('a', '日本(1).pdf'), makeDocxAttachment('b', '日本(1).docx')],
+      requestId: 'gemini-cjk-same-stem',
+    });
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['a', 'b'] })
+    );
+  });
+
+  it('Gemini: retry reconciles one retained "sample" chip with only one of sample.pdf / sample.docx', async () => {
+    mountGemini(`
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <input type="file" class="hidden-file-input" accept=".pdf,.docx" />
+        <uploader-file-preview class="file-preview-chip"><span>PDF</span><span class="gem-attachment-text">sample</span></uploader-file-preview>
+      </input-container>
+    `);
+    const uploaded = [];
+    const fileInput = document.querySelector('input[type="file"]');
+    fileInput.addEventListener('change', () => {
+      uploaded.push(fileInput.files[0].name);
+      document
+        .querySelector('input-container')
+        .insertAdjacentHTML('beforeend', '<uploader-file-preview class="file-preview-chip"><span>DOCX</span><span class="gem-attachment-text">sample</span></uploader-file-preview>');
+    });
+
+    dispatchRetryWithFallback(
+      'gemini-retry-partial',
+      makePdfAttachment('a', 'sample.pdf'),
+      makeDocxAttachment('b', 'sample.docx')
+    );
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(uploaded).toEqual(['sample.docx']);
+    expect(document.querySelectorAll('uploader-file-preview')).toHaveLength(2);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'gemini-retry-partial',
+        status: 'succeeded',
+        succeededAttachmentIds: ['a', 'b'],
+      })
+    );
+
+    // Both chips now retained: a second retry must not upload anything again.
+    document.querySelector('.ql-editor').textContent = '';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback(
+      'gemini-retry-all-retained',
+      makePdfAttachment('a', 'sample.pdf'),
+      makeDocxAttachment('b', 'sample.docx')
+    );
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(uploaded).toEqual(['sample.docx']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'gemini-retry-all-retained',
+        status: 'succeeded',
+        succeededAttachmentIds: ['a', 'b'],
+      })
+    );
+  });
+
+  it('Gemini: dismisses the opened upload menu by sending Escape to the menu element itself', async () => {
+    mountGemini(`
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <uploader><button aria-label="Upload &amp; tools">+</button></uploader>
+      </input-container>
+    `);
+    document.querySelector('uploader button').addEventListener('click', () => {
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<div class="cdk-overlay-pane"><div role="menu"><input type="file" class="hidden-file-input" accept=".pdf,.docx" /></div></div>'
+      );
+      const menu = document.querySelector('[role="menu"]');
+      menu.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') menu.parentElement.remove();
+      });
+      menu.querySelector('input').addEventListener('change', () => {
+        document
+          .querySelector('input-container')
+          .insertAdjacentHTML('beforeend', '<div class="file-preview-chip">paper.pdf</div>');
+      });
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-menu-escape' });
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-pdf-1'] })
     );
   });
 });
