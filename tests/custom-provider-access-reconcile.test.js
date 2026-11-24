@@ -305,10 +305,14 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
     const enabled = await getEnabledProviders();
     expect(enabled.map((p) => p.id)).toEqual(['chatgpt', 'aistudio', CUSTOM_RECORD_A.id]);
 
-    // requestOptionalProviderPermission requests exact custom permissionOrigins
+    // requestOptionalProviderPermission requests core + companion cookie permission origins
     await expect(requestOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(true);
     expect(chrome.permissions.request).toHaveBeenCalledWith({
-      origins: ['https://chat.example.com/*'],
+      origins: [
+        'https://chat.example.com/*',
+        'https://*.example.com/*',
+        'http://*.example.com/*',
+      ],
     });
     await expect(hasOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(true);
 
@@ -508,7 +512,10 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
 
     // Zero custom rules installed (scoped or unscoped), and custom scripts are NOT registered
     expect(state.dynamicRules.some(({ id }) => id >= 10000 && id <= 19999)).toBe(false);
-    expect(state.registeredScripts.map(({ id }) => id)).toEqual(['chatglm-scripts']);
+    expect(state.registeredScripts.map(({ id }) => id)).toEqual([
+      'chatglm-scripts',
+      'chatglm-cookie-scripts',
+    ]);
   });
 
   it('omits custom rules and scripts while preserving built-in fallback when scoped rule installation throws', async () => {

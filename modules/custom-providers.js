@@ -3,7 +3,11 @@ import {
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
   CUSTOM_PROVIDER_ID_PATTERN,
+  getCompanionCookiePermissionOrigins,
+  getProviderCompanionCookieOrigins,
   getProviderDescriptor,
+  getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain,
   listProviderDescriptors,
   setCustomProviderDescriptors,
   validateProviderDescriptor
@@ -13,7 +17,11 @@ import { resolveChatCompletionsUrl } from './openai-chat-client.js';
 export {
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
-  CUSTOM_PROVIDER_ID_PATTERN
+  CUSTOM_PROVIDER_ID_PATTERN,
+  getCompanionCookiePermissionOrigins,
+  getProviderCompanionCookieOrigins,
+  getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain
 };
 
 export const CUSTOM_PROVIDERS_STORAGE_KEY = 'customProviders';

@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  STITCH_GRID_GAP,
+  STITCH_GRID_PADDING,
   STITCH_STEP_RATIO,
   addStitchScreen,
   allocateRowContentHeights,
@@ -217,5 +221,56 @@ describe('fitCanvasScale', () => {
   it('shrinks the scale past the dimension or area limit', () => {
     expect(fitCanvasScale(1000, 20000, 2, limits)).toBeCloseTo(32767 / 20000);
     expect(fitCanvasScale(15000, 15000, 2, limits)).toBeCloseTo(Math.sqrt(268435456 / (15000 * 15000)));
+  });
+});
+
+/**
+ * Lists every style rule of `css` with its selector, the at-rules it is nested
+ * in, and its declarations.
+ */
+function listCssRules(css) {
+  const rules = [];
+  const parents = [];
+  let buffer = '';
+  for (const char of css.replace(/\/\*[\s\S]*?\*\//g, '')) {
+    if (char === '{') {
+      parents.push(buffer.trim());
+      buffer = '';
+    } else if (char === '}') {
+      const selector = parents.pop();
+      if (buffer.trim() && !selector.startsWith('@')) {
+        const declarations = Object.fromEntries(buffer.split(';')
+          .map((declaration) => declaration.split(':'))
+          .filter((parts) => parts.length >= 2)
+          .map(([property, ...value]) => [property.trim(), value.join(':').trim()]));
+        rules.push({ selector, atRules: parents.filter((parent) => parent.startsWith('@')), declarations });
+      }
+      buffer = '';
+    } else {
+      buffer += char;
+    }
+  }
+  return rules;
+}
+
+describe('#panel-grid geometry', () => {
+  const css = readFileSync(resolve(process.cwd(), 'multi-panel/multi-panel.css'), 'utf8');
+  const gridRules = listCssRules(css).filter((rule) => rule.selector.includes('#panel-grid'));
+  const hint = 'Share Snapshot stitching assumes this: update STITCH_GRID_GAP and '
+    + 'STITCH_GRID_PADDING in modules/snapshot-stitch.js together with the CSS';
+
+  it('uses the gap and padding the stitched snapshot is laid out with', () => {
+    const base = gridRules.filter((rule) => rule.selector === '#panel-grid' && rule.atRules.length === 0);
+    expect(base).toHaveLength(1);
+    expect(base[0].declarations.gap, hint).toBe(`${STITCH_GRID_GAP}px`);
+    expect(base[0].declarations.padding, hint).toBe(`${STITCH_GRID_PADDING}px`);
+  });
+
+  it('does not override the gap or padding anywhere else', () => {
+    const overrides = gridRules
+      .filter((rule) => rule.selector !== '#panel-grid' || rule.atRules.length > 0)
+      .filter((rule) => Object.keys(rule.declarations).some((property) => /^(gap|row-gap|column-gap|padding(-.+)?)$/.test(property)))
+      .map((rule) => [...rule.atRules, rule.selector].join(' '));
+    expect(overrides, hint).toEqual([]);
   });
 });

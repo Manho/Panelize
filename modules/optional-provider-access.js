@@ -8,7 +8,9 @@ import {
   BUILTIN_PROVIDER_DESCRIPTORS,
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
+  getProviderCompanionCookieOrigins,
   getProviderDescriptor,
+  getProviderRequestPermissionOrigins,
   listProviderDescriptors
 } from './provider-registry.js';
 
@@ -18,6 +20,15 @@ export const OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION = 'syncOptionalProviderAccess'
 
 const optionalConfigCache = new WeakMap();
 const CUSTOM_PROVIDER_SCRIPT_ID_PATTERN = /^custom-[0-9a-f]{10}-(?:cookie-)?scripts$/;
+const CHATGLM_COOKIE_CONTENT_SCRIPT = Object.freeze({
+  id: 'chatglm-cookie-scripts',
+  matches: Object.freeze(['https://chatglm.cn/*']),
+  js: Object.freeze([CUSTOM_PROVIDER_COOKIE_CONSENT_SCRIPT]),
+  allFrames: true,
+  persistAcrossSessions: true,
+  world: 'MAIN',
+  runAt: 'document_start'
+});
 
 function createContentScriptFromSpec(id, contentScriptSpec) {
   return {
@@ -112,13 +123,56 @@ export async function hasOptionalProviderPermission(providerId) {
   return chrome.permissions.contains({ origins: [...config.origins] });
 }
 
+export async function hasOptionalProviderCompanionCookiePermission(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  const companionOrigins = getProviderCompanionCookieOrigins(descriptor);
+  if (companionOrigins.length === 0) {
+    return true;
+  }
+  if (!chrome.permissions?.contains) {
+    return false;
+  }
+  try {
+    return Boolean(await chrome.permissions.contains({ origins: companionOrigins }));
+  } catch {
+    return false;
+  }
+}
+
+export function requestOptionalProviderCompanionCookiePermission(providerId) {
+  const descriptor = getProviderDescriptor(providerId);
+  const companionOrigins = getProviderCompanionCookieOrigins(descriptor);
+  if (companionOrigins.length === 0) {
+    return Promise.resolve(true);
+  }
+  if (!chrome.permissions?.request) {
+    return Promise.resolve(false);
+  }
+  return Promise.resolve(chrome.permissions.request({ origins: companionOrigins })).then(
+    async (granted) => {
+      if (granted) {
+        return true;
+      }
+      return hasOptionalProviderCompanionCookiePermission(providerId);
+    }
+  );
+}
+
 export function requestOptionalProviderPermission(providerId) {
   const descriptor = getProviderDescriptor(providerId);
   if (descriptor?.access === 'custom') {
     if (!chrome.permissions?.request) {
       return Promise.resolve(false);
     }
-    return chrome.permissions.request({ origins: [...descriptor.permissionOrigins] });
+    const requestOrigins = getProviderRequestPermissionOrigins(descriptor);
+    return Promise.resolve(chrome.permissions.request({ origins: requestOrigins })).then(
+      async (granted) => {
+        if (granted) {
+          return true;
+        }
+        return hasOptionalProviderPermission(providerId);
+      }
+    );
   }
   if (isCustomProviderId(providerId)) {
     return Promise.resolve(false);
@@ -129,7 +183,15 @@ export function requestOptionalProviderPermission(providerId) {
     return Promise.resolve(true);
   }
 
-  return chrome.permissions.request({ origins: [...config.origins] });
+  const requestOrigins = getProviderRequestPermissionOrigins(descriptor);
+  return Promise.resolve(chrome.permissions.request({ origins: requestOrigins })).then(
+    async (granted) => {
+      if (granted) {
+        return true;
+      }
+      return hasOptionalProviderPermission(providerId);
+    }
+  );
 }
 
 export async function filterProvidersWithGrantedAccess(providerIds) {
@@ -336,16 +398,25 @@ async function syncContentScripts(
     return;
   }
 
-  const managedOptionalScriptIds = new Set(allConfigs.map(({ contentScript }) => contentScript.id));
+  const managedOptionalScriptIds = new Set([
+    ...allConfigs.map(({ contentScript }) => contentScript.id),
+    CHATGLM_COOKIE_CONTENT_SCRIPT.id
+  ]);
   const isManagedScriptId = (id) => (
     managedOptionalScriptIds.has(id) ||
     (reconcileCustom && isManagedCustomScriptId(id))
   );
 
   const desiredOptionalScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
-  const desiredCustomScripts = desiredCustomConfigs
-    .flatMap(({ contentScript, cookieContentScript }) => [contentScript, cookieContentScript])
-    .filter(Boolean);
+  const desiredOptionalCookieScripts = desiredOptionalScriptIds.has('chatglm-scripts')
+    ? [CHATGLM_COOKIE_CONTENT_SCRIPT]
+    : [];
+  const desiredCustomScripts = [
+    ...desiredOptionalCookieScripts,
+    ...desiredCustomConfigs
+      .flatMap(({ contentScript, cookieContentScript }) => [contentScript, cookieContentScript])
+      .filter(Boolean)
+  ];
   const desiredCustomById = new Map(
     desiredCustomScripts.map((contentScript) => [contentScript.id, contentScript])
   );

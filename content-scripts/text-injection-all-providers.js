@@ -912,12 +912,49 @@
   }
 
   /**
+   * Returns true only when this frame is directly embedded by our extension's
+   * Multi-Panel host, never in a standalone tab, a nested sub-iframe, or a
+   * third-party/same-origin web frame.
+   */
+  function canPostToMultiPanelHost() {
+    if (EXTENSION_ORIGIN === null || !window.parent || window.parent === window) {
+      return false;
+    }
+    // Nested sub-frames (e.g. a provider's own child iframe inside Multi-Panel)
+    // have an intermediate parent frame rather than the top-level Multi-Panel host.
+    // Guard against synthetic test windows that mock `window.parent` without
+    // updating `window.top` (leaving `window.top === window`).
+    if (window.top && window.top !== window && window.parent !== window.top) {
+      return false;
+    }
+    const ancestors = window.location?.ancestorOrigins;
+    if (ancestors && typeof ancestors.length === 'number' && ancestors.length > 0) {
+      return ancestors.length === 1 && ancestors[0] === EXTENSION_ORIGIN;
+    }
+    // Fallback for engines without `location.ancestorOrigins` (e.g. Firefox):
+    // if `window.parent.location.origin` is readable without a cross-origin
+    // SecurityError, the parent is same-origin with this web page, not the
+    // extension host.
+    try {
+      const parentOrigin = window.parent.location?.origin;
+      if (typeof parentOrigin === 'string' && parentOrigin !== EXTENSION_ORIGIN) {
+        return false;
+      }
+    } catch {
+      // Cross-origin parent (expected when embedded inside the extension page).
+    }
+    return true;
+  }
+
+  /**
    * Posts to the Multi-Panel page embedding this frame. Targets the extension
    * origin, never '*', so a third-party page framing the provider learns
-   * nothing (conversation URL, status); nothing is posted without that origin.
+   * nothing (conversation URL, status); nothing is posted unless directly
+   * embedded by our extension origin (avoiding Chrome targetOrigin mismatch
+   * warnings on standalone tabs or nested provider sub-iframes).
    */
   function postToMultiPanelHost(message) {
-    if (EXTENSION_ORIGIN === null || window.parent === window) {
+    if (!canPostToMultiPanelHost()) {
       return;
     }
     window.parent.postMessage(message, EXTENSION_ORIGIN);
@@ -927,8 +964,22 @@
     if (window.parent === window || window.parent !== window.top) {
       return false;
     }
-    const embedder = window.location.ancestorOrigins?.[0];
-    return embedder === undefined || /^(chrome|moz)-extension:/.test(embedder);
+    const ancestors = window.location?.ancestorOrigins;
+    if (ancestors && typeof ancestors.length === 'number' && ancestors.length > 0) {
+      if (EXTENSION_ORIGIN !== null) {
+        return ancestors.length === 1 && ancestors[0] === EXTENSION_ORIGIN;
+      }
+      return ancestors.length === 1 && /^(chrome|moz)-extension:/.test(ancestors[0]);
+    }
+    try {
+      const parentOrigin = window.parent.location?.origin;
+      if (typeof parentOrigin === 'string' && !/^(chrome|moz)-extension:/.test(parentOrigin)) {
+        return false;
+      }
+    } catch {
+      // Cross-origin parent.
+    }
+    return true;
   }
 
   /**
