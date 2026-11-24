@@ -24,6 +24,7 @@ import {
   getCompanionCookiePermissionOrigins,
   getProviderDescriptor,
   getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain,
   setCustomProviderDescriptors,
 } from '../modules/provider-registry.js';
 
@@ -62,17 +63,40 @@ function installStatefulCookieEnv({
     },
   };
 
+  const patternMatchesSchemeAndHost = (pattern, scheme, host) => {
+    const lowerHost = host.toLowerCase();
+    const wildcardMatch = /^(https?):\/\/\*\.([^/]+)\/\*$/.exec(pattern);
+    if (wildcardMatch) {
+      const [, patScheme, patDomain] = wildcardMatch;
+      const lowerDomain = patDomain.toLowerCase();
+      return (
+        patScheme === scheme &&
+        (lowerHost === lowerDomain || lowerHost.endsWith(`.${lowerDomain}`))
+      );
+    }
+    const exactMatch = /^(https?):\/\/([^/:]+)(?::\d+)?\/\*$/.exec(pattern);
+    if (exactMatch) {
+      const [, patScheme, patHost] = exactMatch;
+      return patScheme === scheme && lowerHost === patHost.toLowerCase();
+    }
+    return false;
+  };
+
+  const hasGrantedSchemeAndHost = (scheme, host) => {
+    for (const pattern of state.grantedOrigins) {
+      if (patternMatchesSchemeAndHost(pattern, scheme, host)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const hasHostAccessForCookie = (cookie) => {
     if (!enforceHostPermissionsOnCookies) {
       return true;
     }
     const cleanHost = (cookie.domain || '').replace(/^\.+/, '').toLowerCase();
-    const hasHttps = state.grantedOrigins.has(`https://${cleanHost}/*`);
-    const hasHttp = state.grantedOrigins.has(`http://${cleanHost}/*`);
-    if (cookie.secure) {
-      return hasHttps;
-    }
-    return hasHttp;
+    return hasGrantedSchemeAndHost(cookie.secure ? 'https' : 'http', cleanHost);
   };
 
   const hasHostAccessForUrl = (rawUrl) => {
@@ -80,7 +104,8 @@ function installStatefulCookieEnv({
       return true;
     }
     const parsed = new URL(rawUrl);
-    return state.grantedOrigins.has(`${parsed.origin}/*`);
+    const scheme = parsed.protocol.replace(/:$/, '');
+    return hasGrantedSchemeAndHost(scheme, parsed.hostname);
   };
 
   const matchesCookieFilter = (cookie, filter = {}) => {
@@ -178,6 +203,14 @@ function installStatefulCookieEnv({
       if (!hasHostAccessForUrl(details.url)) {
         return Promise.reject(new Error(`No host permissions for cookies at url: ${details.url}`));
       }
+      if (
+        details.domain &&
+        !hasHostAccessForCookie({ domain: details.domain, secure: Boolean(details.secure) })
+      ) {
+        return Promise.reject(
+          new Error(`No host permissions for cookie domain: ${details.domain}`)
+        );
+      }
       const parsedUrl = new URL(details.url);
       const hostOnly = !details.domain;
       const domain = details.domain || parsedUrl.hostname;
@@ -273,14 +306,26 @@ describe('modules/embedded-frame-cookies.js', () => {
     vi.restoreAllMocks();
   });
 
-  it('keeps core permissionOrigins HTTPS-only while computing companion cookie origins separately', () => {
+  it('keeps core permissionOrigins HTTPS-only while computing safe parent-domain companion cookie origins separately', () => {
     expect(getCompanionCookiePermissionOrigins('http://localhost:3000')).toEqual([]);
     expect(getCompanionCookiePermissionOrigins('https://aistudio.xiaomimimo.com')).toEqual([
-      'http://aistudio.xiaomimimo.com/*',
+      'https://*.xiaomimimo.com/*',
+      'http://*.xiaomimimo.com/*',
     ]);
     expect(getCompanionCookiePermissionOrigins('https://chat.internal.example:8443')).toEqual([
-      'https://chat.internal.example/*',
-      'http://chat.internal.example/*',
+      'https://*.internal.example/*',
+      'http://*.internal.example/*',
+    ]);
+    expect(getCompanionCookiePermissionOrigins('https://my-app.pages.dev:8443')).toEqual([
+      'https://my-app.pages.dev/*',
+      'http://my-app.pages.dev/*',
+    ]);
+    expect(getCompanionCookiePermissionOrigins('https://127.0.0.1:8443')).toEqual([
+      'https://127.0.0.1/*',
+      'http://127.0.0.1/*',
+    ]);
+    expect(getCompanionCookiePermissionOrigins('https://chatglm.cn')).toEqual([
+      'http://chatglm.cn/*',
     ]);
     expect(getCompanionCookiePermissionOrigins('not-an-origin')).toEqual([]);
 
@@ -301,8 +346,73 @@ describe('modules/embedded-frame-cookies.js', () => {
     expect(mimoDescriptor.permissionOrigins).toEqual(['https://aistudio.xiaomimimo.com/*']);
     expect(getProviderRequestPermissionOrigins(mimoDescriptor)).toEqual([
       'https://aistudio.xiaomimimo.com/*',
-      'http://aistudio.xiaomimimo.com/*',
+      'https://*.xiaomimimo.com/*',
+      'http://*.xiaomimimo.com/*',
     ]);
+  });
+
+  it('derives safe parent registrable domains while refusing apex, shared-hosting, IP, and local hostnames', () => {
+    // Standard and deep subdomains
+    expect(getSafeParentCookieDomain('aistudio.xiaomimimo.com')).toBe('xiaomimimo.com');
+    expect(getSafeParentCookieDomain('deep.sub.xiaomimimo.com')).toBe('xiaomimimo.com');
+    expect(getSafeParentCookieDomain('AISTUDIO.XIAOMIMIMO.COM')).toBe('xiaomimimo.com');
+
+    // Multi-part public suffixes (eTLD+1 requires 3 labels)
+    expect(getSafeParentCookieDomain('app.example.co.uk')).toBe('example.co.uk');
+    expect(getSafeParentCookieDomain('studio.corp.com.cn')).toBe('corp.com.cn');
+    expect(getSafeParentCookieDomain('a.b.corp.gov.cn')).toBe('corp.gov.cn');
+    expect(getSafeParentCookieDomain('ai.example.co.jp')).toBe('example.co.jp');
+    expect(getSafeParentCookieDomain('chat.example.com.au')).toBe('example.com.au');
+    expect(getSafeParentCookieDomain('portal.example.org.uk')).toBe('example.org.uk');
+    expect(getSafeParentCookieDomain('chat.example.edu.cn')).toBe('example.edu.cn');
+    expect(getSafeParentCookieDomain('chat.example.net.cn')).toBe('example.net.cn');
+    expect(getSafeParentCookieDomain('chat.example.org.cn')).toBe('example.org.cn');
+    expect(getSafeParentCookieDomain('chat.example.com.hk')).toBe('example.com.hk');
+    expect(getSafeParentCookieDomain('chat.example.com.tw')).toBe('example.com.tw');
+
+    // Apex domains (must not broaden)
+    expect(getSafeParentCookieDomain('chatglm.cn')).toBeNull();
+    expect(getSafeParentCookieDomain('xiaomimimo.com')).toBeNull();
+    expect(getSafeParentCookieDomain('example.co.uk')).toBeNull();
+    expect(getSafeParentCookieDomain('corp.com.cn')).toBeNull();
+
+    // Shared-hosting public suffixes (must never broaden)
+    for (const host of [
+      'foo.github.io',
+      'sub.foo.github.io',
+      'foo.pages.dev',
+      'sub.foo.pages.dev',
+      'app.vercel.app',
+      'site.netlify.app',
+      'fn.workers.dev',
+      'app.web.app',
+      'app.firebaseapp.com',
+      'svc.onrender.com',
+      'demo.hf.space',
+      'app.herokuapp.com',
+      'app.azurewebsites.net',
+      'd123.cloudfront.net',
+      'bucket.s3.us-east-1.amazonaws.com',
+      'app.appspot.com',
+    ]) {
+      expect(getSafeParentCookieDomain(host)).toBeNull();
+      expect(getCompanionCookiePermissionOrigins(`https://${host}`)).toEqual([`http://${host}/*`]);
+    }
+
+    // IPs, localhost, local/internal TLDs, and invalid inputs
+    for (const host of [
+      '127.0.0.1',
+      '192.168.1.10',
+      '[::1]',
+      'localhost',
+      'sub.localhost',
+      'app.corp.local',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(getSafeParentCookieDomain(host)).toBeNull();
+    }
   });
 
   it('identifies providers requiring embedded frame cookie sync', () => {
@@ -1707,6 +1817,248 @@ describe('modules/embedded-frame-cookies.js', () => {
       globalThis.fetch = originalFetch;
       document.body.innerHTML = '';
     }
+  });
+
+  it('mirrors parent-domain .xiaomimimo.com cookies with *.xiaomimimo.com companion grant, isolates sibling/apex cookies, handles onChanged, and cleans up safely', async () => {
+    const mimoStudioRecord = {
+      id: 'custom-5555555555',
+      name: 'Xiaomi MiMo Studio',
+      url: 'https://aistudio.xiaomimimo.com/',
+      frameRuleId: 10010,
+      createdAt: 1700000000000,
+    };
+    const mimoChatRecord = {
+      id: 'custom-6666666666',
+      name: 'Xiaomi MiMo Chat',
+      url: 'https://chat.xiaomimimo.com/',
+      frameRuleId: 10011,
+      createdAt: 1700000001000,
+    };
+
+    const state = installStatefulCookieEnv({
+      enabledProviders: [mimoStudioRecord.id],
+      customRecords: [mimoStudioRecord, mimoChatRecord],
+      // Start with ONLY per-host permissions (no *.xiaomimimo.com) -> mirrors Chromium CanAccessCookie
+      grantedOrigins: ['https://aistudio.xiaomimimo.com/*', 'http://aistudio.xiaomimimo.com/*'],
+      enforceHostPermissionsOnCookies: true,
+      initialCookies: [
+        {
+          name: 'xiaomichatbot_serviceToken',
+          value: 'secret-http-only',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          path: '/',
+          secure: false,
+          httpOnly: true,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+        {
+          name: 'xiaomichatbot_ph',
+          value: 'ph-parent-1',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+        {
+          name: 'userId',
+          value: 'mi-10001',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+        {
+          name: 'scoped_parent_cookie',
+          value: 'scoped-val',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          path: '/studio',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+        // Sibling & apex host-only cookies that must NEVER be mirrored into aistudio.xiaomimimo.com
+        {
+          name: 'apex_only_secret',
+          value: 'do-not-leak-apex',
+          domain: 'xiaomimimo.com',
+          hostOnly: true,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+        {
+          name: 'sibling_host_secret',
+          value: 'do-not-leak-sibling',
+          domain: 'other.xiaomimimo.com',
+          hostOnly: true,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+        {
+          name: 'sibling_domain_secret',
+          value: 'do-not-leak-sibling-domain',
+          domain: '.other.xiaomimimo.com',
+          hostOnly: false,
+          path: '/',
+          secure: false,
+          httpOnly: false,
+          sameSite: 'unspecified',
+          storeId: '0',
+        },
+      ],
+    });
+
+    // 1. onChanged filter accepts unpartitioned non-HttpOnly .xiaomimimo.com cookies and ignores HttpOnly/partitioned
+    expect(
+      isEmbeddedFrameTopLevelCookieChange({
+        removed: false,
+        cause: 'explicit',
+        cookie: {
+          name: 'xiaomichatbot_ph',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          httpOnly: false,
+          secure: false,
+        },
+      })
+    ).toBe(true);
+    expect(
+      isEmbeddedFrameTopLevelCookieChange({
+        removed: false,
+        cause: 'explicit',
+        cookie: {
+          name: 'xiaomichatbot_serviceToken',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          httpOnly: true,
+          secure: false,
+        },
+      })
+    ).toBe(false);
+    expect(
+      isEmbeddedFrameTopLevelCookieChange({
+        removed: false,
+        cause: 'explicit',
+        cookie: {
+          name: 'xiaomichatbot_ph',
+          domain: '.xiaomimimo.com',
+          hostOnly: false,
+          httpOnly: false,
+          secure: true,
+          partitionKey: { topLevelSite: EXTENSION_TOP_SITE },
+        },
+      })
+    ).toBe(false);
+
+    // 2. Without *.xiaomimimo.com companion grants, .xiaomimimo.com cookies are invisible
+    await reconcileEmbeddedFrameCookies();
+    expect(state.cookies.filter((c) => Boolean(c.partitionKey))).toEqual([]);
+
+    // 3. Grant *.xiaomimimo.com companion origins (removing explicit http://aistudio.xiaomimimo.com/*)
+    state.grantedOrigins.delete('http://aistudio.xiaomimimo.com/*');
+    state.grantedOrigins.add('https://*.xiaomimimo.com/*');
+    state.grantedOrigins.add('http://*.xiaomimimo.com/*');
+
+    await reconcileEmbeddedFrameCookies();
+
+    const mirrored = state.cookies
+      .filter((c) => c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE)
+      .map(({ domain, hostOnly, name, path, value, secure, sameSite }) => ({
+        domain,
+        hostOnly,
+        name,
+        path,
+        value,
+        secure,
+        sameSite,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    expect(mirrored).toEqual([
+      {
+        domain: '.xiaomimimo.com',
+        hostOnly: false,
+        name: 'scoped_parent_cookie',
+        path: '/studio',
+        value: 'scoped-val',
+        secure: true,
+        sameSite: 'no_restriction',
+      },
+      {
+        domain: '.xiaomimimo.com',
+        hostOnly: false,
+        name: 'userId',
+        path: '/',
+        value: 'mi-10001',
+        secure: true,
+        sameSite: 'no_restriction',
+      },
+      {
+        domain: '.xiaomimimo.com',
+        hostOnly: false,
+        name: 'xiaomichatbot_ph',
+        path: '/',
+        value: 'ph-parent-1',
+        secure: true,
+        sameSite: 'no_restriction',
+      },
+    ]);
+
+    // 4. Enabling a sibling provider (chat.xiaomimimo.com) and then disabling aistudio.xiaomimimo.com
+    //    preserves the shared .xiaomimimo.com CHIPS mirrors for chat.xiaomimimo.com.
+    state.grantedOrigins.add('https://chat.xiaomimimo.com/*');
+    state.enabledProviders = [mimoStudioRecord.id, mimoChatRecord.id];
+    await reconcileEmbeddedFrameCookies();
+    state.enabledProviders = [mimoChatRecord.id];
+    await reconcileEmbeddedFrameCookies();
+    expect(
+      state.cookies
+        .filter((c) => c.partitionKey?.topLevelSite === EXTENSION_TOP_SITE)
+        .map((c) => c.name)
+        .sort()
+    ).toEqual(['scoped_parent_cookie', 'userId', 'xiaomichatbot_ph']);
+
+    // 5. Revoking https://*.xiaomimimo.com/* while disabling chat.xiaomimimo.com must fail closed
+    //    (keep pendingCleanups instead of falsely treating hidden .xiaomimimo.com cookies as absent).
+    state.grantedOrigins.delete('https://*.xiaomimimo.com/*');
+    state.enabledProviders = [];
+    const blockedResult = await reconcileEmbeddedFrameCookies();
+    expect(blockedResult.ok).toBe(false);
+    expect(blockedResult.pendingCleanupsByOrigin['https://chat.xiaomimimo.com']).toBe(3);
+
+    // 6. Restoring https://*.xiaomimimo.com/* completes cleanup of CHIPS mirrors while leaving ALL
+    //    top-level unpartitioned .xiaomimimo.com cookies 100% intact!
+    state.grantedOrigins.add('https://*.xiaomimimo.com/*');
+    const finalResult = await reconcileEmbeddedFrameCookies();
+    expect(finalResult.ok).toBe(true);
+    expect(finalResult.pendingCleanupCount).toBe(0);
+    expect(state.cookies.filter((c) => Boolean(c.partitionKey))).toEqual([]);
+    expect(
+      state.cookies
+        .filter((c) => !c.partitionKey && c.domain === '.xiaomimimo.com')
+        .map((c) => c.name)
+        .sort()
+    ).toEqual([
+      'scoped_parent_cookie',
+      'userId',
+      'xiaomichatbot_ph',
+      'xiaomichatbot_serviceToken',
+    ]);
   });
 
   it('coalesces burst reconcile calls in createEmbeddedFrameCookieReconcileScheduler', async () => {

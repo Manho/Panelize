@@ -330,6 +330,28 @@ function getCustomRequestPermissionOrigins(origin, isApiKind) {
   return [`${origin}/*`, ...getCompanionCookiePermissionOrigins(origin)];
 }
 
+function originPatternCovers(broadPattern, narrowPattern) {
+  if (broadPattern === narrowPattern) {
+    return true;
+  }
+  const broadMatch = /^(https?):\/\/\*\.([^/]+)\/\*$/.exec(broadPattern);
+  if (!broadMatch) {
+    return false;
+  }
+  const [, broadScheme, broadDomain] = broadMatch;
+  const narrowMatch = /^(https?):\/\/(?:\*\.)?([^/:]+)(?::\d+)?\/\*$/.exec(narrowPattern);
+  if (!narrowMatch) {
+    return false;
+  }
+  const [, narrowScheme, narrowHost] = narrowMatch;
+  if (broadScheme !== narrowScheme) {
+    return false;
+  }
+  const lowerBroad = broadDomain.toLowerCase();
+  const lowerNarrow = narrowHost.toLowerCase();
+  return lowerNarrow === lowerBroad || lowerNarrow.endsWith(`.${lowerBroad}`);
+}
+
 function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) {
   if (!Array.isArray(origins) || origins.length === 0) {
     return [];
@@ -349,7 +371,10 @@ function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) 
       usedPatterns.add(pattern);
     }
   }
-  return origins.filter((pattern) => !usedPatterns.has(pattern));
+  const usedList = [...usedPatterns];
+  return origins.filter(
+    (pattern) => !usedList.some((usedPattern) => originPatternCovers(pattern, usedPattern))
+  );
 }
 
 async function withTemporaryOriginStripSessionRule(origin, fn) {

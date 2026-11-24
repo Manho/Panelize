@@ -4,7 +4,11 @@ import {
   hasOptionalProviderPermission,
   supportsScopedFrameRules
 } from './optional-provider-access.js';
-import { getProviderDescriptor, listProviderDescriptors } from './provider-registry.js';
+import {
+  getProviderDescriptor,
+  getSafeParentCookieDomain,
+  listProviderDescriptors
+} from './provider-registry.js';
 
 export const EMBEDDED_FRAME_COOKIE_SYNC_ACTION = 'syncEmbeddedFrameCookies';
 export const CHATGLM_PROVIDER_ID = 'chatglm';
@@ -238,41 +242,81 @@ async function hasOriginCookiePermission(origin) {
   }
 }
 
+async function hasDomainCookiePermission(cleanDomain, { secure = true } = {}) {
+  if (typeof cleanDomain !== 'string' || cleanDomain.length === 0 || !chrome?.permissions?.contains) {
+    return false;
+  }
+  const scheme = secure ? 'https' : 'http';
+  try {
+    if (await chrome.permissions.contains({ origins: [`${scheme}://${cleanDomain}/*`] })) {
+      return true;
+    }
+    return Boolean(
+      await chrome.permissions.contains({ origins: [`${scheme}://*.${cleanDomain}/*`] })
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function hasHostHttpCookiePermission(hostname) {
+  if (typeof hostname !== 'string' || hostname.length === 0 || !chrome?.permissions?.contains) {
+    return false;
+  }
+  try {
+    if (await chrome.permissions.contains({ origins: [`http://${hostname}/*`] })) {
+      return true;
+    }
+    const parentDomain = getSafeParentCookieDomain(hostname);
+    if (parentDomain) {
+      return Boolean(
+        await chrome.permissions.contains({ origins: [`http://*.${parentDomain}/*`] })
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function queryHostCookiesStrict(hostname, partitionKey = null) {
   if (!chrome?.cookies?.getAll || !hostname) {
     return { ok: false, cookies: [] };
   }
   const partitionFilter = partitionKey ? { partitionKey } : {};
-  let byUrl;
-  let byDomain;
+  const parentDomain = getSafeParentCookieDomain(hostname);
+  let results;
   try {
-    [byUrl, byDomain] = await Promise.all([
+    const queries = [
       chrome.cookies.getAll({ url: `https://${hostname}/`, ...partitionFilter }),
       chrome.cookies.getAll({ domain: hostname, ...partitionFilter })
-    ]);
+    ];
+    if (parentDomain) {
+      queries.push(chrome.cookies.getAll({ domain: parentDomain, ...partitionFilter }));
+    }
+    results = await Promise.all(queries);
   } catch {
     return { ok: false, cookies: [] };
   }
 
   const deduped = new Map();
-  for (const cookie of [
-    ...(Array.isArray(byUrl) ? byUrl : []),
-    ...(Array.isArray(byDomain) ? byDomain : [])
-  ]) {
-    if (!cookie || typeof cookie.name !== 'string' || cookie.name.length === 0) {
-      continue;
-    }
-    if (partitionKey) {
-      if (!isSamePartitionKey(cookie.partitionKey, partitionKey)) {
+  for (const list of results) {
+    for (const cookie of Array.isArray(list) ? list : []) {
+      if (!cookie || typeof cookie.name !== 'string' || cookie.name.length === 0) {
         continue;
       }
-    } else if (cookie.partitionKey) {
-      continue;
+      if (partitionKey) {
+        if (!isSamePartitionKey(cookie.partitionKey, partitionKey)) {
+          continue;
+        }
+      } else if (cookie.partitionKey) {
+        continue;
+      }
+      if (!cookieMatchesHostname(cookie.domain || hostname, Boolean(cookie.hostOnly), hostname)) {
+        continue;
+      }
+      deduped.set(cookieIdentityKey(cookie, hostname), cookie);
     }
-    if (!cookieMatchesHostname(cookie.domain || hostname, Boolean(cookie.hostOnly), hostname)) {
-      continue;
-    }
-    deduped.set(cookieIdentityKey(cookie, hostname), cookie);
   }
 
   return { ok: true, cookies: [...deduped.values()] };
@@ -493,11 +537,14 @@ async function collectActiveEmbeddedHttpsOrigins(enabledProviderIds, { includeCu
     enabledSet.has(CHATGLM_PROVIDER_ID) &&
     await hasOptionalProviderPermission(CHATGLM_PROVIDER_ID)
   ) {
+    const hasCompanionCookieAccess = await hasOptionalProviderCompanionCookiePermission(
+      CHATGLM_PROVIDER_ID
+    );
     activeOrigins.set(CHATGLM_ORIGIN, {
       hostname: CHATGLM_HOSTNAME,
-      hasNonSecureCookieAccess: await hasOptionalProviderCompanionCookiePermission(
-        CHATGLM_PROVIDER_ID
-      )
+      hasCompanionCookieAccess,
+      hasHostHttpAccess:
+        hasCompanionCookieAccess || (await hasHostHttpCookiePermission(CHATGLM_HOSTNAME))
     });
   }
 
@@ -524,11 +571,14 @@ async function collectActiveEmbeddedHttpsOrigins(enabledProviderIds, { includeCu
         continue;
       }
       if (await hasOptionalProviderPermission(descriptor.id)) {
+        const hasCompanionCookieAccess = await hasOptionalProviderCompanionCookiePermission(
+          descriptor.id
+        );
         activeOrigins.set(origin, {
           hostname,
-          hasNonSecureCookieAccess: await hasOptionalProviderCompanionCookiePermission(
-            descriptor.id
-          )
+          hasCompanionCookieAccess,
+          hasHostHttpAccess:
+            hasCompanionCookieAccess || (await hasHostHttpCookiePermission(hostname))
         });
       }
     }
@@ -549,7 +599,7 @@ async function cleanupStalePartitionedRecords(
   origin,
   hostname,
   partitionKey,
-  { existingPartitionedResult = null } = {}
+  { existingPartitionedResult = null, skipIdentityKeys = null } = {}
 ) {
   const uniqueRecords = [...new Set(Array.isArray(records) ? records : [])].filter(
     (record) => typeof record === 'string' && parseCookieIdentityKey(record) !== null
@@ -558,14 +608,24 @@ async function cleanupStalePartitionedRecords(
     return { remainingPending: [], removedIdentityKeys: new Set() };
   }
 
+  const actionableRecords = skipIdentityKeys
+    ? uniqueRecords.filter((record) => {
+        const parsed = parseCookieIdentityKey(record);
+        return parsed && !skipIdentityKeys.has(parsed.identityKey);
+      })
+    : uniqueRecords;
+  if (actionableRecords.length === 0) {
+    return { remainingPending: [], removedIdentityKeys: new Set() };
+  }
+
   if (!hostname || !(await hasOriginCookiePermission(origin))) {
-    return { remainingPending: uniqueRecords, removedIdentityKeys: new Set() };
+    return { remainingPending: actionableRecords, removedIdentityKeys: new Set() };
   }
 
   const partResult =
     existingPartitionedResult || (await queryHostCookiesStrict(hostname, partitionKey));
   if (!partResult.ok) {
-    return { remainingPending: uniqueRecords, removedIdentityKeys: new Set() };
+    return { remainingPending: actionableRecords, removedIdentityKeys: new Set() };
   }
 
   const partByIdentity = new Map(
@@ -573,10 +633,23 @@ async function cleanupStalePartitionedRecords(
   );
   const remainingPending = [];
   const removedIdentityKeys = new Set();
+  const normalizedHost = hostname.toLowerCase();
 
-  for (const record of uniqueRecords) {
+  for (const record of actionableRecords) {
     const parsed = parseCookieIdentityKey(record);
     if (!parsed) {
+      continue;
+    }
+    const cleanDomain = parsed.domain.replace(/^\.+/, '').toLowerCase();
+    const isParentDomainCookie =
+      !parsed.hostOnly && cleanDomain.length > 0 && cleanDomain !== normalizedHost;
+    if (
+      isParentDomainCookie &&
+      !(await hasDomainCookiePermission(cleanDomain, { secure: true }))
+    ) {
+      // Cannot verify absence or expire a parent-domain CHIPS mirror without
+      // parent-domain HTTPS host permission; keep pending so panels fail closed.
+      remainingPending.push(record);
       continue;
     }
     const currentCookie = partByIdentity.get(parsed.identityKey);
@@ -645,8 +718,26 @@ export async function reconcileEmbeddedFrameCookies() {
   const previousState = await loadCookieTrackingState();
   const nextMirrored = {};
   const nextPendingCleanups = {};
+  const activeMirroredDigestByIdentity = new Map();
+  const previousMirroredDigestsByIdentity = new Map();
+  for (const records of Object.values(previousState.mirrored)) {
+    for (const rawRecord of records) {
+      const parsed = parseCookieIdentityKey(rawRecord);
+      if (parsed?.valueDigest) {
+        let digests = previousMirroredDigestsByIdentity.get(parsed.identityKey);
+        if (!digests) {
+          digests = new Set();
+          previousMirroredDigestsByIdentity.set(parsed.identityKey, digests);
+        }
+        digests.add(parsed.valueDigest);
+      }
+    }
+  }
 
-  for (const [origin, { hostname, hasNonSecureCookieAccess }] of activeOrigins.entries()) {
+  for (const [
+    origin,
+    { hostname, hasCompanionCookieAccess, hasHostHttpAccess }
+  ] of activeOrigins.entries()) {
     const previousRecords = previousState.mirrored[origin] || [];
     const pendingForOrigin = previousState.pendingCleanups[origin] || [];
 
@@ -660,7 +751,10 @@ export async function reconcileEmbeddedFrameCookies() {
         origin,
         hostname,
         partitionKey,
-        { existingPartitionedResult: partResult }
+        {
+          existingPartitionedResult: partResult,
+          skipIdentityKeys: activeMirroredDigestByIdentity
+        }
       );
       remainingPendingForOrigin = flushed.remainingPending;
       if (flushed.removedIdentityKeys.size > 0) {
@@ -708,13 +802,29 @@ export async function reconcileEmbeddedFrameCookies() {
     const nextRecords = [];
     const handledPreviousIdentityKeys = new Set();
     const overwrittenIdentityKeys = new Set();
+    const normalizedHost = hostname.toLowerCase();
 
     for (const sourceCookie of unpartResult.cookies) {
       if (!isMirrorableUnpartitionedCookie(sourceCookie)) {
         continue;
       }
-      // Non-Secure cookies are gated on the companion http://<hostname>/* grant.
-      if (!sourceCookie.secure && !hasNonSecureCookieAccess) {
+      const cleanSourceDomain = (sourceCookie.domain || hostname).replace(/^\.+/, '').toLowerCase();
+      const isParentDomainSource =
+        !sourceCookie.hostOnly &&
+        cleanSourceDomain.length > 0 &&
+        cleanSourceDomain !== normalizedHost;
+      if (isParentDomainSource) {
+        const hasParentReadWrite =
+          hasCompanionCookieAccess ||
+          ((await hasDomainCookiePermission(cleanSourceDomain, { secure: true })) &&
+            (sourceCookie.secure ||
+              (await hasDomainCookiePermission(cleanSourceDomain, { secure: false }))));
+        if (!hasParentReadWrite) {
+          continue;
+        }
+      } else if (!sourceCookie.secure && !hasHostHttpAccess) {
+        // Host-scoped non-Secure cookies are gated on http://<hostname>/* or
+        // the safe parent-domain companion http://*.<parentDomain>/* grant.
         continue;
       }
 
@@ -747,7 +857,9 @@ export async function reconcileEmbeddedFrameCookies() {
         null;
 
       const sourceDigest = computeCookieValueDigest(sourceCookie.value);
-      const lastMirroredDigest = existingMirrorPreviousEntry?.parsed?.valueDigest || null;
+      const lastMirroredDigest =
+        existingMirrorPreviousEntry?.parsed?.valueDigest ||
+        (existingMirrorKey ? activeMirroredDigestByIdentity.get(existingMirrorKey) || null : null);
       const existingMirrorDigest = existingMirror
         ? computeCookieValueDigest(existingMirror.value)
         : null;
@@ -763,7 +875,12 @@ export async function reconcileEmbeddedFrameCookies() {
         // the cookie to a different value, leave the panel-owned cookie
         // untouched and never adopt ownership of it.
         const ownedByMirror =
-          lastMirroredDigest !== null && existingMirrorDigest === lastMirroredDigest;
+          (lastMirroredDigest !== null && existingMirrorDigest === lastMirroredDigest) ||
+          Boolean(
+            existingMirrorKey &&
+              existingMirrorDigest &&
+              previousMirroredDigestsByIdentity.get(existingMirrorKey)?.has(existingMirrorDigest)
+          );
         if (!ownedByMirror) {
           if (existingMirrorPreviousEntry) {
             handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
@@ -772,9 +889,12 @@ export async function reconcileEmbeddedFrameCookies() {
         }
 
         if (isUpToDatePartitionedMirror(sourceCookie, existingMirror)) {
-          handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
+          if (existingMirrorPreviousEntry) {
+            handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
+          }
           nextRecords.push(serializeMirroredCookieRecord(existingMirror, hostname, sourceDigest));
           overwrittenIdentityKeys.add(existingMirrorKey);
+          activeMirroredDigestByIdentity.set(existingMirrorKey, sourceDigest);
           continue;
         }
       }
@@ -787,10 +907,17 @@ export async function reconcileEmbeddedFrameCookies() {
         }
         nextRecords.push(serializeMirroredCookieRecord(written, hostname, sourceDigest));
         overwrittenIdentityKeys.add(writtenIdentityKey);
+        activeMirroredDigestByIdentity.set(writtenIdentityKey, sourceDigest);
       } else if (existingMirrorPreviousEntry) {
         // Write failed: do not record the unwritten digest; retain the last verified mirror record.
         handledPreviousIdentityKeys.add(existingMirrorPreviousEntry.parsed.identityKey);
         nextRecords.push(existingMirrorPreviousEntry.raw);
+        if (existingMirrorPreviousEntry.parsed.valueDigest) {
+          activeMirroredDigestByIdentity.set(
+            existingMirrorPreviousEntry.parsed.identityKey,
+            existingMirrorPreviousEntry.parsed.valueDigest
+          );
+        }
       }
     }
 
@@ -804,7 +931,10 @@ export async function reconcileEmbeddedFrameCookies() {
       origin,
       hostname,
       partitionKey,
-      { existingPartitionedResult: { ok: true, cookies: partitionedCookies } }
+      {
+        existingPartitionedResult: { ok: true, cookies: partitionedCookies },
+        skipIdentityKeys: activeMirroredDigestByIdentity
+      }
     );
 
     const combinedPending = [
@@ -859,7 +989,8 @@ export async function reconcileEmbeddedFrameCookies() {
       [...previousKeys, ...previousPending],
       origin,
       hostname,
-      partitionKey
+      partitionKey,
+      { skipIdentityKeys: activeMirroredDigestByIdentity }
     );
     const uniqueSortedPending = [...new Set(cleanupResult.remainingPending)].sort();
     if (uniqueSortedPending.length > 0) {

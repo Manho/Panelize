@@ -7,6 +7,7 @@ import {
   getProviderCompanionCookieOrigins,
   getProviderDescriptor,
   getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain,
   listProviderDescriptors,
   setCustomProviderDescriptors,
   validateProviderDescriptor
@@ -19,7 +20,8 @@ export {
   CUSTOM_PROVIDER_ID_PATTERN,
   getCompanionCookiePermissionOrigins,
   getProviderCompanionCookieOrigins,
-  getProviderRequestPermissionOrigins
+  getProviderRequestPermissionOrigins,
+  getSafeParentCookieDomain
 };
 
 export const CUSTOM_PROVIDERS_STORAGE_KEY = 'customProviders';

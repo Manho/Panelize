@@ -225,11 +225,131 @@ function isOriginMatchPattern(pattern) {
   return isExactHttpOrigin(originPart);
 }
 
+const LOCAL_OR_INTERNAL_TLDS = new Set([
+  'localhost',
+  'local',
+  'localdomain',
+  'internal',
+  'lan',
+  'arpa',
+  'invalid'
+]);
+
+// Common 2-label public suffixes where eTLD+1 requires 3 labels (e.g. example.co.uk).
+const MULTI_PART_PUBLIC_SUFFIXES = new Set([
+  'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn', 'mil.cn',
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'net.uk', 'ltd.uk', 'plc.uk',
+  'co.jp', 'ne.jp', 'or.jp', 'go.jp', 'ac.jp', 'ed.jp', 'gr.jp', 'lg.jp',
+  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'asn.au', 'id.au',
+  'com.hk', 'org.hk', 'edu.hk', 'gov.hk', 'net.hk', 'idv.hk',
+  'com.tw', 'org.tw', 'edu.tw', 'gov.tw', 'net.tw', 'idv.tw',
+  'co.kr', 'or.kr', 'ne.kr', 'go.kr', 'ac.kr', 're.kr',
+  'com.sg', 'org.sg', 'edu.sg', 'gov.sg', 'net.sg',
+  'co.in', 'org.in', 'net.in', 'gov.in', 'ac.in', 'edu.in', 'res.in',
+  'com.br', 'org.br', 'net.br', 'gov.br', 'edu.br',
+  'co.nz', 'org.nz', 'net.nz', 'govt.nz', 'ac.nz',
+  'com.mx', 'org.mx', 'gob.mx', 'edu.mx',
+  'co.za', 'org.za', 'gov.za', 'ac.za',
+  'co.il', 'org.il', 'gov.il', 'ac.il',
+  'co.id', 'or.id', 'go.id', 'ac.id',
+  'com.my', 'org.my', 'gov.my', 'edu.my',
+  'com.tr', 'org.tr', 'gov.tr', 'edu.tr',
+  'com.ar', 'org.ar', 'gov.ar', 'edu.ar',
+  'com.pl', 'org.pl', 'net.pl', 'gov.pl',
+  'com.ua', 'org.ua', 'net.ua', 'gov.ua',
+  'com.ru', 'org.ru', 'net.ru',
+  'com.vn', 'org.vn', 'gov.vn', 'edu.vn',
+  'co.th', 'or.th', 'go.th', 'ac.th',
+  'com.ph', 'org.ph', 'gov.ph', 'edu.ph',
+  'com.ng', 'org.ng', 'gov.ng', 'edu.ng',
+  'com.eg', 'org.eg', 'gov.eg', 'edu.eg',
+  'com.sa', 'org.sa', 'gov.sa', 'edu.sa',
+  'eu.org'
+]);
+
+// Multi-tenant shared hosting and cloud public suffixes that must never be
+// broadened to a parent wildcard cookie scope.
+const SHARED_HOSTING_PUBLIC_SUFFIXES = [
+  'github.io',
+  'gitlab.io',
+  'bitbucket.io',
+  'pages.dev',
+  'vercel.app',
+  'netlify.app',
+  'workers.dev',
+  'web.app',
+  'firebaseapp.com',
+  'onrender.com',
+  'hf.space',
+  'herokuapp.com',
+  'azurewebsites.net',
+  'azurestaticapps.net',
+  'cloudfront.net',
+  'amazonaws.com',
+  'appspot.com',
+  'storage.googleapis.com',
+  'fly.dev',
+  'railway.app',
+  'replit.app',
+  'repl.co',
+  'glitch.me',
+  'deno.dev',
+  'run.app',
+  'r2.dev',
+  'ngrok.io',
+  'ngrok-free.app',
+  'trycloudflare.com',
+  'surge.sh',
+  'now.sh'
+];
+
+/**
+ * Returns the safe parent registrable domain for a subdomain hostname (e.g.
+ * `aistudio.xiaomimimo.com` -> `xiaomimimo.com`, `app.example.co.uk` ->
+ * `example.co.uk`), or `null` when the hostname is already an apex domain,
+ * an IP literal, `localhost`/local, or under a shared-hosting public suffix.
+ *
+ * @param {string} hostname
+ * @returns {string | null}
+ */
+export function getSafeParentCookieDomain(hostname) {
+  if (typeof hostname !== 'string' || hostname.length === 0) {
+    return null;
+  }
+  const normalized = hostname.toLowerCase();
+  if (!isValidHttpHostname(normalized) || normalized.startsWith('[') || normalized.includes(':')) {
+    return null;
+  }
+  const labels = normalized.split('.');
+  if (labels.length < 3 || labels.some((label) => label.length === 0)) {
+    return null;
+  }
+  const tld = labels[labels.length - 1];
+  // Reject IPv4 literals (all-numeric final label) and local/internal TLDs.
+  if (/^\d+$/.test(tld) || LOCAL_OR_INTERNAL_TLDS.has(tld)) {
+    return null;
+  }
+  for (const suffix of SHARED_HOSTING_PUBLIC_SUFFIXES) {
+    if (normalized === suffix || normalized.endsWith(`.${suffix}`)) {
+      return null;
+    }
+  }
+  const lastTwo = labels.slice(-2).join('.');
+  if (MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo)) {
+    if (labels.length <= 3) {
+      return null;
+    }
+    return labels.slice(-3).join('.');
+  }
+  return lastTwo;
+}
+
 /**
  * Returns additional optional host permission patterns needed alongside a
  * provider's core HTTPS embedding permission so `chrome.cookies` can read
- * non-Secure first-party cookies set by the site and mirror them into the
- * extension's CHIPS partition.
+ * non-Secure first-party cookies (including parent-domain cookies such as
+ * `.xiaomimimo.com` on subdomain HTTPS providers) and mirror/expire them in
+ * the extension's CHIPS partition.
  *
  * Keeping these separate from `descriptor.permissionOrigins` ensures existing
  * users with legacy HTTPS-only grants never lose framing rules, content
@@ -245,6 +365,13 @@ export function getCompanionCookiePermissionOrigins(origin) {
   const parsed = new URL(origin);
   if (parsed.protocol !== 'https:') {
     return [];
+  }
+  const parentDomain = getSafeParentCookieDomain(parsed.hostname);
+  if (parentDomain) {
+    return [
+      `https://*.${parentDomain}/*`,
+      `http://*.${parentDomain}/*`
+    ];
   }
   const patterns = [];
   if (parsed.port !== '') {

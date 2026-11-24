@@ -459,7 +459,11 @@ describe('B3.2 custom web providers in Options', () => {
 
     await vi.waitFor(() => {
       expect(chrome.permissions.remove).toHaveBeenCalledWith({
-        origins: ['https://rollback.example.com/*', 'http://rollback.example.com/*'],
+        origins: [
+          'https://rollback.example.com/*',
+          'https://*.example.com/*',
+          'http://*.example.com/*',
+        ],
       });
     });
     expect(errorEl.textContent).toBe(EN_MESSAGES.errCustomProviderSaveFailed.message);
@@ -861,11 +865,17 @@ describe('B3.2 custom web providers in Options', () => {
       ).toBe('Legacy HTTPS AI Renamed');
     });
     expect(chrome.permissions.request).toHaveBeenCalledWith({
-      origins: ['https://legacy-a.example.com/*', 'http://legacy-a.example.com/*'],
+      origins: [
+        'https://legacy-a.example.com/*',
+        'https://*.example.com/*',
+        'http://*.example.com/*',
+      ],
     });
 
     // 2) Changing origin via inline edit runs syncOptionalProviderAccess BEFORE chrome.permissions.remove
     //    so mirrored cookies on the old origin are cleaned up while host permission is still held.
+    //    Because migrated-b.example.com shares the *.example.com parent-domain companion origins,
+    //    only https://legacy-a.example.com/* is revoked on edit.
     callOrder.length = 0;
     document
       .querySelector(`[data-provider-id="${customRecord.id}"] [data-action="edit-custom-provider"]`)
@@ -888,17 +898,123 @@ describe('B3.2 custom web providers in Options', () => {
       expect(callOrder.some((entry) => entry.startsWith('permissions.remove:'))).toBe(true);
     });
     expect(callOrder[0]).toBe('syncOptionalProviderAccess');
-    expect(callOrder[1]).toBe(
-      'permissions.remove:https://legacy-a.example.com/*,http://legacy-a.example.com/*'
-    );
+    expect(callOrder[1]).toBe('permissions.remove:https://legacy-a.example.com/*');
 
     // 3) Deleting custom provider also runs syncOptionalProviderAccess BEFORE chrome.permissions.remove
+    //    and now revokes both the origin and its unused *.example.com companion patterns.
     callOrder.length = 0;
     await optionsMod.deleteCustomProviderEntry(customRecord.id);
     expect(callOrder[0]).toBe('syncOptionalProviderAccess');
     expect(callOrder[1]).toBe(
-      'permissions.remove:https://migrated-b.example.com/*,http://migrated-b.example.com/*'
+      'permissions.remove:https://migrated-b.example.com/*,https://*.example.com/*,http://*.example.com/*'
     );
+  });
+
+  it('preserves shared parent-domain companion permissions when deleting one subdomain provider and prompts legacy subdomain toggles to opt into *.parentDomain', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    const mimoStudioRecord = {
+      id: 'custom-1111111111',
+      name: 'MiMo Studio',
+      url: 'https://aistudio.xiaomimimo.com/',
+      frameRuleId: 10000,
+      createdAt: 1700000000000,
+    };
+    const mimoChatRecord = {
+      id: 'custom-2222222222',
+      name: 'MiMo Chat',
+      url: 'https://chat.xiaomimimo.com/',
+      frameRuleId: 10001,
+      createdAt: 1700000001000,
+    };
+    const mimoApiRecord = {
+      id: 'custom-3333333333',
+      kind: 'api',
+      name: 'MiMo API',
+      endpointUrl: 'https://api.xiaomimimo.com/v1/chat/completions',
+      model: 'mimo-v1',
+      hasApiKey: false,
+      frameRuleId: 10002,
+      createdAt: 1700000002000,
+    };
+
+    // Start with only legacy per-host origins on MiMo Studio + MiMo Chat + MiMo API
+    const grantedOrigins = new Set([
+      'https://aistudio.xiaomimimo.com/*',
+      'http://aistudio.xiaomimimo.com/*',
+      'https://chat.xiaomimimo.com/*',
+      'https://api.xiaomimimo.com/*',
+    ]);
+
+    const { areas } = installChromeEnv({
+      localInitial: {
+        [CUSTOM_PROVIDERS_STORAGE_KEY]: [mimoStudioRecord, mimoChatRecord, mimoApiRecord],
+      },
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt', mimoStudioRecord.id, mimoChatRecord.id, mimoApiRecord.id],
+      },
+      grantedOrigins: [...grantedOrigins],
+    });
+
+    chrome.permissions.contains.mockImplementation(({ origins = [] } = {}) =>
+      Promise.resolve(origins.length > 0 && origins.every((origin) => grantedOrigins.has(origin)))
+    );
+    chrome.permissions.remove.mockImplementation(({ origins = [] } = {}) => {
+      for (const origin of origins) {
+        grantedOrigins.delete(origin);
+      }
+      return Promise.resolve(true);
+    });
+    chrome.runtime.sendMessage.mockResolvedValue({ success: true });
+
+    const optionsMod = await import('../options/options.js');
+    await vi.waitFor(() => {
+      const row = document.querySelector(`[data-provider-id="${mimoStudioRecord.id}"]`);
+      expect(row).not.toBeNull();
+      expect(row.dataset.hasAccess).toBe('true');
+      expect(row.dataset.hasCompanionCookieAccess).toBe('false');
+    });
+
+    // 1) Toggle MiMo Studio OFF then ON -> synchronously prompts for *.xiaomimimo.com companion origins
+    document
+      .querySelector(`[data-provider-id="${mimoStudioRecord.id}"] .toggle-switch`)
+      .click();
+    await vi.waitFor(() => {
+      expect(areas.sync.enabledProviders).not.toContain(mimoStudioRecord.id);
+    });
+
+    chrome.permissions.request.mockImplementationOnce(({ origins }) => {
+      expect(origins).toEqual(['https://*.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*']);
+      origins.forEach((origin) => grantedOrigins.add(origin));
+      return Promise.resolve(true);
+    });
+    document
+      .querySelector(`[data-provider-id="${mimoStudioRecord.id}"] .toggle-switch`)
+      .click();
+    await vi.waitFor(() => {
+      const row = document.querySelector(`[data-provider-id="${mimoStudioRecord.id}"]`);
+      expect(row.dataset.hasCompanionCookieAccess).toBe('true');
+    });
+
+    // 2) Delete MiMo Studio while MiMo Chat (web) and MiMo API (api) still exist ->
+    //    must ONLY revoke https://aistudio.xiaomimimo.com/* and keep both *.xiaomimimo.com patterns!
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(mimoStudioRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://aistudio.xiaomimimo.com/*'],
+    });
+
+    // 3) Delete MiMo Chat while MiMo API (https://api.xiaomimimo.com/*) still exists ->
+    //    must revoke https://chat.xiaomimimo.com/* and http://*.xiaomimimo.com/*,
+    //    but MUST NOT revoke https://*.xiaomimimo.com/* because it covers https://api.xiaomimimo.com/*!
+    chrome.permissions.remove.mockClear();
+    await optionsMod.deleteCustomProviderEntry(mimoChatRecord.id);
+    expect(chrome.permissions.remove).toHaveBeenCalledWith({
+      origins: ['https://chat.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*'],
+    });
   });
 
   it('lets legacy HTTPS-only Zhipu users opt into companion http://chatglm.cn/* from the provider toggle while keeping Zhipu enabled if declined', async () => {

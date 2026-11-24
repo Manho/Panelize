@@ -13,6 +13,7 @@ import {
 
 const CHATGLM_HOST = 'chatglm.cn';
 const MIMO_HOST = 'aistudio.xiaomimimo.com';
+const MIMO_PARENT_DOMAIN = 'xiaomimimo.com';
 const ATTACKER_HOST = 'attacker.test';
 const CUSTOM_MIMO_ID = 'custom-a1b2c3d4e5';
 const CUSTOM_MIMO_RULE_ID = 10000;
@@ -225,12 +226,15 @@ async function startAuthTlsFixtureServer() {
       }
 
       if (url.pathname === '/sts-login') {
-        // Real Xiaomi Passport STS sets HttpOnly serviceToken + non-HttpOnly xiaomichatbot_ph without Secure
+        // Real production Xiaomi MiMo sets all three auth cookies on parent domain .xiaomimimo.com
+        // without Secure or SameSite, plus we set a host-only non-Secure cookie to verify both scopes.
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Set-Cookie': [
-            'serviceToken=mimo-session-secret; Path=/; HttpOnly',
-            'xiaomichatbot_ph=mimo-ph-csrf-777; Path=/',
+            `xiaomichatbot_serviceToken=mimo-session-secret; Domain=.${MIMO_PARENT_DOMAIN}; Path=/; HttpOnly`,
+            `xiaomichatbot_ph=mimo-ph-csrf-777; Domain=.${MIMO_PARENT_DOMAIN}; Path=/`,
+            `userId=mi-10001; Domain=.${MIMO_PARENT_DOMAIN}; Path=/`,
+            'mimo_host_pref=studio-dark; Path=/',
           ],
         });
         res.end('<!doctype html><p id="sts-done">STS Login Complete</p>');
@@ -241,8 +245,10 @@ async function startAuthTlsFixtureServer() {
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Set-Cookie': [
-            'serviceToken=; Path=/; Max-Age=0; HttpOnly',
-            'xiaomichatbot_ph=; Path=/; Max-Age=0',
+            `xiaomichatbot_serviceToken=; Domain=.${MIMO_PARENT_DOMAIN}; Path=/; Max-Age=0; HttpOnly`,
+            `xiaomichatbot_ph=; Domain=.${MIMO_PARENT_DOMAIN}; Path=/; Max-Age=0`,
+            `userId=; Domain=.${MIMO_PARENT_DOMAIN}; Path=/; Max-Age=0`,
+            'mimo_host_pref=; Path=/; Max-Age=0',
           ],
         });
         res.end('<!doctype html><p id="sts-logout-done">STS Logout Complete</p>');
@@ -250,7 +256,7 @@ async function startAuthTlsFixtureServer() {
       }
 
       if (url.pathname === '/open-apis/user/mi/get') {
-        const hasServiceToken = cookies.get('serviceToken') === 'mimo-session-secret';
+        const hasServiceToken = cookies.get('xiaomichatbot_serviceToken') === 'mimo-session-secret';
         observed.mimoUserGetCalls.push({ hasServiceToken });
         if (!hasServiceToken) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -265,8 +271,9 @@ async function startAuthTlsFixtureServer() {
       if (url.pathname === '/open-apis/chat/conversation/list') {
         const phParam = url.searchParams.get('xiaomichatbot_ph') || '';
         const authenticated =
-          cookies.get('serviceToken') === 'mimo-session-secret' &&
+          cookies.get('xiaomichatbot_serviceToken') === 'mimo-session-secret' &&
           cookies.get('xiaomichatbot_ph') === 'mimo-ph-csrf-777' &&
+          cookies.get('userId') === 'mi-10001' &&
           phParam === 'mimo-ph-csrf-777';
         observed.mimoHistoryListCalls.push({ authenticated, phParam });
         if (!authenticated) {
@@ -304,8 +311,9 @@ async function startAuthTlsFixtureServer() {
             const userJson = await userRes.json();
             let userInfo = userJson.data;
             // Exact Xiaomi MiMo startup flow: history.fetchList() POSTs with ?xiaomichatbot_ph from document.cookie,
-            // and 401 triggers handleAuthExpired() -> clearUserInfo() -> 'Sign in'.
+            // requires parent-domain userId + xiaomichatbot_ph cookies, and 401 triggers handleAuthExpired() -> 'Sign in'.
             const ph = readCookie('xiaomichatbot_ph');
+            const cookieUserId = readCookie('userId');
             const listUrl = ph
               ? '/open-apis/chat/conversation/list?xiaomichatbot_ph=' + encodeURIComponent(ph)
               : '/open-apis/chat/conversation/list';
@@ -315,7 +323,7 @@ async function startAuthTlsFixtureServer() {
               body: JSON.stringify({ pageInfo: { pageNum: 1, pageSize: 20 } }),
               credentials: 'same-origin'
             });
-            if (listRes.status === 401) {
+            if (listRes.status === 401 || cookieUserId !== userInfo.userId) {
               userInfo = null;
             }
             document.getElementById('mimo-auth-state').textContent =
@@ -353,7 +361,8 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
         ...OPTIONAL_PROVIDER_CONFIGS.chatglm.origins,
         `http://${CHATGLM_HOST}/*`,
         `https://${MIMO_HOST}/*`,
-        `http://${MIMO_HOST}/*`
+        `https://*.${MIMO_PARENT_DOMAIN}/*`,
+        `http://*.${MIMO_PARENT_DOMAIN}/*`
       );
     });
 
@@ -530,7 +539,8 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
       expect(latestGlmProbeHeader).not.toContain('chatglm_token');
       expect(latestGlmProbeHeader).not.toContain('chatglm_refresh_token');
       expect(latestMimoProbeHeader).not.toContain('xiaomichatbot_ph');
-      expect(latestMimoProbeHeader).not.toContain('serviceToken');
+      expect(latestMimoProbeHeader).not.toContain('userId');
+      expect(latestMimoProbeHeader).not.toContain('xiaomichatbot_serviceToken');
       await probePage.close();
 
       // 4. Top-level logout clears mirrored CHIPS cookies so panel refresh shows logged-out state
@@ -640,7 +650,8 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
         ...OPTIONAL_PROVIDER_CONFIGS.chatglm.origins,
         `http://${CHATGLM_HOST}/*`,
         `https://${MIMO_HOST}/*`,
-        `http://${MIMO_HOST}/*`
+        `https://*.${MIMO_PARENT_DOMAIN}/*`,
+        `http://*.${MIMO_PARENT_DOMAIN}/*`
       );
     });
 
@@ -714,23 +725,42 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
         'Logged in: MiMoUser'
       );
 
-      // Verify CHIPS partitioned mirrors exist before disabling providers
+      // Verify CHIPS partitioned mirrors exist before disabling providers, AND verify that
+      // http://*.xiaomimimo.com/* + https://*.xiaomimimo.com/* allows getAll({ url: "http://aistudio.xiaomimimo.com/" })
+      // to return BOTH host-only and parent-domain .xiaomimimo.com non-Secure cookies.
       const beforeCleanup = await extension.serviceWorker.evaluate(
         async ({ glmHost, mimoHost }) => {
           const partitionKey = { topLevelSite: `chrome-extension://${chrome.runtime.id}` };
-          const [glmPart, mimoPart] = await Promise.all([
+          const [glmPart, mimoPart, mimoHttpQuery] = await Promise.all([
             chrome.cookies.getAll({ url: `https://${glmHost}/`, partitionKey }),
             chrome.cookies.getAll({ url: `https://${mimoHost}/`, partitionKey }),
+            chrome.cookies.getAll({ url: `http://${mimoHost}/` }),
           ]);
           return {
             glmPartNames: glmPart.map((c) => c.name).sort(),
-            mimoPartNames: mimoPart.map((c) => c.name).sort(),
+            mimoPartSummary: mimoPart
+              .map(({ name, domain, hostOnly }) => ({ name, domain, hostOnly }))
+              .sort((a, b) => a.name.localeCompare(b.name)),
+            mimoHttpTopNames: mimoHttpQuery
+              .filter((c) => !c.partitionKey)
+              .map((c) => c.name)
+              .sort(),
           };
         },
         { glmHost: CHATGLM_HOST, mimoHost: MIMO_HOST }
       );
       expect(beforeCleanup.glmPartNames).toEqual(['chatglm_refresh_token', 'chatglm_token']);
-      expect(beforeCleanup.mimoPartNames).toEqual(['xiaomichatbot_ph']);
+      expect(beforeCleanup.mimoHttpTopNames).toEqual([
+        'mimo_host_pref',
+        'userId',
+        'xiaomichatbot_ph',
+        'xiaomichatbot_serviceToken',
+      ]);
+      expect(beforeCleanup.mimoPartSummary).toEqual([
+        { name: 'mimo_host_pref', domain: MIMO_HOST, hostOnly: true },
+        { name: 'userId', domain: `.${MIMO_PARENT_DOMAIN}`, hostOnly: false },
+        { name: 'xiaomichatbot_ph', domain: `.${MIMO_PARENT_DOMAIN}`, hostOnly: false },
+      ]);
 
       // 3. Disable both providers (keeping host permissions) and trigger cleanup reconciliation
       await mpPage.evaluate(async () => {
@@ -739,7 +769,7 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
       });
 
       // 4. Assert (a) CHIPS partitioned mirrors are completely GONE,
-      //    AND (b) unpartitioned top-level browser cookies are STILL PRESENT AND INTACT!
+      //    AND (b) unpartitioned top-level browser cookies (including all 3 .xiaomimimo.com cookies) are STILL INTACT!
       const afterCleanup = await extension.serviceWorker.evaluate(
         async ({ glmHost, mimoHost }) => {
           const partitionKey = { topLevelSite: `chrome-extension://${chrome.runtime.id}` };
@@ -770,7 +800,12 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
       expect(afterCleanup.mirrored).toEqual({});
       expect(afterCleanup.pending).toEqual({});
       expect(afterCleanup.glmTopNames).toEqual(['chatglm_refresh_token', 'chatglm_token']);
-      expect(afterCleanup.mimoTopNames).toEqual(['serviceToken', 'xiaomichatbot_ph']);
+      expect(afterCleanup.mimoTopNames).toEqual([
+        'mimo_host_pref',
+        'userId',
+        'xiaomichatbot_ph',
+        'xiaomichatbot_serviceToken',
+      ]);
 
       // 5. Verify in real top-level browser tabs that both sites are STILL logged in!
       server.observed.chatglmGuestCalls = 0;
@@ -788,6 +823,71 @@ test.describe('Zhipu (chatglm.cn) and custom HTTPS web provider (Xiaomi MiMo) lo
       await verifyMimoTopTab.close();
 
       expect(pageErrors).toEqual([]);
+    } finally {
+      await extension.close();
+      await extensionCopy.cleanup();
+      await server.close();
+    }
+  });
+
+  test('confirms Chromium blocks parent-domain .xiaomimimo.com cookie access when only host-only https:// + http:// grants are held', async () => {
+    const server = await startAuthTlsFixtureServer();
+    // Grant ONLY exact subdomain origins (NO *.xiaomimimo.com parent-domain companion origins)
+    const extensionCopy = await createPatchedExtensionCopy((manifest) => {
+      manifest.host_permissions.push(`https://${MIMO_HOST}/*`, `http://${MIMO_HOST}/*`);
+    });
+
+    const hostRules = `MAP ${MIMO_HOST} 127.0.0.1:${server.port}`;
+
+    const extension = await launchExtension({
+      extensionPath: extensionCopy.extensionPath,
+      viewport: { width: 1280, height: 800 },
+      args: [
+        '--ignore-certificate-errors',
+        '--proxy-bypass-list=*',
+        `--host-resolver-rules=${hostRules}`,
+      ],
+    });
+
+    try {
+      const mimoTab = await extension.context.newPage();
+      await mimoTab.goto(`https://${MIMO_HOST}/sts-login`);
+      await expect(mimoTab.locator('#sts-done')).toHaveText('STS Login Complete');
+      await mimoTab.goto(`https://${MIMO_HOST}/`);
+      await expect(mimoTab.locator('#mimo-auth-state')).toHaveText('Logged in: MiMoUser');
+      await mimoTab.close();
+
+      const visibility = await extension.serviceWorker.evaluate(
+        async ({ mimoHost, parentDomain }) => {
+          const [byHttpUrl, byHttpsUrl, allCookies] = await Promise.all([
+            chrome.cookies.getAll({ url: `http://${mimoHost}/` }),
+            chrome.cookies.getAll({ url: `https://${mimoHost}/` }),
+            chrome.cookies.getAll({}),
+          ]);
+          const parentNames = (list) =>
+            list
+              .filter((c) => c.domain === `.${parentDomain}` || c.domain === parentDomain)
+              .map((c) => c.name)
+              .sort();
+          return {
+            byHttpUrlHostNames: byHttpUrl
+              .filter((c) => c.domain === mimoHost)
+              .map((c) => c.name)
+              .sort(),
+            byHttpUrlParentNames: parentNames(byHttpUrl),
+            byHttpsUrlParentNames: parentNames(byHttpsUrl),
+            allParentNames: parentNames(allCookies),
+          };
+        },
+        { mimoHost: MIMO_HOST, parentDomain: MIMO_PARENT_DOMAIN }
+      );
+
+      // Exact root-cause proof in real Chromium: host-only cookie IS visible,
+      // but ALL parent-domain .xiaomimimo.com cookies are hidden without *.xiaomimimo.com!
+      expect(visibility.byHttpUrlHostNames).toEqual(['mimo_host_pref']);
+      expect(visibility.byHttpUrlParentNames).toEqual([]);
+      expect(visibility.byHttpsUrlParentNames).toEqual([]);
+      expect(visibility.allParentNames).toEqual([]);
     } finally {
       await extension.close();
       await extensionCopy.cleanup();

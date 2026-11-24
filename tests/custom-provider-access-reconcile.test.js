@@ -305,10 +305,14 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
     const enabled = await getEnabledProviders();
     expect(enabled.map((p) => p.id)).toEqual(['chatgpt', 'aistudio', CUSTOM_RECORD_A.id]);
 
-    // requestOptionalProviderPermission requests exact custom permissionOrigins
+    // requestOptionalProviderPermission requests core + companion cookie permission origins
     await expect(requestOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(true);
     expect(chrome.permissions.request).toHaveBeenCalledWith({
-      origins: ['https://chat.example.com/*', 'http://chat.example.com/*'],
+      origins: [
+        'https://chat.example.com/*',
+        'https://*.example.com/*',
+        'http://*.example.com/*',
+      ],
     });
     await expect(hasOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(true);
 

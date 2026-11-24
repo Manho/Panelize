@@ -457,18 +457,22 @@ describe('optional provider access', () => {
         })
       );
 
-      // Requesting permission asks for both https:// and http://, and declining http://
-      // does not fail access when the legacy https:// grant is already held.
+      // Requesting permission asks for core + companion origins, and declining companion
+      // origins does not fail access when the legacy https:// grant is already held.
       await expect(requestOptionalProviderPermission('chatglm')).resolves.toBe(true);
       expect(chrome.permissions.request).toHaveBeenCalledWith({
         origins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
       });
       await expect(requestOptionalProviderPermission(legacyCustomRecord.id)).resolves.toBe(true);
       expect(chrome.permissions.request).toHaveBeenCalledWith({
-        origins: ['https://aistudio.xiaomimimo.com/*', 'http://aistudio.xiaomimimo.com/*'],
+        origins: [
+          'https://aistudio.xiaomimimo.com/*',
+          'https://*.xiaomimimo.com/*',
+          'http://*.xiaomimimo.com/*',
+        ],
       });
 
-      // Companion-only opt-in requests only the companion http:// origin and preserves
+      // Companion-only opt-in requests only the companion cookie-sync origins and preserves
       // false when declined, or true once granted.
       await expect(requestOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(false);
       expect(chrome.permissions.request).toHaveBeenLastCalledWith({
@@ -478,12 +482,20 @@ describe('optional provider access', () => {
         requestOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
       ).resolves.toBe(false);
       expect(chrome.permissions.request).toHaveBeenLastCalledWith({
-        origins: ['http://aistudio.xiaomimimo.com/*'],
+        origins: ['https://*.xiaomimimo.com/*', 'http://*.xiaomimimo.com/*'],
       });
 
-      // Once companion http:// is granted, companion checks flip to true.
-      grantedOrigins.add('http://chatglm.cn/*');
+      // Having only legacy http://aistudio.xiaomimimo.com/* is NOT enough for subdomain
+      // parent-domain companion access.
       grantedOrigins.add('http://aistudio.xiaomimimo.com/*');
+      await expect(
+        hasOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
+      ).resolves.toBe(false);
+
+      // Once companion origins are granted, companion checks flip to true.
+      grantedOrigins.add('http://chatglm.cn/*');
+      grantedOrigins.add('https://*.xiaomimimo.com/*');
+      grantedOrigins.add('http://*.xiaomimimo.com/*');
       await expect(hasOptionalProviderCompanionCookiePermission('chatglm')).resolves.toBe(true);
       await expect(
         hasOptionalProviderCompanionCookiePermission(legacyCustomRecord.id)
