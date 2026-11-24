@@ -3,6 +3,7 @@ import {
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
   CUSTOM_PROVIDER_ID_PATTERN,
+  getExpectedCustomWebPermissionOrigins,
   getProviderDescriptor,
   listProviderDescriptors,
   setCustomProviderDescriptors,
@@ -13,7 +14,8 @@ import { resolveChatCompletionsUrl } from './openai-chat-client.js';
 export {
   CUSTOM_FRAME_RULE_ID_MAX,
   CUSTOM_FRAME_RULE_ID_MIN,
-  CUSTOM_PROVIDER_ID_PATTERN
+  CUSTOM_PROVIDER_ID_PATTERN,
+  getExpectedCustomWebPermissionOrigins
 };
 
 export const CUSTOM_PROVIDERS_STORAGE_KEY = 'customProviders';
@@ -411,6 +413,7 @@ export function toCustomProviderDescriptor(record, { extensionOrigin = null } = 
   const normalizedUrl = parsed.toString();
   const { origin } = parsed;
   const matchPattern = `${origin}/*`;
+  const permissionOrigins = getExpectedCustomWebPermissionOrigins(origin);
 
   return Object.freeze({
     id: record.id,
@@ -423,7 +426,7 @@ export function toCustomProviderDescriptor(record, { extensionOrigin = null } = 
     access: 'custom',
     frameOrigins: Object.freeze([origin]),
     allowedHosts: Object.freeze([]),
-    permissionOrigins: Object.freeze([matchPattern]),
+    permissionOrigins: Object.freeze(permissionOrigins),
     contentScript: Object.freeze({
       matches: Object.freeze([matchPattern]),
       js: Object.freeze([CUSTOM_PROVIDER_DRIVER_SCRIPT])

@@ -117,7 +117,7 @@ const EXPECTED_PROVIDERS = [
     icon: '/icons/providers/zhipu.svg',
     iconDark: '/icons/providers/dark/zhipu.svg',
     enabled: true,
-    optionalOrigins: ['https://chatglm.cn/*'],
+    optionalOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
   },
   {
     id: 'zai-global',

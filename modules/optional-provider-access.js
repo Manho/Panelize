@@ -18,6 +18,15 @@ export const OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION = 'syncOptionalProviderAccess'
 
 const optionalConfigCache = new WeakMap();
 const CUSTOM_PROVIDER_SCRIPT_ID_PATTERN = /^custom-[0-9a-f]{10}-(?:cookie-)?scripts$/;
+const CHATGLM_COOKIE_CONTENT_SCRIPT = Object.freeze({
+  id: 'chatglm-cookie-scripts',
+  matches: Object.freeze(['https://chatglm.cn/*']),
+  js: Object.freeze([CUSTOM_PROVIDER_COOKIE_CONSENT_SCRIPT]),
+  allFrames: true,
+  persistAcrossSessions: true,
+  world: 'MAIN',
+  runAt: 'document_start'
+});
 
 function createContentScriptFromSpec(id, contentScriptSpec) {
   return {
@@ -336,16 +345,25 @@ async function syncContentScripts(
     return;
   }
 
-  const managedOptionalScriptIds = new Set(allConfigs.map(({ contentScript }) => contentScript.id));
+  const managedOptionalScriptIds = new Set([
+    ...allConfigs.map(({ contentScript }) => contentScript.id),
+    CHATGLM_COOKIE_CONTENT_SCRIPT.id
+  ]);
   const isManagedScriptId = (id) => (
     managedOptionalScriptIds.has(id) ||
     (reconcileCustom && isManagedCustomScriptId(id))
   );
 
   const desiredOptionalScriptIds = new Set(desiredConfigs.map(({ contentScript }) => contentScript.id));
-  const desiredCustomScripts = desiredCustomConfigs
-    .flatMap(({ contentScript, cookieContentScript }) => [contentScript, cookieContentScript])
-    .filter(Boolean);
+  const desiredOptionalCookieScripts = desiredOptionalScriptIds.has('chatglm-scripts')
+    ? [CHATGLM_COOKIE_CONTENT_SCRIPT]
+    : [];
+  const desiredCustomScripts = [
+    ...desiredOptionalCookieScripts,
+    ...desiredCustomConfigs
+      .flatMap(({ contentScript, cookieContentScript }) => [contentScript, cookieContentScript])
+      .filter(Boolean)
+  ];
   const desiredCustomById = new Map(
     desiredCustomScripts.map((contentScript) => [contentScript.id, contentScript])
   );

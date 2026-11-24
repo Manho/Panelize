@@ -30,6 +30,10 @@ import { createCustomSwRecoveryController } from '../modules/custom-sw-recovery.
 import { preserveForeignCustomIds } from '../modules/provider-order.js';
 import { DEFAULT_PROVIDER_IDS } from '../modules/provider-defaults.js';
 import { GROK_WEBSOCKET_COOKIE_SYNC_ACTION } from '../modules/grok-websocket-cookies.js';
+import {
+  EMBEDDED_FRAME_COOKIE_SYNC_ACTION,
+  requiresEmbeddedFrameCookieSync
+} from '../modules/embedded-frame-cookies.js';
 import { OPTIONAL_PROVIDER_ACCESS_SYNC_ACTION } from '../modules/optional-provider-access.js';
 import {
   DEFAULT_GOOGLE_PROVIDER_MODE,
@@ -438,6 +442,20 @@ async function requestGrokWebSocketCookieSync() {
   }
 }
 
+async function requestEmbeddedFrameCookieSync() {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({ action: EMBEDDED_FRAME_COOKIE_SYNC_ACTION });
+    if (response && response.success === false) {
+      console.warn('[Multi-Panel] Embedded frame cookie sync failed:', response.error);
+    }
+  } catch (error) {
+    console.warn('[Multi-Panel] Embedded frame cookie sync failed:', error);
+  }
+}
+
 function getTemporaryChatNormalUrl(providerId) {
   const configuredNormalUrl = getProviderTemporaryChatNormalUrl(providerId);
   if (configuredNormalUrl !== null) {
@@ -721,7 +739,10 @@ function bindPanelHeaderActions(panelId) {
 
   const refreshBtn = panelEl.querySelector('.refresh-panel-btn');
   if (refreshBtn) {
-    refreshBtn.addEventListener('click', () => {
+    refreshBtn.addEventListener('click', async () => {
+      if (requiresEmbeddedFrameCookieSync(panel.providerId)) {
+        await requestEmbeddedFrameCookieSync();
+      }
       reloadPanelIframe(panel);
     });
   }
@@ -1772,6 +1793,9 @@ async function addPanel(providerId, { saveConfig = true } = {}) {
   if (providerId === 'grok') {
     await requestGrokWebSocketCookieSync();
   }
+  if (requiresEmbeddedFrameCookieSync(providerId)) {
+    await requestEmbeddedFrameCookieSync();
+  }
 
   if (panels.length >= MAX_PANELS) {
     showToast(`Maximum number of panels reached (${MAX_PANELS})`);
@@ -1986,6 +2010,9 @@ async function switchPanelProvider(panelId, newProviderId) {
 
   if (newProviderId === 'grok') {
     await requestGrokWebSocketCookieSync();
+  }
+  if (requiresEmbeddedFrameCookieSync(newProviderId)) {
+    await requestEmbeddedFrameCookieSync();
   }
 
   // Update panel header

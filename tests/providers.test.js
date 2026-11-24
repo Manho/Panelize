@@ -50,7 +50,7 @@ describe('providers module', () => {
         url: 'https://chatglm.cn/',
         icon: '/icons/providers/zhipu.svg',
         iconDark: '/icons/providers/dark/zhipu.svg',
-        optionalOrigins: ['https://chatglm.cn/*'],
+        optionalOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
       });
       expect(getProviderById('zai-global')).toMatchObject({
         name: 'Z.ai (Global)',

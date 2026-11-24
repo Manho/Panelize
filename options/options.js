@@ -1,6 +1,7 @@
 // T050-T064: Settings Page Implementation
 import { listProviders, getProviderIcon } from '../modules/providers.js';
 import {
+  getExpectedCustomWebPermissionOrigins,
   getProviderDescriptor,
   hasProviderDescriptor,
   listProviderDescriptors
@@ -316,6 +317,32 @@ export function isOriginUsedByAnyProvider(origin, { excludeProviderId = null } =
     }
     return false;
   });
+}
+
+function getCustomRequestPermissionOrigins(origin, isApiKind) {
+  if (isApiKind) {
+    return [`${origin}/*`];
+  }
+  return getExpectedCustomWebPermissionOrigins(origin);
+}
+
+function getUnusedPermissionOrigins(origins, { excludeProviderId = null } = {}) {
+  if (!Array.isArray(origins) || origins.length === 0) {
+    return [];
+  }
+  const usedPatterns = new Set();
+  for (const descriptor of listProviderDescriptors()) {
+    if (excludeProviderId && descriptor.id === excludeProviderId) {
+      continue;
+    }
+    for (const frameOrigin of descriptor.frameOrigins || []) {
+      usedPatterns.add(`${frameOrigin}/*`);
+    }
+    for (const pattern of descriptor.permissionOrigins || []) {
+      usedPatterns.add(pattern);
+    }
+  }
+  return origins.filter((pattern) => !usedPatterns.has(pattern));
 }
 
 async function withTemporaryOriginStripSessionRule(origin, fn) {
@@ -1880,7 +1907,7 @@ async function handleInlineEditSubmit(event, inlineState) {
     }
   }
 
-  const permissionOrigin = `${urlCheck.origin}/*`;
+  const permissionOrigins = getCustomRequestPermissionOrigins(urlCheck.origin, isApiKind);
   inlineState.clearError();
   inlineState.modelCombobox?.closeListbox();
   isSubmittingInlineEdit = true;
@@ -1891,7 +1918,7 @@ async function handleInlineEditSubmit(event, inlineState) {
   let permissionPromise;
   try {
     permissionPromise = chrome?.permissions?.request
-      ? chrome.permissions.request({ origins: [permissionOrigin] })
+      ? chrome.permissions.request({ origins: permissionOrigins })
       : Promise.resolve(false);
   } catch {
     isSubmittingInlineEdit = false;
@@ -1922,6 +1949,9 @@ async function handleInlineEditSubmit(event, inlineState) {
 
     const targetId = editingDescriptor.id;
     const previousOrigin = getCustomProviderOrigin(editingDescriptor);
+    const previousPermissionOrigins = Array.isArray(editingDescriptor.permissionOrigins)
+      ? [...editingDescriptor.permissionOrigins]
+      : (previousOrigin ? [`${previousOrigin}/*`] : []);
     const previousEndpointUrl = editingDescriptor.apiConfig?.endpointUrl || null;
     const sameOriginAsSaved = Boolean(previousOrigin && previousOrigin === urlCheck.origin);
     let previousSecret = null;
@@ -1978,9 +2008,12 @@ async function handleInlineEditSubmit(event, inlineState) {
         !isOriginUsedByAnyProvider(previousOrigin) &&
         chrome?.permissions?.remove
       ) {
-        await chrome.permissions.remove({ origins: [`${previousOrigin}/*`] }).catch((error) => {
-          console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
-        });
+        const originsToRevoke = getUnusedPermissionOrigins(previousPermissionOrigins);
+        if (originsToRevoke.length > 0) {
+          await chrome.permissions.remove({ origins: originsToRevoke }).catch((error) => {
+            console.warn(`Failed to revoke permission for ${previousOrigin}:`, error);
+          });
+        }
       }
 
       await cleanupUnusedProbedOrigins({ keepOrigin: urlCheck.origin });
@@ -2014,7 +2047,10 @@ async function handleInlineEditSubmit(event, inlineState) {
           !isOriginUsedByAnyProvider(urlCheck.origin) &&
           chrome?.permissions?.remove
         ) {
-          await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+          const originsToRevoke = getUnusedPermissionOrigins(permissionOrigins);
+          if (originsToRevoke.length > 0) {
+            await chrome.permissions.remove({ origins: originsToRevoke }).catch(() => {});
+          }
         }
       }
       const message =
@@ -2185,7 +2221,7 @@ export async function handleCustomProviderFormSubmit(event) {
   }
 
   const createdAt = Date.now();
-  const permissionOrigin = `${urlCheck.origin}/*`;
+  const permissionOrigins = getCustomRequestPermissionOrigins(urlCheck.origin, isApiKind);
 
   clearCustomProviderFormError();
   addFormModelCombobox?.closeListbox();
@@ -2197,7 +2233,7 @@ export async function handleCustomProviderFormSubmit(event) {
   let permissionPromise;
   try {
     permissionPromise = chrome?.permissions?.request
-      ? chrome.permissions.request({ origins: [permissionOrigin] })
+      ? chrome.permissions.request({ origins: permissionOrigins })
       : Promise.resolve(false);
   } catch {
     isSubmittingCustomProvider = false;
@@ -2311,7 +2347,12 @@ export async function handleCustomProviderFormSubmit(event) {
         !isOriginUsedByAnyProvider(urlCheck.origin, { excludeProviderId: id }) &&
         chrome?.permissions?.remove
       ) {
-        await chrome.permissions.remove({ origins: [permissionOrigin] }).catch(() => {});
+        const originsToRevoke = getUnusedPermissionOrigins(permissionOrigins, {
+          excludeProviderId: id
+        });
+        if (originsToRevoke.length > 0) {
+          await chrome.permissions.remove({ origins: originsToRevoke }).catch(() => {});
+        }
       }
       const message = persistError?.reason && CUSTOM_URL_REASON_MESSAGE_KEYS[persistError.reason]
         ? getCustomProviderUrlErrorMessage(persistError.reason)
@@ -2332,6 +2373,9 @@ export async function deleteCustomProviderEntry(providerId) {
   }
 
   const origin = getCustomProviderOrigin(descriptor);
+  const removedPermissionOrigins = Array.isArray(descriptor.permissionOrigins)
+    ? [...descriptor.permissionOrigins]
+    : (origin ? [`${origin}/*`] : []);
   const providerName = descriptor.name;
 
   if (editingCustomProviderId === providerId) {
@@ -2364,9 +2408,12 @@ export async function deleteCustomProviderEntry(providerId) {
   await requestOptionalProviderAccessSync();
 
   if (origin && !isOriginUsedByAnyProvider(origin) && chrome?.permissions?.remove) {
-    await chrome.permissions.remove({ origins: [`${origin}/*`] }).catch((error) => {
-      console.warn(`Failed to revoke permission for ${origin}:`, error);
-    });
+    const originsToRevoke = getUnusedPermissionOrigins(removedPermissionOrigins);
+    if (originsToRevoke.length > 0) {
+      await chrome.permissions.remove({ origins: originsToRevoke }).catch((error) => {
+        console.warn(`Failed to revoke permission for ${origin}:`, error);
+      });
+    }
   }
 
   await renderProviderList();

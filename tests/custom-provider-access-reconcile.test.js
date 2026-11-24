@@ -280,7 +280,7 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
 
     await expect(hasOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(false);
     expect(chrome.permissions.contains).toHaveBeenLastCalledWith({
-      origins: ['https://chat.example.com/*'],
+      origins: ['https://chat.example.com/*', 'http://chat.example.com/*'],
     });
 
     await expect(hasOptionalProviderPermission('custom-deadbeef00')).resolves.toBe(false);
@@ -308,7 +308,7 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
     // requestOptionalProviderPermission requests exact custom permissionOrigins
     await expect(requestOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(true);
     expect(chrome.permissions.request).toHaveBeenCalledWith({
-      origins: ['https://chat.example.com/*'],
+      origins: ['https://chat.example.com/*', 'http://chat.example.com/*'],
     });
     await expect(hasOptionalProviderPermission(CUSTOM_RECORD_B.id)).resolves.toBe(true);
 
@@ -326,7 +326,11 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
     const state = installStatefulChromeEnv({
       topDomainsSupported: true,
       localRecords: [CUSTOM_RECORD_A, CUSTOM_RECORD_B],
-      grantedOrigins: ['http://127.0.0.1:3000/*', 'https://chat.example.com/*'],
+      grantedOrigins: [
+        'http://127.0.0.1:3000/*',
+        'https://chat.example.com/*',
+        'http://chat.example.com/*',
+      ],
       enabledProviders: [CUSTOM_RECORD_A.id, CUSTOM_RECORD_B.id, 'chatgpt'],
     });
 
@@ -495,7 +499,9 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
       grantedOrigins: [
         'http://127.0.0.1:3000/*',
         'https://chat.example.com/*',
+        'http://chat.example.com/*',
         'https://chatglm.cn/*',
+        'http://chatglm.cn/*',
       ],
       enabledProviders: [CUSTOM_RECORD_A.id, CUSTOM_RECORD_B.id, 'chatglm'],
     });
@@ -508,7 +514,10 @@ describe('custom provider access permissions, scoped DNR rules, and content-scri
 
     // Zero custom rules installed (scoped or unscoped), and custom scripts are NOT registered
     expect(state.dynamicRules.some(({ id }) => id >= 10000 && id <= 19999)).toBe(false);
-    expect(state.registeredScripts.map(({ id }) => id)).toEqual(['chatglm-scripts']);
+    expect(state.registeredScripts.map(({ id }) => id)).toEqual([
+      'chatglm-scripts',
+      'chatglm-cookie-scripts',
+    ]);
   });
 
   it('omits custom rules and scripts while preserving built-in fallback when scoped rule installation throws', async () => {

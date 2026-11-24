@@ -52,7 +52,7 @@ describe('optional provider access', () => {
       frameRule: { id: 1002 },
     });
     expect(OPTIONAL_PROVIDER_CONFIGS.chatglm).toMatchObject({
-      origins: ['https://chatglm.cn/*'],
+      origins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
       contentScript: {
         id: 'chatglm-scripts',
         matches: ['https://chatglm.cn/*'],
@@ -301,6 +301,7 @@ describe('optional provider access', () => {
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
+      { id: 'chatglm-cookie-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
       { id: 'aistudio-scripts' },
@@ -333,6 +334,7 @@ describe('optional provider access', () => {
       { id: 'qwen-cn-scripts' },
       { id: 'qwen-global-scripts' },
       { id: 'chatglm-scripts' },
+      { id: 'chatglm-cookie-scripts' },
       { id: 'zai-global-scripts' },
       { id: 'yuanbao-scripts' },
       { id: 'aistudio-scripts' },

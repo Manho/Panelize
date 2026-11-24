@@ -226,6 +226,42 @@ function isOriginMatchPattern(pattern) {
 }
 
 /**
+ * Returns the exact ordered permissionOrigins required for a custom Web UI
+ * provider origin. HTTPS custom web providers also include `http://<hostname>/*`
+ * (and portless `https://<hostname>/*` when a custom port is used) so
+ * `chrome.cookies` can read non-Secure first-party cookies set by the site and
+ * mirror them into the extension's CHIPS partition for `document.cookie`.
+ *
+ * @param {string} customOrigin
+ * @returns {string[]}
+ */
+export function getExpectedCustomWebPermissionOrigins(customOrigin) {
+  if (!isExactHttpOrigin(customOrigin)) {
+    return [];
+  }
+  const parsed = new URL(customOrigin);
+  if (parsed.protocol !== 'https:') {
+    return [`${customOrigin}/*`];
+  }
+  const patterns = [`${customOrigin}/*`];
+  const portlessHttpsPattern = `https://${parsed.hostname}/*`;
+  if (!patterns.includes(portlessHttpsPattern)) {
+    patterns.push(portlessHttpsPattern);
+  }
+  patterns.push(`http://${parsed.hostname}/*`);
+  return patterns;
+}
+
+function isSameOrderedStringList(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    left.every((item, index) => item === right[index])
+  );
+}
+
+/**
  * Validates one provider descriptor and returns a list of human-readable errors.
  * An empty array means the descriptor is valid.
  *
@@ -453,14 +489,18 @@ export function validateProviderDescriptor(
       );
     }
   } else if (isCustom) {
+    const expectedCustomOrigins = customOrigin !== null
+      ? getExpectedCustomWebPermissionOrigins(customOrigin)
+      : null;
     if (
       !Array.isArray(descriptor.permissionOrigins) ||
-      descriptor.permissionOrigins.length !== 1 ||
-      !isOriginMatchPattern(descriptor.permissionOrigins[0]) ||
-      (customOrigin !== null && descriptor.permissionOrigins[0] !== `${customOrigin}/*`)
+      descriptor.permissionOrigins.length === 0 ||
+      !descriptor.permissionOrigins.every(isOriginMatchPattern) ||
+      (expectedCustomOrigins !== null &&
+        !isSameOrderedStringList(descriptor.permissionOrigins, expectedCustomOrigins))
     ) {
       errors.push(
-        `Provider "${id || '<unnamed>'}": custom provider permissionOrigins must be ["<origin>/*"]`
+        `Provider "${id || '<unnamed>'}": custom provider permissionOrigins must match expected origin patterns for "${customOrigin || '<origin>'}"`
       );
     }
   } else if (descriptor.permissionOrigins !== null && descriptor.permissionOrigins !== undefined) {
@@ -904,7 +944,9 @@ export const BUILTIN_PROVIDER_DESCRIPTORS = Object.freeze([
     access: 'optional',
     frameOrigins: ['https://chatglm.cn'],
     allowedHosts: ['chatglm.cn'],
-    permissionOrigins: ['https://chatglm.cn/*'],
+    // Zhipu stores chatglm_token and chatglm_refresh_token without Secure, so
+    // chrome.cookies requires http:// access alongside https:// to mirror them.
+    permissionOrigins: ['https://chatglm.cn/*', 'http://chatglm.cn/*'],
     contentScript: createOptionalContentScriptSpec(
       'https://chatglm.cn/*',
       'content-scripts/enter-behavior-chatglm.js'

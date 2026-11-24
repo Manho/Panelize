@@ -459,7 +459,7 @@ describe('B3.2 custom web providers in Options', () => {
 
     await vi.waitFor(() => {
       expect(chrome.permissions.remove).toHaveBeenCalledWith({
-        origins: ['https://rollback.example.com/*'],
+        origins: ['https://rollback.example.com/*', 'http://rollback.example.com/*'],
       });
     });
     expect(errorEl.textContent).toBe(EN_MESSAGES.errCustomProviderSaveFailed.message);

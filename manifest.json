@@ -36,6 +36,7 @@
     "https://chat.qwen.ai/*",
     "https://auth.qwen.ai/*",
     "https://chatglm.cn/*",
+    "http://chatglm.cn/*",
     "https://chat.z.ai/*",
     "https://yuanbao.tencent.com/*",
     "https://aistudio.google.com/*",

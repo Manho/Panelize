@@ -12,6 +12,12 @@ import {
   reconcileOptionalProviderAccess
 } from '../modules/optional-provider-access.js';
 import {
+  EMBEDDED_FRAME_COOKIE_SYNC_ACTION,
+  createEmbeddedFrameCookieReconcileScheduler,
+  handleEmbeddedFrameCookieChanged,
+  reconcileEmbeddedFrameCookies
+} from '../modules/embedded-frame-cookies.js';
+import {
   GROK_WEBSOCKET_COOKIE_SYNC_ACTION,
   createGrokWebSocketCookieReconcileScheduler,
   handleGrokTabNavigationComplete,
@@ -151,12 +157,20 @@ const scheduleGrokWebSocketCookieReconcile = createGrokWebSocketCookieReconcileS
   }
 );
 
+const scheduleEmbeddedFrameCookieReconcile = createEmbeddedFrameCookieReconcileScheduler(
+  reconcileEmbeddedFrameCookies,
+  (error) => {
+    console.error('[Background] Failed to synchronize embedded frame cookies:', error);
+  }
+);
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   await migrateProviderSettingsForUpdate(details);
   if (details?.reason === 'update') {
     await removeDeprecatedClaudeModelMode();
   }
   await scheduleOptionalProviderReconcile();
+  await scheduleEmbeddedFrameCookieReconcile();
   await scheduleGrokWebSocketCookieReconcile();
   await createContextMenus();
   await loadShortcutSetting();
@@ -165,6 +179,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.runtime.onStartup.addListener(async () => {
   await scheduleOptionalProviderReconcile();
+  await scheduleEmbeddedFrameCookieReconcile();
   await scheduleGrokWebSocketCookieReconcile();
   await loadShortcutSetting();
   await loadOpenModeSetting();
@@ -198,12 +213,16 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 
   if (namespace === 'sync' && changes.enabledProviders) {
-    scheduleOptionalProviderReconcile();
+    scheduleOptionalProviderReconcile().then(() => {
+      scheduleEmbeddedFrameCookieReconcile();
+    });
     scheduleGrokWebSocketCookieReconcile();
   }
 
   if (namespace === 'local' && changes[CUSTOM_PROVIDERS_STORAGE_KEY]) {
-    scheduleOptionalProviderReconcile();
+    scheduleOptionalProviderReconcile().then(() => {
+      scheduleEmbeddedFrameCookieReconcile();
+    });
   }
 });
 
@@ -212,6 +231,15 @@ if (chrome.cookies?.onChanged) {
     if (isGrokWebSocketCookieChange(changeInfo)) {
       scheduleGrokWebSocketCookieReconcile();
     }
+    handleEmbeddedFrameCookieChanged(changeInfo)
+      .then((shouldReconcile) => {
+        if (shouldReconcile) {
+          scheduleEmbeddedFrameCookieReconcile();
+        }
+      })
+      .catch((error) => {
+        console.error('[Background] Failed to handle embedded frame cookie change:', error);
+      });
   });
 }
 
@@ -244,13 +272,17 @@ if (chrome.tabs?.onRemoved) {
 
 if (chrome.permissions?.onAdded) {
   chrome.permissions.onAdded.addListener(() => {
-    scheduleOptionalProviderReconcile();
+    scheduleOptionalProviderReconcile().then(() => {
+      scheduleEmbeddedFrameCookieReconcile();
+    });
   });
 }
 
 if (chrome.permissions?.onRemoved) {
   chrome.permissions.onRemoved.addListener(() => {
-    scheduleOptionalProviderReconcile();
+    scheduleOptionalProviderReconcile().then(() => {
+      scheduleEmbeddedFrameCookieReconcile();
+    });
   });
 }
 
@@ -398,10 +430,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    scheduleOptionalProviderReconcile().then(
-      () => sendResponse({ success: true }),
-      (error) => sendResponse({ success: false, error: error?.message || String(error) })
-    );
+    scheduleOptionalProviderReconcile()
+      .then(() => scheduleEmbeddedFrameCookieReconcile())
+      .then(
+        () => sendResponse({ success: true }),
+        (error) => sendResponse({ success: false, error: error?.message || String(error) })
+      );
+    return true;
+  }
+
+  if (message.action === EMBEDDED_FRAME_COOKIE_SYNC_ACTION) {
+    if (!isMultiPanelTopFrameSender(sender)) {
+      sendResponse({
+        success: false,
+        error: 'Embedded frame cookie sync is only available to the Multi-Panel page'
+      });
+      return false;
+    }
+
+    scheduleEmbeddedFrameCookieReconcile().then(sendResponse);
     return true;
   }
 

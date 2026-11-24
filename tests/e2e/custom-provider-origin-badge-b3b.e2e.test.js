@@ -393,7 +393,7 @@ test.describe('B3b origin badge start-truncation and host-tail/port visibility E
   test('mapped spoofing-style HTTPS origin (https://accounts.google.com.evil.tld) keeps .evil.tld visible below 300px and below 180px', async () => {
     const tlsServer = await startLocalTlsFixtureServer('Spoofed Login Portal Fixture');
     const extensionCopy = await createPatchedExtensionCopy((manifest) => {
-      manifest.host_permissions.push(`${SPOOF_ORIGIN}/*`);
+      manifest.host_permissions.push(`${SPOOF_ORIGIN}/*`, `http://${SPOOF_HOST}/*`);
     });
 
     let extension;
