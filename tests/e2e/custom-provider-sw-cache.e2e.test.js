@@ -395,13 +395,20 @@ test.describe('Custom web AI Service Worker poisoned CacheStorage framing recove
       // 7. Visit 2 & Visit 3: clicking Refresh on the panel AND reloading Multi-Panel
       //    both keep working cleanly AND keep the cookie banner dismissed, while topTab cookie jar stays isolated!
       await customPanel.locator('.refresh-panel-btn').click();
+      // Wait for Refresh to actually replace the Step 6 document (clearing its .assistant-reply)
+      // and finish any SW recovery before reloading Multi-Panel.
+      await expect(customPanel.frameLocator('iframe').locator('.assistant-reply')).toHaveCount(0, {
+        timeout: 15_000,
+      });
       await expect
         .poll(() => readRenderedFrameText(iframeHandle, '#fixture-ready'), { timeout: 15_000 })
         .toBe('Perplexity SW Fixture Ready');
+      await expect(mpPage.locator('iframe[data-panelize-sw-probe="true"]')).toHaveCount(0);
       await expect(customPanel.frameLocator('iframe').locator('#cookie-banner')).toBeHidden();
 
       await mpPage.reload({ waitUntil: 'domcontentloaded' });
       const reloadedCustomPanel = mpPage.locator('#panel-grid .panel-item[data-custom-provider="true"]');
+      await expect(reloadedCustomPanel).toHaveCount(1);
       const reloadedIframeHandle = await reloadedCustomPanel.locator('iframe').elementHandle();
       await expect
         .poll(() => readRenderedFrameText(reloadedIframeHandle, '#fixture-ready'), {
