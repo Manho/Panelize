@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.1 - 2026-11-24
+- Fixed document and image uploads on Gemini new Hydrogen UI by scoping upload trigger discovery to the composer ("Upload & tools"), mounting accept-matched hidden file inputs, dismissing the overlay menu cleanly, and supporting extension-stripped attachment chips.
+- Fixed Qwen Global (chat.qwen.ai) document uploads by prioritizing composer drop delivery, hardening preview confirmation per attachment kind, and preventing duplicate uploads on slow drops.
+- Hardened Custom Web Service Worker CacheStorage recovery timeouts and E2E test sequencing.
+
 ## 2.3.0 - 2026-11-24
 - Added PDF, DOCX, TXT, Markdown, CSV, and other document uploads in Multi-Panel Send All with a unified attach button, mixed image/document preview chips, tri-state unsupported-provider skipping, and Custom API plain-text inlining.
 - Refined the Multi-Panel shared composer into a compact tray and modernized the Settings and Prompt Library UI in both light and dark themes.
