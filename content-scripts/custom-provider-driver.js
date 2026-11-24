@@ -1678,9 +1678,40 @@
     );
   }
 
-  function collectCandidateFileInputs(composer) {
+  function getOwningForm(element) {
+    if (!element) return null;
+    if (element.form) return element.form;
+    return typeof element.closest === 'function' ? element.closest('form') : null;
+  }
+
+  /**
+   * Returns enabled file inputs grouped into ownership tiers, nearest first:
+   * 0. inputs owned by the composer's own form (or, without a form, in-scope
+   *    inputs that no form owns);
+   * 1. remaining in-scope inputs not owned by a different form;
+   * 2. document-level inputs not owned by any form;
+   * 3. inputs owned by an unrelated form (e.g. a library import form).
+   */
+  function collectFileInputTiers(composer) {
+    const tiers = [[], [], [], []];
     const seen = new Set();
-    const scoped = [];
+    const composerForm = composer ? getOwningForm(composer) : null;
+    const place = (input, inScope) => {
+      if (seen.has(input)) return;
+      seen.add(input);
+      const owner = getOwningForm(input);
+      if (owner && owner !== composerForm) {
+        tiers[3].push(input);
+      } else if (inScope && (composerForm ? owner === composerForm : !owner)) {
+        tiers[0].push(input);
+      } else if (inScope) {
+        tiers[1].push(input);
+      } else if (owner && owner === composerForm) {
+        tiers[0].push(input);
+      } else {
+        tiers[2].push(input);
+      }
+    };
     if (composer) {
       const scopes = collectComposerScopes(composer);
       for (let i = 0; i < scopes.length; i += 1) {
@@ -1688,10 +1719,7 @@
           isEnabledFileInput
         );
         for (let j = 0; j < inputs.length; j += 1) {
-          if (!seen.has(inputs[j])) {
-            seen.add(inputs[j]);
-            scoped.push(inputs[j]);
-          }
+          place(inputs[j], true);
         }
       }
     }
@@ -1699,30 +1727,36 @@
       isEnabledFileInput
     );
     for (let i = 0; i < docInputs.length; i += 1) {
-      if (!seen.has(docInputs[i])) {
-        seen.add(docInputs[i]);
-        scoped.push(docInputs[i]);
-      }
+      place(docInputs[i], false);
     }
-    return scoped;
+    return tiers;
+  }
+
+  function collectCandidateFileInputs(composer) {
+    return collectFileInputTiers(composer).flat();
   }
 
   function findFileInputForAttachment(composer, fileOrMeta) {
-    const candidates = collectCandidateFileInputs(composer);
-    if (candidates.length === 0) {
+    const tiers = collectFileInputTiers(composer);
+    if (tiers.every((tier) => tier.length === 0)) {
       return { input: null, hadAnyFileInput: false };
     }
-    const matching = candidates.filter((inp) => matchesInputAccept(inp, fileOrMeta));
-    if (matching.length === 0) {
-      return { input: null, hadAnyFileInput: true };
-    }
     const isDoc = isDocumentAttachment(fileOrMeta);
-    const explicitMatch = matching.find((inp) => {
-      const accept = (inp.getAttribute('accept') || '').trim();
-      if (!accept) return false;
-      return isDoc ? matchesInputAccept(inp, fileOrMeta) : IMAGE_ACCEPT_HINT_RE.test(accept);
-    });
-    return { input: explicitMatch || matching[0], hadAnyFileInput: true };
+    // Composer ownership wins over accept specificity: explicit-MIME preference
+    // only applies among inputs of the nearest tier that accepts the file.
+    for (let t = 0; t < tiers.length; t += 1) {
+      const matching = tiers[t].filter((inp) => matchesInputAccept(inp, fileOrMeta));
+      if (matching.length === 0) {
+        continue;
+      }
+      const explicitMatch = matching.find((inp) => {
+        const accept = (inp.getAttribute('accept') || '').trim();
+        if (!accept) return false;
+        return isDoc ? matchesInputAccept(inp, fileOrMeta) : IMAGE_ACCEPT_HINT_RE.test(accept);
+      });
+      return { input: explicitMatch || matching[0], hadAnyFileInput: true };
+    }
+    return { input: null, hadAnyFileInput: true };
   }
 
   function assignFilesToFileInput(fileInput, files) {
@@ -1997,6 +2031,89 @@
     return { handled: false, ok: false, addedCount: 0 };
   }
 
+  function toSkippedEntry(entry, reason) {
+    return {
+      ...(typeof entry.id === 'string' ? { id: entry.id } : {}),
+      name: entry.name,
+      reason,
+    };
+  }
+
+  function snapshotPerNameEvidence(composer, entries) {
+    return entries.map((entry) => countFilenamePreviewMatches(composer, [entry.name]));
+  }
+
+  /**
+   * Returns IDs of entries whose own filename preview appeared after the
+   * baseline snapshot. Used for partial batches: an aggregate preview count
+   * never identifies which file of the batch completed.
+   */
+  function collectEntriesWithNewEvidence(composer, entries, baselineEvidence) {
+    const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
+    const ids = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (typeof entry.id !== 'string') continue;
+      if (countFilenamePreviewMatches(activeComposer, [entry.name]) > (baselineEvidence[i] || 0)) {
+        ids.push(entry.id);
+      }
+    }
+    return ids;
+  }
+
+  async function uploadEntryBatchToFileInput(composer, fileInput, groupEntries, settleTimeoutMs) {
+    const groupNames = groupEntries.map((e) => e.name);
+    const baseline = inspectComposerAttachments(composer, groupNames).count;
+    const baselineEvidence = snapshotPerNameEvidence(composer, groupEntries);
+    if (!assignFilesToFileInput(fileInput, groupEntries.map((entry) => entry.file))) {
+      return { ok: false, reason: ACTION_FAILURE_REASONS.INJECTION_ERROR, succeededIds: [] };
+    }
+    const settled = await waitForComposerUploadSettle(
+      composer,
+      baseline,
+      groupEntries.length,
+      settleTimeoutMs,
+      groupNames
+    );
+    if (settled.ok) {
+      return {
+        ok: true,
+        succeededIds: groupEntries.map((entry) => entry.id).filter((id) => typeof id === 'string'),
+      };
+    }
+    return {
+      ok: false,
+      reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+      succeededIds: collectEntriesWithNewEvidence(composer, groupEntries, baselineEvidence),
+    };
+  }
+
+  async function uploadEntriesSequentiallyToFileInput(composer, fileInput, groupEntries, settleTimeoutMs) {
+    const succeededIds = [];
+    for (let i = 0; i < groupEntries.length; i += 1) {
+      const entry = groupEntries[i];
+      const currentInput = findFileInputForAttachment(composer, entry.meta).input || fileInput;
+      const baseline = inspectComposerAttachments(composer, [entry.name]).count;
+      if (!assignFilesToFileInput(currentInput, [entry.file])) {
+        return { ok: false, reason: ACTION_FAILURE_REASONS.INJECTION_ERROR, succeededIds };
+      }
+      const settled = await waitForComposerUploadSettle(
+        composer,
+        baseline,
+        1,
+        settleTimeoutMs,
+        [entry.name]
+      );
+      if (!settled.ok) {
+        return { ok: false, reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT, succeededIds };
+      }
+      if (typeof entry.id === 'string') {
+        succeededIds.push(entry.id);
+      }
+    }
+    return { ok: true, succeededIds };
+  }
+
   async function uploadAttachmentsToComposer(composer, attachments, hasAttachmentProtocol = false) {
     const entries = [];
     for (let i = 0; i < attachments.length; i += 1) {
@@ -2025,11 +2142,7 @@
         const entry = entries[i];
         const { input } = findFileInputForAttachment(composer, entry.meta);
         if (!input) {
-          skippedAttachments.push({
-            ...(typeof entry.id === 'string' ? { id: entry.id } : {}),
-            name: entry.name,
-            reason: ACTION_FAILURE_REASONS.TYPE_NOT_ACCEPTED,
-          });
+          skippedAttachments.push(toSkippedEntry(entry, ACTION_FAILURE_REASONS.TYPE_NOT_ACCEPTED));
           continue;
         }
         if (!acceptedByInput.has(input)) {
@@ -2050,71 +2163,32 @@
 
       const succeededImageIds = [];
       for (const [fileInput, groupEntries] of acceptedByInput.entries()) {
-        const groupNames = groupEntries.map((e) => e.name);
-        if (groupEntries.length === 1 || fileInput.multiple) {
-          const baseline = inspectComposerAttachments(composer, groupNames).count;
-          const files = groupEntries.map((entry) => entry.file);
-          if (!assignFilesToFileInput(fileInput, files)) {
-            return {
-              ok: false,
-              reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
-              succeededImageIds,
-              skippedAttachments,
-            };
-          }
-          const settled = await waitForComposerUploadSettle(
-            composer,
-            baseline,
-            groupEntries.length,
-            settleTimeoutMs,
-            groupNames
+        const imageEntries = groupEntries.filter((entry) => !isDocumentAttachment(entry.meta));
+        const documentEntries = groupEntries.filter((entry) => isDocumentAttachment(entry.meta));
+        const steps = [];
+        if (imageEntries.length > 0) {
+          steps.push(
+            imageEntries.length === 1 || fileInput.multiple
+              ? () => uploadEntryBatchToFileInput(composer, fileInput, imageEntries, settleTimeoutMs)
+              : () => uploadEntriesSequentiallyToFileInput(composer, fileInput, imageEntries, settleTimeoutMs)
           );
-          const groupSucceeded = groupEntries
-            .slice(0, settled.addedCount)
-            .map((entry) => entry.id)
-            .filter((id) => typeof id === 'string');
-          succeededImageIds.push(...groupSucceeded);
-          if (!settled.ok) {
-            return {
-              ok: false,
-              reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
-              succeededImageIds,
-              skippedAttachments,
-            };
-          }
-          continue;
         }
-
-        // Single-file input with multiple attachments: upload sequentially
-        for (let i = 0; i < groupEntries.length; i += 1) {
-          const entry = groupEntries[i];
-          const currentInput = findFileInputForAttachment(composer, entry.meta).input || fileInput;
-          const baseline = inspectComposerAttachments(composer, [entry.name]).count;
-          if (!assignFilesToFileInput(currentInput, [entry.file])) {
-            return {
-              ok: false,
-              reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
-              succeededImageIds,
-              skippedAttachments,
-            };
-          }
-          const settled = await waitForComposerUploadSettle(
-            composer,
-            baseline,
-            1,
-            settleTimeoutMs,
-            [entry.name]
+        if (documentEntries.length > 0) {
+          // Documents go one at a time so each preview delta maps to one attachment ID.
+          steps.push(() =>
+            uploadEntriesSequentiallyToFileInput(composer, fileInput, documentEntries, settleTimeoutMs)
           );
-          if (!settled.ok) {
+        }
+        for (let s = 0; s < steps.length; s += 1) {
+          const stepResult = await steps[s]();
+          succeededImageIds.push(...stepResult.succeededIds);
+          if (!stepResult.ok) {
             return {
               ok: false,
-              reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+              reason: stepResult.reason,
               succeededImageIds,
               skippedAttachments,
             };
-          }
-          if (typeof entry.id === 'string') {
-            succeededImageIds.push(entry.id);
           }
         }
       }
@@ -2122,48 +2196,86 @@
       return { ok: true, succeededImageIds, skippedAttachments };
     }
 
-    // No <input type="file"> in DOM: attempt paste/drop on composer
-    const allNames = entries.map((e) => e.name);
-    const fallback = await tryPasteOrDropFiles(
-      composer,
-      entries.map((entry) => entry.file),
-      allNames,
-      hasDocument
-    );
-    if (!fallback.handled) {
-      if (hasAttachmentProtocol && hasDocument) {
-        return {
-          ok: true,
-          skipped: true,
-          reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
-          succeededImageIds: [],
-          skippedAttachments: entries.map((entry) => ({
-            ...(typeof entry.id === 'string' ? { id: entry.id } : {}),
-            name: entry.name,
+    // No <input type="file"> in DOM: paste images through the image path and
+    // drop each document separately, combining per-attachment outcomes.
+    const imageEntries = entries.filter((entry) => !isDocumentAttachment(entry.meta));
+    const documentEntries = entries.filter((entry) => isDocumentAttachment(entry.meta));
+    const succeededImageIds = [];
+    const skippedAttachments = [];
+
+    if (imageEntries.length > 0) {
+      const imageBaselineEvidence = snapshotPerNameEvidence(composer, imageEntries);
+      const imageResult = await tryPasteOrDropFiles(
+        composer,
+        imageEntries.map((entry) => entry.file),
+        imageEntries.map((entry) => entry.name),
+        false
+      );
+      if (!imageResult.handled) {
+        if (!(hasAttachmentProtocol && documentEntries.length > 0)) {
+          return {
+            ok: false,
             reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
-          })),
+            succeededImageIds: [],
+            skippedAttachments: [],
+          };
+        }
+        imageEntries.forEach((entry) => {
+          skippedAttachments.push(toSkippedEntry(entry, ACTION_FAILURE_REASONS.UNSUPPORTED));
+        });
+      } else if (!imageResult.ok) {
+        return {
+          ok: false,
+          reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
+          succeededImageIds: collectEntriesWithNewEvidence(composer, imageEntries, imageBaselineEvidence),
+          skippedAttachments,
         };
+      } else {
+        succeededImageIds.push(
+          ...imageEntries.map((entry) => entry.id).filter((id) => typeof id === 'string')
+        );
       }
-      return {
-        ok: false,
-        reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
-        succeededImageIds: [],
-        skippedAttachments: [],
-      };
     }
 
-    const succeededImageIds = entries
-      .slice(0, fallback.addedCount)
-      .map((entry) => entry.id)
-      .filter((id) => typeof id === 'string');
-    return fallback.ok
-      ? { ok: true, succeededImageIds, skippedAttachments: [] }
-      : {
+    for (let i = 0; i < documentEntries.length; i += 1) {
+      const entry = documentEntries[i];
+      const activeComposer = composer.isConnected ? composer : findComposerElement() || composer;
+      const docResult = await tryPasteOrDropFiles(activeComposer, [entry.file], [entry.name], true);
+      if (!docResult.handled) {
+        if (!hasAttachmentProtocol) {
+          return {
+            ok: false,
+            reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
+            succeededImageIds,
+            skippedAttachments,
+          };
+        }
+        skippedAttachments.push(toSkippedEntry(entry, ACTION_FAILURE_REASONS.UNSUPPORTED));
+        continue;
+      }
+      if (!docResult.ok) {
+        return {
           ok: false,
           reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
           succeededImageIds,
-          skippedAttachments: [],
+          skippedAttachments,
         };
+      }
+      if (typeof entry.id === 'string') {
+        succeededImageIds.push(entry.id);
+      }
+    }
+
+    if (skippedAttachments.length === entries.length) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: ACTION_FAILURE_REASONS.UNSUPPORTED,
+        succeededImageIds: [],
+        skippedAttachments,
+      };
+    }
+    return { ok: true, succeededImageIds, skippedAttachments };
   }
 
   function clearComposerAttachments(composer) {
