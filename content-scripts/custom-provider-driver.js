@@ -406,6 +406,9 @@
     if (Array.isArray(result.succeededImageIds)) {
       message.succeededImageIds = result.succeededImageIds;
     }
+    if (!result.ok && Array.isArray(result.attemptedImageIds)) {
+      message.attemptedImageIds = result.attemptedImageIds;
+    }
     if (!result.ok) {
       message.reason = result.reason || ACTION_FAILURE_REASONS.INJECTION_ERROR;
     }
@@ -1865,9 +1868,14 @@
   // ===== Message Dispatch =====
 
   async function handleFillWithResult(eventData, providerId) {
-    const { text, images, autoSubmit, requestId, retry = false } = eventData;
+    const { text, images, fallbackImages, autoSubmit, requestId, retry = false } = eventData;
     const hasImages = Array.isArray(images) && images.length > 0;
+    const normalizedFallbackImages = Array.isArray(fallbackImages) ? fallbackImages : [];
+    const fallbackSucceededIds = normalizedFallbackImages
+      .map((img) => img?.id)
+      .filter((id) => typeof id === 'string');
     const hasText = typeof text === 'string' && text.length > 0;
+    const hasFallbackRetry = Boolean(retry && normalizedFallbackImages.length > 0);
 
     if (requestId && providerId) {
       startUserInteractionTracking(requestId, providerId);
@@ -1884,7 +1892,7 @@
       return;
     }
 
-    if (!hasImages && !hasText) {
+    if (!hasImages && !hasText && !hasFallbackRetry) {
       postActionResult(requestId, providerId, {
         ok: false,
         reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
@@ -1893,7 +1901,7 @@
       return;
     }
 
-    const composer = await findComposerWithRetry(hasImages ? 600 : 1000);
+    const composer = await findComposerWithRetry(hasImages || hasFallbackRetry ? 600 : 1000);
     if (!composer) {
       postActionResult(requestId, providerId, {
         ok: false,
@@ -1903,16 +1911,31 @@
       return;
     }
 
-    let succeededImageIds = [];
-    if (hasImages) {
-      const uploadResult = await uploadImagesToComposer(composer, images);
+    const composerClearedOnRetry = Boolean(
+      hasFallbackRetry &&
+      isComposerEmpty(composer) &&
+      inspectComposerAttachments(composer).count === 0
+    );
+    const effectiveImages = composerClearedOnRetry
+      ? normalizedFallbackImages
+      : (Array.isArray(images) ? images : []);
+    const effectiveRetry = composerClearedOnRetry ? false : Boolean(retry);
+    const failureAttemptedIds = composerClearedOnRetry
+      ? effectiveImages.map((img) => img?.id).filter((id) => typeof id === 'string')
+      : undefined;
+
+    let succeededImageIds = effectiveImages.length === 0 && hasFallbackRetry
+      ? fallbackSucceededIds
+      : [];
+    if (effectiveImages.length > 0) {
+      const uploadResult = await uploadImagesToComposer(composer, effectiveImages);
       succeededImageIds = uploadResult.succeededImageIds || [];
       if (!uploadResult.ok) {
         if (hasText) {
           const refreshedComposer = composer.isConnected ? composer : findComposerElement();
           if (refreshedComposer) {
             await injectTextIntoComposer(refreshedComposer, text, {
-              skipIfAlreadyPresent: Boolean(retry),
+              skipIfAlreadyPresent: effectiveRetry,
             });
           }
         }
@@ -1920,6 +1943,7 @@
           ok: false,
           reason: uploadResult.reason || ACTION_FAILURE_REASONS.INJECTION_ERROR,
           succeededImageIds,
+          attemptedImageIds: failureAttemptedIds,
         });
         return;
       }
@@ -1932,17 +1956,19 @@
           ok: false,
           reason: ACTION_FAILURE_REASONS.CONTROL_NOT_FOUND,
           succeededImageIds,
+          attemptedImageIds: failureAttemptedIds,
         });
         return;
       }
       const injected = await injectTextIntoComposer(activeComposer, text, {
-        skipIfAlreadyPresent: Boolean(retry),
+        skipIfAlreadyPresent: effectiveRetry,
       });
       if (!injected) {
         postActionResult(requestId, providerId, {
           ok: false,
           reason: ACTION_FAILURE_REASONS.INJECTION_ERROR,
           succeededImageIds,
+          attemptedImageIds: failureAttemptedIds,
         });
         return;
       }

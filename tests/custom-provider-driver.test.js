@@ -1809,4 +1809,113 @@ describe('content-scripts/custom-provider-driver.js', () => {
       await env.close();
     }
   });
+
+  it('acknowledges image-only fallbackImages retry without error when staged preview remains and re-uploads when cleared', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      env.document.body.innerHTML = `
+        <form id="composer-form">
+          <input id="file-in" type="file" accept="image/*" multiple style="display:none" />
+          <div id="previews">
+            <img src="blob:http://127.0.0.1:3000/existing-preview" alt="chart.png" />
+          </div>
+          <textarea id="composer" placeholder="Ask anything"></textarea>
+          <button id="send-btn" type="submit" aria-label="Send">Send</button>
+        </form>
+      `;
+      const composer = setLayoutRect(env.document.getElementById('composer'));
+      setLayoutRect(env.document.getElementById('send-btn'), {
+        left: 640,
+        top: 500,
+        width: 40,
+        height: 40,
+      });
+      const fileInput = env.document.getElementById('file-in');
+      const previews = env.document.getElementById('previews');
+      let uploadCount = 0;
+      fileInput.addEventListener('change', () => {
+        uploadCount += 1;
+        const img = env.document.createElement('img');
+        img.src = `blob:http://127.0.0.1:3000/reupload-${uploadCount}`;
+        previews.appendChild(img);
+      });
+
+      env.evaluateDriver();
+      env.parent.postMessage.mockClear();
+
+      const fallbackImages = [
+        {
+          id: 'img-fallback-1',
+          name: 'chart.png',
+          type: 'image/png',
+          dataUrl:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z2ioAAAAASUVORK5CYII=',
+        },
+      ];
+
+      // 1. Untouched panel with staged image and empty caption on Send All retry -> succeeds without re-uploading!
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-img-only-fallback-untouched',
+        action: 'fill',
+        text: '',
+        images: [],
+        fallbackImages,
+        autoSubmit: false,
+        retry: true,
+      });
+
+      await wait(60);
+      expect(uploadCount).toBe(0);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-img-only-fallback-untouched',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'succeeded',
+          succeededImageIds: ['img-fallback-1'],
+        },
+        EXTENSION_ORIGIN
+      );
+
+      // 2. User clears staged preview and text -> next Send All retry re-uploads fallbackImages!
+      previews.innerHTML = '';
+      composer.value = '';
+      env.parent.postMessage.mockClear();
+
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-img-only-fallback-cleared',
+        action: 'fill',
+        text: '',
+        images: [],
+        fallbackImages,
+        autoSubmit: false,
+        retry: true,
+      });
+
+      await wait(200);
+      expect(uploadCount).toBe(1);
+      expect(env.parent.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'PANELIZE_ACTION_RESULT',
+          context: 'multi-panel-action-result',
+          requestId: 'req-img-only-fallback-cleared',
+          provider: CUSTOM_PROVIDER_ID,
+          action: 'fill',
+          status: 'succeeded',
+          succeededImageIds: ['img-fallback-1'],
+        },
+        EXTENSION_ORIGIN
+      );
+    } finally {
+      await env.close();
+    }
+  });
 });

@@ -630,16 +630,33 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
         break;
       }
       case 'INJECT_TEXT_WITH_IMAGES': {
-        if (typeof data.text === 'string') {
+        const fallbackImages = Array.isArray(data.fallbackImages) ? data.fallbackImages : [];
+        const fallbackIds = fallbackImages
+          .map((img) => img?.id)
+          .filter((id) => typeof id === 'string');
+        const isClearedOnRetry = Boolean(
+          data.retry &&
+          fallbackImages.length > 0 &&
+          composerInputEl.value.trim().length === 0 &&
+          stagedImages.length === 0
+        );
+        if (typeof data.text === 'string' && (data.text.length > 0 || !data.retry || isClearedOnRetry)) {
           composerInputEl.value = data.text;
         }
-        const incomingImages = Array.isArray(data.images) ? data.images : [];
-        const succeededIds = mergeIncomingImages(incomingImages);
+        const incomingImages = isClearedOnRetry
+          ? fallbackImages
+          : (Array.isArray(data.images) ? data.images : []);
+        const succeededIds = incomingImages.length === 0 && data.retry && fallbackIds.length > 0
+          ? fallbackIds
+          : mergeIncomingImages(incomingImages);
+        const expectedCount = incomingImages.length === 0 && data.retry && fallbackIds.length > 0
+          ? fallbackIds.length
+          : incomingImages.length;
         syncComposerControls();
         if (data.action === 'fill') {
-          postFillActionResult(data.requestId, incomingImages.length, succeededIds);
+          postFillActionResult(data.requestId, expectedCount, succeededIds);
         }
-        if (data.autoSubmit && succeededIds.length === incomingImages.length) {
+        if (data.autoSubmit && succeededIds.length === expectedCount) {
           submitCurrentPayload();
         }
         break;
