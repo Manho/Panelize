@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0 - 2026-11-24
+- Added PDF, DOCX, TXT, Markdown, CSV, and other document uploads in Multi-Panel Send All with a unified attach button, mixed image/document preview chips, tri-state unsupported-provider skipping, and Custom API plain-text inlining.
+- Refined the Multi-Panel shared composer into a compact tray and modernized the Settings and Prompt Library UI in both light and dark themes.
+- Added Gemini multi-account switching (/u/<n>) inside embedded panels and improved Kimi, DeepSeek, and Grok Send All and attachment reliability.
+- Fixed Zhipu (ChatGLM) and HTTPS Custom Web UI login state syncing inside embedded panels, ChatGPT restoring sent drafts after reload, and top-level postMessage origin warnings.
+- Added optional Creem support links in Settings and GitHub funding.
+
 ## 2.2.4 - 2026-11-19
 - Fixed switching between Tab Mode and Popup Mode reloading the Multi-Panel page and clearing active chats; Panelize now moves the existing tab in place between browser windows and standalone popup windows while preserving ongoing provider conversations and drafts.
 
