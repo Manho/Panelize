@@ -1,4 +1,14 @@
 import { API_PANEL_CONTEXT, API_PANEL_MESSAGES } from '../modules/custom-api-bridge.js';
+import {
+  MAX_API_INLINE_TEXT_SIZE,
+  estimateAttachmentBytes,
+  formatFileSize,
+  getAttachmentBadge,
+  getFileExtension,
+  isDocumentAttachment,
+  isPlainTextDocument,
+  validateAttachmentFile
+} from '../modules/attachment-utils.js';
 import { renderMarkdownToFragment } from '../modules/markdown-dom.js';
 import { buildOpenAiChatMessages } from '../modules/openai-chat-client.js';
 import { CUSTOM_PROVIDER_ID_PATTERN } from '../modules/provider-registry.js';
@@ -46,6 +56,7 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
   const emptyStateTitleEl = rootDocument.getElementById('empty-state-title');
   const messagesListEl = rootDocument.getElementById('messages-list');
   const composerFormEl = rootDocument.getElementById('composer-form');
+  const stagedNoticeEl = rootDocument.getElementById('staged-notice');
   const stagedImagesEl = rootDocument.getElementById('staged-images');
   const imageFileInputEl = rootDocument.getElementById('image-file-input');
   const attachImageBtnEl = rootDocument.getElementById('attach-image-btn');
@@ -55,6 +66,8 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
 
   let turns = [];
   let stagedImages = [];
+  let stagedDocuments = [];
+  let stagedNoticeTimerId = null;
   let requestCounter = 0;
   let activeRequestId = null;
   let pendingRenderFrameId = null;
@@ -105,11 +118,38 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
     }
   }
 
+  function showStagedNotice(message) {
+    if (!stagedNoticeEl) {
+      return;
+    }
+    if (stagedNoticeTimerId !== null) {
+      clearTimeout(stagedNoticeTimerId);
+      stagedNoticeTimerId = null;
+    }
+    if (!message) {
+      stagedNoticeEl.textContent = '';
+      stagedNoticeEl.hidden = true;
+      return;
+    }
+    stagedNoticeEl.textContent = message;
+    stagedNoticeEl.hidden = false;
+    stagedNoticeTimerId = setTimeout(() => {
+      stagedNoticeTimerId = null;
+      if (stagedNoticeEl) {
+        stagedNoticeEl.hidden = true;
+        stagedNoticeEl.textContent = '';
+      }
+    }, 6000);
+  }
+
   function syncComposerControls() {
     const isStreaming = Boolean(activeRequestId);
     stopStreamBtnEl.hidden = !isStreaming;
     sendMsgBtnEl.hidden = isStreaming;
-    const hasPayload = composerInputEl.value.trim().length > 0 || stagedImages.length > 0;
+    const hasPayload =
+      composerInputEl.value.trim().length > 0 ||
+      stagedImages.length > 0 ||
+      stagedDocuments.length > 0;
     sendMsgBtnEl.disabled = !hasPayload;
 
     if (!supportsCssFieldSizing) {
@@ -119,9 +159,52 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
     }
   }
 
+  function createDocChipElement(doc, { removable = false } = {}) {
+    const badgeInfo = getAttachmentBadge(doc);
+    const chipEl = rootDocument.createElement('div');
+    chipEl.className = removable ? 'staged-doc-chip' : 'turn-doc-chip';
+    chipEl.dataset.attachmentId = doc.id || '';
+    chipEl.dataset.attachmentKind = 'document';
+
+    const badgeEl = rootDocument.createElement('span');
+    badgeEl.className = `api-doc-badge api-doc-badge--${badgeInfo.tone}`;
+    badgeEl.setAttribute('aria-hidden', 'true');
+    badgeEl.textContent = badgeInfo.label;
+
+    const metaEl = rootDocument.createElement('div');
+    metaEl.className = 'api-doc-meta';
+
+    const nameEl = rootDocument.createElement('span');
+    nameEl.className = 'api-doc-name';
+    nameEl.textContent = doc.name || 'document.txt';
+    nameEl.title = doc.name || 'document.txt';
+
+    const sizeEl = rootDocument.createElement('span');
+    sizeEl.className = 'api-doc-size';
+    sizeEl.textContent = formatFileSize(doc.size ?? estimateAttachmentBytes(doc));
+
+    metaEl.append(nameEl, sizeEl);
+    chipEl.append(badgeEl, metaEl);
+
+    if (removable) {
+      const removeBtn = rootDocument.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'staged-doc-remove-btn';
+      removeBtn.setAttribute('aria-label', `Remove ${doc.name || 'document'}`);
+      removeBtn.textContent = '×';
+      removeBtn.addEventListener('click', () => {
+        stagedDocuments = stagedDocuments.filter((candidate) => candidate.id !== doc.id);
+        renderStagedImages();
+      });
+      chipEl.appendChild(removeBtn);
+    }
+
+    return chipEl;
+  }
+
   function renderStagedImages() {
     stagedImagesEl.replaceChildren();
-    if (stagedImages.length === 0) {
+    if (stagedImages.length === 0 && stagedDocuments.length === 0) {
       stagedImagesEl.hidden = true;
       syncComposerControls();
       return;
@@ -148,6 +231,10 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
 
       itemEl.append(thumbEl, removeBtn);
       stagedImagesEl.appendChild(itemEl);
+    }
+
+    for (const doc of stagedDocuments) {
+      stagedImagesEl.appendChild(createDocChipElement(doc, { removable: true }));
     }
     syncComposerControls();
   }
@@ -313,6 +400,15 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
       bubbleEl.appendChild(imagesRowEl);
     }
 
+    if (Array.isArray(turn.documents) && turn.documents.length > 0) {
+      const docsRowEl = rootDocument.createElement('div');
+      docsRowEl.className = 'turn-docs';
+      for (const doc of turn.documents) {
+        docsRowEl.appendChild(createDocChipElement(doc, { removable: false }));
+      }
+      bubbleEl.appendChild(docsRowEl);
+    }
+
     if (turn.text) {
       const textEl = rootDocument.createElement('p');
       textEl.className = 'turn-user-text';
@@ -377,7 +473,8 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
   function submitCurrentPayload() {
     const text = composerInputEl.value.trim();
     const images = [...stagedImages];
-    if (!text && images.length === 0) {
+    const documents = [...stagedDocuments];
+    if (!text && images.length === 0 && documents.length === 0) {
       return false;
     }
 
@@ -396,13 +493,16 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
 
     composerInputEl.value = '';
     stagedImages = [];
+    stagedDocuments = [];
+    showStagedNotice('');
     renderStagedImages();
 
     const userTurn = {
       id: `turn-user-${Date.now()}-${turns.length}`,
       role: 'user',
       text,
-      images
+      images,
+      documents
     };
     const assistantTurn = {
       id: `turn-assistant-${Date.now()}-${turns.length + 1}`,
@@ -448,6 +548,8 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
     messagesListEl.replaceChildren();
     if (!preserveComposerDraft) {
       stagedImages = [];
+      stagedDocuments = [];
+      showStagedNotice('');
       composerInputEl.value = '';
       renderStagedImages();
     } else {
@@ -457,24 +559,101 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
     messagesScrollEl.scrollTop = 0;
   }
 
-  function mergeIncomingImages(rawImages) {
-    if (!Array.isArray(rawImages)) {
-      return [];
+  function toUint8ArrayCrossRealm(value) {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const tag = Object.prototype.toString.call(value);
+    if (tag === '[object ArrayBuffer]' || value instanceof ArrayBuffer) {
+      return new Uint8Array(value);
+    }
+    if (
+      ArrayBuffer.isView(value) ||
+      (value.buffer && typeof value.byteLength === 'number' && typeof value.byteOffset === 'number')
+    ) {
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    }
+    return null;
+  }
+
+  function decodePlainTextAttachment(raw) {
+    if (typeof raw.textContent === 'string') {
+      const byteLength = new TextEncoder().encode(raw.textContent).byteLength;
+      return { textContent: raw.textContent, byteLength };
+    }
+    const view = toUint8ArrayCrossRealm(raw.bytes);
+    if (!view) {
+      return null;
+    }
+    for (let i = 0; i < Math.min(view.byteLength, 65536); i += 1) {
+      if (view[i] === 0x00) {
+        return null;
+      }
+    }
+    const textContent = new TextDecoder('utf-8', { fatal: false }).decode(view);
+    return { textContent, byteLength: view.byteLength };
+  }
+
+  function mergeIncomingAttachments(rawItems) {
+    if (!Array.isArray(rawItems)) {
+      return { succeededIds: [], skippedAttachments: [] };
     }
     const succeededIds = [];
-    const existingById = new Map(stagedImages.map((img) => [img.id, img]));
+    const skippedAttachments = [];
+    const existingImgById = new Map(stagedImages.map((img) => [img.id, img]));
+    const existingDocById = new Map(stagedDocuments.map((doc) => [doc.id, doc]));
 
-    for (const raw of rawImages) {
-      if (
-        !raw ||
-        typeof raw !== 'object' ||
-        typeof raw.dataUrl !== 'string' ||
-        !raw.dataUrl.startsWith('data:image/')
-      ) {
+    for (const raw of rawItems) {
+      if (!raw || typeof raw !== 'object') {
+        continue;
+      }
+
+      if (isDocumentAttachment(raw)) {
+        const id = typeof raw.id === 'string' && raw.id ? raw.id : `doc-${Date.now()}-${Math.random()}`;
+        const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'document';
+
+        if (!isPlainTextDocument(raw)) {
+          skippedAttachments.push({ id, name, reason: 'unsupported' });
+          continue;
+        }
+
+        const decoded = decodePlainTextAttachment(raw);
+        if (!decoded) {
+          skippedAttachments.push({ id, name, reason: 'unsupported' });
+          continue;
+        }
+
+        if (decoded.byteLength > MAX_API_INLINE_TEXT_SIZE) {
+          skippedAttachments.push({ id, name, reason: 'too-large' });
+          continue;
+        }
+
+        if (!existingDocById.has(id)) {
+          const badge = getAttachmentBadge(raw);
+          const normalized = {
+            id,
+            kind: 'document',
+            name,
+            type: typeof raw.type === 'string' ? raw.type : 'text/plain',
+            ext: raw.ext || getFileExtension(name),
+            size: decoded.byteLength,
+            textContent: decoded.textContent,
+            isPlainText: true,
+            badge: badge.label,
+            badgeTone: badge.tone
+          };
+          stagedDocuments.push(normalized);
+          existingDocById.set(id, normalized);
+        }
+        succeededIds.push(id);
+        continue;
+      }
+
+      if (typeof raw.dataUrl !== 'string' || !raw.dataUrl.startsWith('data:image/')) {
         continue;
       }
       const id = typeof raw.id === 'string' && raw.id ? raw.id : `img-${Date.now()}-${Math.random()}`;
-      if (!existingById.has(id)) {
+      if (!existingImgById.has(id)) {
         const normalized = {
           id,
           dataUrl: raw.dataUrl,
@@ -482,30 +661,60 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
           type: typeof raw.type === 'string' ? raw.type : 'image/png'
         };
         stagedImages.push(normalized);
-        existingById.set(id, normalized);
+        existingImgById.set(id, normalized);
       }
       succeededIds.push(id);
     }
 
+    if (skippedAttachments.length > 0) {
+      const skippedNames = skippedAttachments.map((item) => item.name).join(', ');
+      const hasOversize = skippedAttachments.some((item) => item.reason === 'too-large');
+      showStagedNotice(
+        hasOversize
+          ? `Skipped (unsupported binary or >200 KB text): ${skippedNames}`
+          : `Skipped unsupported binary document(s): ${skippedNames}`
+      );
+    }
+
     renderStagedImages();
-    return succeededIds;
+    return { succeededIds, skippedAttachments };
   }
 
-  function postFillActionResult(requestId, expectedCount, succeededImageIds) {
+  function postFillActionResult(requestId, expectedCount, succeededImageIds, options = {}) {
     if (!requestId || !providerId) {
       return;
     }
-    const allSucceeded = succeededImageIds.length === expectedCount;
-    postToHost({
+    const skippedAttachments = Array.isArray(options.skippedAttachments)
+      ? options.skippedAttachments
+      : [];
+    const isSkipped = Boolean(options.skipped);
+    const hasAttachmentProtocol = Boolean(
+      options.includeAttachmentProtocol || isSkipped || skippedAttachments.length > 0
+    );
+    const handledCount = succeededImageIds.length + skippedAttachments.length;
+    const allSucceeded = handledCount === expectedCount;
+
+    const payload = {
       context: ACTION_RESULT_CONTEXT,
       type: 'PANELIZE_ACTION_RESULT',
       requestId,
       provider: providerId,
       action: 'fill',
-      status: allSucceeded ? 'succeeded' : 'failed',
-      reason: allSucceeded ? null : 'image-upload-failed',
+      status: isSkipped ? 'skipped' : (allSucceeded ? 'succeeded' : 'failed'),
+      reason: isSkipped
+        ? (options.reason || 'unsupported')
+        : (allSucceeded ? null : 'image-upload-failed'),
       succeededImageIds
-    });
+    };
+
+    if (hasAttachmentProtocol) {
+      payload.succeededAttachmentIds = succeededImageIds;
+    }
+    if (skippedAttachments.length > 0) {
+      payload.skippedAttachments = skippedAttachments;
+    }
+
+    postToHost(payload);
   }
 
   function buildSnapshotStatePayload(data, alignedBy = null) {
@@ -630,33 +839,59 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
         break;
       }
       case 'INJECT_TEXT_WITH_IMAGES': {
-        const fallbackImages = Array.isArray(data.fallbackImages) ? data.fallbackImages : [];
-        const fallbackIds = fallbackImages
-          .map((img) => img?.id)
+        const hasAttachmentProtocol = Array.isArray(data.attachments);
+        const fallbackItems = Array.isArray(data.fallbackAttachments)
+          ? data.fallbackAttachments
+          : (Array.isArray(data.fallbackImages) ? data.fallbackImages : []);
+        const fallbackIds = fallbackItems
+          .map((item) => item?.id)
           .filter((id) => typeof id === 'string');
         const isClearedOnRetry = Boolean(
           data.retry &&
-          fallbackImages.length > 0 &&
+          fallbackItems.length > 0 &&
           composerInputEl.value.trim().length === 0 &&
-          stagedImages.length === 0
+          stagedImages.length === 0 &&
+          stagedDocuments.length === 0
         );
         if (typeof data.text === 'string' && (data.text.length > 0 || !data.retry || isClearedOnRetry)) {
           composerInputEl.value = data.text;
         }
-        const incomingImages = isClearedOnRetry
-          ? fallbackImages
-          : (Array.isArray(data.images) ? data.images : []);
-        const succeededIds = incomingImages.length === 0 && data.retry && fallbackIds.length > 0
-          ? fallbackIds
-          : mergeIncomingImages(incomingImages);
-        const expectedCount = incomingImages.length === 0 && data.retry && fallbackIds.length > 0
-          ? fallbackIds.length
-          : incomingImages.length;
+        const incomingItems = isClearedOnRetry
+          ? fallbackItems
+          : (hasAttachmentProtocol
+            ? data.attachments
+            : (Array.isArray(data.images) ? data.images : []));
+
+        let succeededIds = [];
+        let skippedAttachments = [];
+        let expectedCount = incomingItems.length;
+
+        if (incomingItems.length === 0 && data.retry && fallbackIds.length > 0) {
+          succeededIds = fallbackIds;
+          expectedCount = fallbackIds.length;
+        } else {
+          const merged = mergeIncomingAttachments(incomingItems);
+          succeededIds = merged.succeededIds;
+          skippedAttachments = merged.skippedAttachments;
+        }
+
+        const hasText = composerInputEl.value.trim().length > 0;
+        const allSkippedWithoutText =
+          !hasText &&
+          expectedCount > 0 &&
+          succeededIds.length === 0 &&
+          skippedAttachments.length === expectedCount;
+
         syncComposerControls();
         if (data.action === 'fill') {
-          postFillActionResult(data.requestId, expectedCount, succeededIds);
+          postFillActionResult(data.requestId, expectedCount, succeededIds, {
+            includeAttachmentProtocol: hasAttachmentProtocol,
+            skipped: allSkippedWithoutText,
+            reason: skippedAttachments[0]?.reason || 'unsupported',
+            skippedAttachments
+          });
         }
-        if (data.autoSubmit && succeededIds.length === expectedCount) {
+        if (data.autoSubmit && !allSkippedWithoutText && succeededIds.length + skippedAttachments.length === expectedCount) {
           submitCurrentPayload();
         }
         break;
@@ -669,6 +904,8 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
         composerInputEl.value = '';
         if (data.clearImages !== false) {
           stagedImages = [];
+          stagedDocuments = [];
+          showStagedNotice('');
           renderStagedImages();
         } else {
           syncComposerControls();
@@ -834,20 +1071,42 @@ export function initApiPanel({ rootWindow = window, rootDocument = document } = 
   imageFileInputEl.addEventListener('change', async () => {
     const files = [...(imageFileInputEl.files || [])];
     imageFileInputEl.value = '';
+    const currentAttachments = [...stagedImages, ...stagedDocuments];
     for (const file of files) {
-      if (!file.type.startsWith('image/')) {
-        continue;
-      }
       try {
-        const dataUrl = await readFileAsDataUrl(file);
-        mergeIncomingImages([
-          {
+        const validation = await validateAttachmentFile(file, currentAttachments);
+        if (!validation.ok) {
+          showStagedNotice(`Unsupported file: ${file.name}`);
+          continue;
+        }
+        if (validation.kind === 'image') {
+          const dataUrl = await readFileAsDataUrl(file);
+          const item = {
             id: `local-img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            kind: 'image',
             dataUrl,
             name: file.name,
-            type: file.type
-          }
-        ]);
+            type: validation.mimeType,
+            size: validation.size
+          };
+          mergeIncomingAttachments([item]);
+          currentAttachments.push(item);
+        } else if (validation.isPlainText) {
+          const item = {
+            id: `local-doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            kind: 'document',
+            name: file.name,
+            type: validation.mimeType,
+            ext: validation.ext,
+            size: validation.size,
+            isPlainText: true,
+            textContent: validation.textContent
+          };
+          mergeIncomingAttachments([item]);
+          currentAttachments.push(item);
+        } else {
+          showStagedNotice(`Skipped unsupported binary document(s): ${file.name}`);
+        }
       } catch {
         // Ignore unreadable local file
       }

@@ -38,17 +38,18 @@
     </main>
 
     <form id="composer-form" class="composer-form" novalidate>
+      <div id="staged-notice" class="staged-notice" role="status" hidden></div>
       <div id="staged-images" class="staged-images" hidden></div>
       <div class="composer-row">
-        <input type="file" id="image-file-input" accept="image/*" multiple hidden>
+        <input type="file" id="image-file-input" accept="image/*,.txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.tsv,.log" multiple hidden>
         <button
           type="button"
           id="attach-image-btn"
           class="composer-icon-btn"
-          title="Attach image"
-          aria-label="Attach image"
+          title="Attach image or text document"
+          aria-label="Attach image or text document"
         >
-          <span class="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>
+          <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
         </button>
         <label for="composer-input" class="visually-hidden">Message</label>
         <textarea
