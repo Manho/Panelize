@@ -4264,28 +4264,41 @@
       .length;
   }
 
+  function closeYuanbaoAddMenu() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+  }
+
+  /**
+   * Yuanbao keeps its `<input type="file">` mounted after an upload, but the input's change
+   * handler is one-shot: a mounted input is silently ignored until Add -> "Local Files" /
+   * "Upload Image" is clicked again. Every file therefore goes through this menu click.
+   */
   async function openYuanbaoImagePicker(composer, attachmentData = null) {
-    const addButton = composer?.querySelector('[data-new-input-control="add-tools-trigger"]') ||
-      findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.yuanbao);
-    if (!addButton) {
-      return null;
-    }
-
-    addButton.click();
-    await sleep(100);
-
     const menuLabels = isDocumentAttachmentData(attachmentData)
-      ? ['Upload File', 'Local Files', '上传文件', 'Add File', '添加文件']
+      ? ['Local Files', 'Upload File', 'Add File', '本地文件', '上传文件', '添加文件']
       : ['Upload Image', '上传图片'];
-    const uploadAction = findVisibleElementByExactText(
-      'button, [role="menuitem"]',
-      menuLabels
-    );
+    const findUploadAction = () => findVisibleElementByExactText('button, [role="menuitem"]', menuLabels);
+
+    // Clicking the trigger while its menu is already open could toggle the menu shut.
+    let uploadAction = findUploadAction();
     if (!uploadAction) {
+      const addButton = composer?.querySelector('[data-new-input-control="add-tools-trigger"]') ||
+        findFirstVisibleElement(UPLOAD_BUTTON_SELECTORS.yuanbao);
+      if (!addButton) {
+        return null;
+      }
+      addButton.click();
+      await sleep(100);
+      uploadAction = findUploadAction();
+    }
+    if (!uploadAction) {
+      closeYuanbaoAddMenu();
       return null;
     }
 
     uploadAction.click();
+    // The input may already be mounted, so give the re-armed handler a beat before dispatching.
+    await sleep(100);
     return waitForFileInput(() => findYuanbaoFileInput(attachmentData), 1000);
   }
 
@@ -4308,12 +4321,12 @@
         }
       }
 
-      let fileInput = findYuanbaoFileInput(imageData);
+      // Never reuse an already-mounted input directly: only the menu click re-arms it.
+      const fileInput = await openYuanbaoImagePicker(composer, imageData);
       if (!fileInput) {
-        fileInput = await openYuanbaoImagePicker(composer, imageData);
-      }
-      if (!fileInput) {
-        if (isDocumentAttachmentData(imageData) && document.querySelectorAll('input[type="file"]').length > 0) {
+        if (isDocumentAttachmentData(imageData) &&
+          !findYuanbaoFileInput(imageData) &&
+          document.querySelectorAll('input[type="file"]').length > 0) {
           return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
         }
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);

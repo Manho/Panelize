@@ -2861,6 +2861,11 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
    * extension-less name plus an uppercase type badge, image cards carry an
    * aria-label="预览图片<name>" and an https <img> without alt, and every card embeds a
    * "Re-upload" retry overlay that is display:none unless the upload failed.
+   *
+   * Live CDP probe: each `<input type="file">` is mounted lazily by its menu item and then
+   * stays mounted across files, but its `change` handler is one-shot. Only clicking
+   * Add -> "Local Files" / "Upload Image" again re-arms it; reusing the mounted input
+   * without that click is silently ignored. The menu closes when an item is clicked.
    */
   const mountYuanbaoLive = ({ failedNames = [], ignoreImagesAfterDocs = false } = {}) => {
     window.happyDOM.setURL('https://yuanbao.tencent.com/chat');
@@ -2926,17 +2931,26 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       `;
       swiper.append(slide);
     };
-    const makeInput = (accept, onFile) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.multiple = true;
-      input.accept = accept;
-      input.addEventListener('change', () => {
-        const name = input.files[0].name;
-        uploaded.push(name);
-        setTimeout(() => onFile(name), 200);
-      });
-      document.body.append(input);
+    const pickers = new Map();
+    const armPicker = (key, accept, onFile) => {
+      let picker = pickers.get(key);
+      if (!picker) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.accept = accept;
+        picker = { input, armed: false };
+        input.addEventListener('change', () => {
+          if (!picker.armed) return;
+          picker.armed = false;
+          const name = input.files[0].name;
+          uploaded.push(name);
+          setTimeout(() => onFile(name), 200);
+        });
+        document.body.append(input);
+        pickers.set(key, picker);
+      }
+      picker.armed = true;
     };
 
     trigger.addEventListener('click', () => {
@@ -2950,10 +2964,11 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         markVisible(item);
         item.addEventListener('click', () => {
           menuClicks.push(label);
+          menu.remove();
           if (label === 'Local Files') {
-            makeInput('.pdf,.xls,.xlsx,.ppt,.pptx,.doc,.docx,.txt', addDocCard);
+            armPicker('doc', '.pdf,.xls,.xlsx,.ppt,.pptx,.doc,.docx,.txt', addDocCard);
           } else if (label === 'Upload Image') {
-            makeInput('.jpg,.jpeg,.png,.webp,.bmp,.gif', (name) => {
+            armPicker('image', '.jpg,.jpeg,.png,.webp,.bmp,.gif', (name) => {
               const hasDocs = swiper.querySelector('[class*="FileList_inputFileListSwiperItemFile__"]');
               if (ignoreImagesAfterDocs && hasDocs) return;
               addImageCard(name);
@@ -2965,7 +2980,7 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       document.body.append(menu);
     });
 
-    return { swiper, uploaded, menuClicks };
+    return { swiper, uploaded, menuClicks, pickers };
   };
 
   it('Yuanbao live UI: confirms a Local Files DOCX + PDF + TXT batch from extension-less names with hidden Re-upload overlays', async () => {
@@ -2981,7 +2996,7 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     });
     await vi.advanceTimersByTimeAsync(6000);
 
-    expect(menuClicks).toEqual(['Local Files']);
+    expect(menuClicks).toEqual(['Local Files', 'Local Files', 'Local Files']);
     expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt']);
     expect(getLastActionResult()).toEqual(
       expect.objectContaining({
@@ -2989,6 +3004,63 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         provider: 'yuanbao',
         status: 'succeeded',
         succeededAttachmentIds: ['yb-docx', 'yb-pdf', 'yb-txt'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: re-arms the one-shot Local Files input before every sequential document, including same-stem PDF + TXT', async () => {
+    const { swiper, uploaded, menuClicks, pickers } = mountYuanbaoLive();
+
+    dispatchDocFill({
+      attachments: [
+        makeDocxAttachment('yb-docx', '日本中部京都红叶之旅_测试(1).docx'),
+        makePdfAttachment('yb-pdf', 'sample.pdf'),
+        makeTxtAttachment('yb-txt', 'sample.txt'),
+      ],
+      requestId: 'yuanbao-live-rearm-docs',
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // The same mounted input serves every file; each one needed its own menu click.
+    expect(pickers.size).toBe(1);
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
+    expect(menuClicks).toEqual(['Local Files', 'Local Files', 'Local Files']);
+    expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt']);
+    const cards = [...swiper.querySelectorAll('[class*="FileList_inputFileListItem__"]')];
+    expect(cards.map((card) => card.querySelector('[class*="FileList_inputFileListItemPdfInfoName__"]').textContent))
+      .toEqual(['日本中部京都红叶之旅_测试(1)', 'sample', 'sample']);
+    expect(cards.map((card) => card.querySelector('[class*="FileList_fileType__"]').textContent))
+      .toEqual(['DOCX', 'PDF', 'TXT']);
+    expect(document.getElementById('yb-menu')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-rearm-docs',
+        provider: 'yuanbao',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-docx', 'yb-pdf', 'yb-txt'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: re-arms the one-shot Upload Image input before every sequential image', async () => {
+    const { swiper, uploaded, menuClicks, pickers } = mountYuanbaoLive();
+
+    dispatchDocFill({
+      attachments: [makeImageAttachment('yb-png-1', 'first.png'), makeImageAttachment('yb-png-2', 'second.png')],
+      requestId: 'yuanbao-live-rearm-images',
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(pickers.size).toBe(1);
+    expect(menuClicks).toEqual(['Upload Image', 'Upload Image']);
+    expect(uploaded).toEqual(['first.png', 'second.png']);
+    expect(swiper.querySelectorAll('[class*="FileList_inputFileListItemImage__"]')).toHaveLength(2);
+    expect(document.getElementById('yb-menu')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-rearm-images',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-png-1', 'yb-png-2'],
       })
     );
   });
