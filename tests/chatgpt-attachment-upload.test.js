@@ -338,4 +338,149 @@ describe('ChatGPT attachment upload (live composer DOM)', () => {
       succeededAttachmentIds: [png.id],
     });
   });
+
+  it('does not confirm a pending file with a late card that names a different file', async () => {
+    mountLiveComposer();
+    const png = makePng('one', 'one.png');
+    const docx = makeDocx('two', 'two.docx');
+    const changes = [];
+    document.getElementById('_r_u_').addEventListener('change', event => {
+      const name = event.target.files[0].name;
+      changes.push(name);
+      // The PNG preview lands after the first attempt times out, so the retry
+      // dispatches it twice; the DOCX change is dropped entirely.
+      if (name === 'one.png') {
+        setTimeout(() => renderChatgptCard(name, { isImage: true }), 3050);
+      }
+    });
+
+    dispatchFill({ attachments: [png, docx], requestId: 'chatgpt-foreign-late-card' });
+    await vi.advanceTimersByTimeAsync(12000);
+
+    expect(changes.filter(name => name === 'one.png')).toHaveLength(2);
+    expect(changes).toContain('two.docx');
+    expect(document.querySelector('button[aria-label="Remove two.docx"]')).toBeNull();
+    expect(getActionResult('chatgpt-foreign-late-card')).toMatchObject({
+      status: 'failed',
+      succeededAttachmentIds: ['one'],
+    });
+  });
+
+  it('treats a card with an explicit error marker and localized failure text as rejected', async () => {
+    mountLiveComposer();
+    const docx = makeDocx();
+    document.getElementById('_r_u_').addEventListener('change', () => {
+      const card = renderChatgptCard(docx.name, { isImage: false, failed: true });
+      card.querySelector('.text-token-text-error').textContent = '上传失败';
+    });
+
+    dispatchFill({ attachments: [docx], requestId: 'chatgpt-localized-rejected' });
+    await vi.advanceTimersByTimeAsync(7000);
+
+    expect(getActionResult('chatgpt-localized-rejected')).toMatchObject({
+      status: 'failed',
+      reason: 'preview-timeout',
+    });
+  });
+
+  it('confirms the retry preview inside a composer form remounted during hydration', async () => {
+    mountLiveComposer();
+    const firstChanges = installChatgptUploadHandler({ dropFirst: Infinity });
+
+    dispatchFill({ attachments: [makePng()], requestId: 'chatgpt-form-remount' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(firstChanges).toHaveLength(1);
+
+    // React hydration replaces the whole composer form before the retry.
+    mountLiveComposer();
+    const secondChanges = installChatgptUploadHandler();
+    await vi.advanceTimersByTimeAsync(6500);
+
+    expect(secondChanges).toEqual([{ inputId: '_r_u_', names: ['Mizuho.png'] }]);
+    expect(countCards()).toBe(1);
+    expect(getActionResult('chatgpt-form-remount')).toMatchObject({
+      status: 'succeeded',
+      succeededAttachmentIds: ['img-mizuho'],
+    });
+  });
+
+  it('does not re-dispatch when the first preview lands in a remounted composer form', async () => {
+    mountLiveComposer();
+    installChatgptUploadHandler({ dropFirst: Infinity });
+
+    dispatchFill({ attachments: [makePng()], requestId: 'chatgpt-remount-landed' });
+    await vi.advanceTimersByTimeAsync(500);
+
+    // React remounts the form and renders the first attempt's card into the new tray.
+    mountLiveComposer();
+    renderChatgptCard('Mizuho.png', { isImage: true });
+    const secondChanges = installChatgptUploadHandler();
+    await vi.advanceTimersByTimeAsync(6500);
+
+    expect(secondChanges).toEqual([]);
+    expect(countCards()).toBe(1);
+    expect(getActionResult('chatgpt-remount-landed')).toMatchObject({
+      status: 'succeeded',
+      succeededAttachmentIds: ['img-mizuho'],
+    });
+  });
+
+  it('claims each retained card for one fallback ID, preferring exact names over suffixes', async () => {
+    mountLiveComposer();
+    const original = makePng('original', 'Mizuho.png');
+    const numbered = makePng('numbered', 'Mizuho(4).png');
+    const changes = installChatgptUploadHandler();
+
+    dispatchFill({ attachments: [original, numbered], requestId: 'chatgpt-collision-fill' });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(countCards()).toBe(2);
+    expect(getActionResult('chatgpt-collision-fill')).toMatchObject({ status: 'succeeded' });
+
+    document.querySelector('button[aria-label="Remove Mizuho.png"]').parentElement.remove();
+    dispatchFill({
+      attachments: [],
+      fallbackAttachments: [original, numbered],
+      retry: true,
+      requestId: 'chatgpt-collision-retry',
+    });
+    await vi.advanceTimersByTimeAsync(7000);
+
+    expect(changes.map(change => change.names[0])).toEqual(['Mizuho.png', 'Mizuho(4).png', 'Mizuho.png']);
+    expect(countCards()).toBe(2);
+    expect(getActionResult('chatgpt-collision-retry')).toMatchObject({
+      status: 'succeeded',
+      succeededAttachmentIds: ['original', 'numbered'],
+    });
+  });
+
+  it('keeps an image staged as a named composer thumbnail on an empty-editor retry', async () => {
+    mountLiveComposer();
+    const png = makePng();
+    const changes = [];
+    document.getElementById('_r_u_').addEventListener('change', event => {
+      const img = document.createElement('img');
+      img.alt = event.target.files[0].name;
+      img.src = PNG_DATA_URL;
+      document.getElementById('attachment-tray').append(img);
+      changes.push(img.alt);
+    });
+
+    dispatchFill({ attachments: [png], requestId: 'chatgpt-thumbnail-fill' });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getActionResult('chatgpt-thumbnail-fill')).toMatchObject({ status: 'succeeded' });
+
+    dispatchFill({
+      attachments: [],
+      fallbackAttachments: [png],
+      retry: true,
+      requestId: 'chatgpt-thumbnail-retry',
+    });
+    await vi.advanceTimersByTimeAsync(7000);
+
+    expect(changes).toEqual([png.name]);
+    expect(getActionResult('chatgpt-thumbnail-retry')).toMatchObject({
+      status: 'succeeded',
+      succeededAttachmentIds: [png.id],
+    });
+  });
 });
