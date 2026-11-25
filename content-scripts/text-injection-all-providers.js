@@ -2040,6 +2040,13 @@
       return false;
     }
 
+    // GLM-5.4 renders a real send-button that stays disabled while attachments upload; an
+    // Enter keypress submits nothing then, so report the send as pending instead.
+    if (provider === 'chatglm' && hasDisabledChatGLMGlm54SendButton()) {
+      console.log('[Text Injection] ChatGLM send-button is disabled; send is pending');
+      return false;
+    }
+
     // Special handling for DeepSeek - trigger Enter key if button not found
     if (provider === 'deepseek') {
       console.log('[Text Injection] DeepSeek send button not found, trying Enter key');
@@ -2114,6 +2121,9 @@
       return Boolean(
         document.querySelector('.send-button-container.disabled, .send-button.disabled')
       );
+    }
+    if (provider === 'chatglm') {
+      return hasDisabledChatGLMGlm54SendButton();
     }
     return false;
   }
@@ -3329,13 +3339,19 @@
     return true;
   }
 
+  const PARTIAL_RETRY_PROVIDERS = new Set(['gemini', 'chatglm', 'yuanbao']);
+
   /**
-   * On a Gemini retry with an empty editor, splits fallback attachments into the
-   * ones still staged as composer chips and the ones that must be re-delivered.
-   * Returns null when the regular all-or-nothing retry decision applies.
+   * On a retry with an empty editor, splits fallback attachments into the ones still
+   * staged in the composer (Gemini chips, ChatGLM GLM-5.4 cards, Yuanbao FileList cards)
+   * and the ones that must be re-delivered. Returns null when the regular all-or-nothing
+   * retry decision applies.
    */
-  function getGeminiPartialRetryPlan(fallbackAttachments) {
-    const input = findProviderInput('gemini');
+  function getPartialRetryPlan(provider, fallbackAttachments) {
+    if (!PARTIAL_RETRY_PROVIDERS.has(provider)) {
+      return null;
+    }
+    const input = findProviderInput(provider);
     if (!input) {
       return null;
     }
@@ -3344,11 +3360,33 @@
     if (currentText.trim().length > 0) {
       return null;
     }
-    const { chipCount, retained, missing } = reconcileGeminiRetainedAttachments(
-      getGeminiComposerRoot(input),
-      fallbackAttachments
-    );
-    if (chipCount === 0 || missing.length === 0) {
+    if (provider === 'gemini') {
+      const { chipCount, retained, missing } = reconcileGeminiRetainedAttachments(
+        getGeminiComposerRoot(input),
+        fallbackAttachments
+      );
+      if (chipCount === 0 || missing.length === 0) {
+        return null;
+      }
+      return { retained, missing };
+    }
+    let retained = [];
+    let missing = [];
+    if (provider === 'chatglm') {
+      if (!hasChatGLMGlm54UploadList()) {
+        return null;
+      }
+      ({ retained, missing } = reconcileChatGLMRetainedAttachments(
+        getComposerRootForAttachmentCheck(provider, input),
+        fallbackAttachments
+      ));
+    } else {
+      (fallbackAttachments || []).forEach(attachment => {
+        const isStaged = Boolean(attachment?.name) && countYuanbaoCompletedPreviews(attachment.name, attachment) > 0;
+        (isStaged ? retained : missing).push(attachment);
+      });
+    }
+    if (retained.length === 0 || missing.length === 0) {
       return null;
     }
     return { retained, missing };
@@ -3440,15 +3478,15 @@
       normalizedFallbackAttachments.length > 0 &&
       isProviderComposerCleared(provider, normalizedFallbackAttachments, providerMode)
     );
-    // Gemini: retained chips are reconciled one-to-one with fallback attachments, so
-    // a single surviving chip never acknowledges attachments that are no longer staged.
+    // Gemini, ChatGLM and Yuanbao: retained previews are reconciled with fallback
+    // attachments, so a surviving preview never acknowledges attachments that are no
+    // longer staged.
     const partialRetryPlan = Boolean(
       retry &&
       !composerClearedOnRetry &&
-      provider === 'gemini' &&
       normalizedFallbackAttachments.length > 0
     )
-      ? getGeminiPartialRetryPlan(normalizedFallbackAttachments)
+      ? getPartialRetryPlan(provider, normalizedFallbackAttachments)
       : null;
     const toAttachmentIds = (items) => items.map(att => att?.id).filter(id => typeof id === 'string');
     const effectiveAttachments = composerClearedOnRetry
@@ -4140,32 +4178,90 @@
       null;
   }
 
+  // Card roots only: the double underscore excludes Name/Info/Status/Retry child elements.
+  const YUANBAO_FILE_LIST_ITEM_SELECTOR = '[class*="FileList_inputFileListItem__"]';
+  const YUANBAO_FILE_LIST_ITEM_RETRY_SELECTOR = '[class*="FileList_inputFileListItemRetry__"]';
+
+  function getYuanbaoFileListRoot() {
+    return document.querySelector('[data-input-resource-area]') || document;
+  }
+
+  /** True when `element` and its ancestors up to `boundary` are rendered (no display:none / visibility:hidden). */
+  function isRenderedWithin(element, boundary) {
+    if (typeof window.getComputedStyle !== 'function') {
+      return true;
+    }
+    for (let node = element; node; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+        return false;
+      }
+      if (node === boundary) {
+        break;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Every Yuanbao card embeds a "Re-upload" retry overlay that stays display:none while the
+   * upload is fine, so a card only counts as failed when that overlay is actually rendered.
+   */
+  function isYuanbaoFileListItemSettled(item) {
+    const cls = String(item.className || '').toLowerCase();
+    if (cls.includes('loading') || cls.includes('uploading') || cls.includes('error')) {
+      return false;
+    }
+    return ![...item.querySelectorAll(YUANBAO_FILE_LIST_ITEM_RETRY_SELECTOR)]
+      .some(retry => isRenderedWithin(retry, item));
+  }
+
+  /** Document cards render the name without its extension plus an uppercase type badge. */
+  function yuanbaoDocumentItemMatchesName(item, normalizedName) {
+    const title = (item.getAttribute('title') || '').trim().toLowerCase();
+    const dataName = (item.getAttribute('data-file-name') || item.getAttribute('data-filename') || '').trim().toLowerCase();
+    if (title === normalizedName || dataName === normalizedName) {
+      return true;
+    }
+    const nameEl = item.querySelector('[class*="FileList_inputFileListItemPdfInfoName__"]');
+    if (!nameEl) {
+      return (item.textContent || '').trim().toLowerCase().includes(normalizedName);
+    }
+    const label = (nameEl.getAttribute('title') || nameEl.textContent || '').trim().toLowerCase();
+    if (label === normalizedName) {
+      return true;
+    }
+    const stem = getAttachmentFileNameStem(normalizedName).toLowerCase();
+    if (!stem || label !== stem) {
+      return false;
+    }
+    // "sample.pdf" and "sample.txt" share a stem, so the type badge must agree when shown.
+    const badge = (item.querySelector('[class*="FileList_fileType__"]')?.textContent || '').trim().toLowerCase();
+    return !badge || badge === normalizedName.slice(stem.length + 1);
+  }
+
+  function yuanbaoImageItemMatchesName(item, normalizedName) {
+    const hostedImages = [...item.querySelectorAll('img')]
+      .filter(image => /^https:\/\//.test(image.getAttribute('src') || ''));
+    if (hostedImages.length === 0) {
+      return false;
+    }
+    const ariaLabel = (item.getAttribute('aria-label') || '').trim().toLowerCase();
+    return (Boolean(normalizedName) && ariaLabel.endsWith(normalizedName)) ||
+      hostedImages.some(image => (image.getAttribute('alt') || '').trim().toLowerCase() === normalizedName);
+  }
+
   function countYuanbaoCompletedPreviews(fileName, attachmentData = null) {
     const normalizedName = (fileName || '').trim().toLowerCase();
-    if (isDocumentAttachmentData(attachmentData)) {
-      const fileListItems = [...document.querySelectorAll('[class*="FileList_inputFileListItem"]')];
-      const matchedItems = fileListItems.filter(item => {
-        const cls = String(item.className || '').toLowerCase();
-        if (cls.includes('loading') || cls.includes('uploading') || cls.includes('error')) {
-          return false;
-        }
-        const text = (item.textContent || '').trim().toLowerCase();
-        const title = (item.getAttribute('title') || '').trim().toLowerCase();
-        const dataName = (item.getAttribute('data-file-name') || item.getAttribute('data-filename') || '').trim().toLowerCase();
-        return text.includes(normalizedName) || title.includes(normalizedName) || dataName === normalizedName;
-      });
-      return matchedItems.length;
+    if (!normalizedName) {
+      return 0;
     }
-
-    return [...document.querySelectorAll('img[alt]')].filter(image => {
-      const source = image.getAttribute('src') || '';
-      const alt = (image.getAttribute('alt') || '').trim().toLowerCase();
-      return (
-        alt === normalizedName &&
-        /^https:\/\//.test(source) &&
-        image.closest('[class*="FileList_inputFileListItem"]')
-      );
-    }).length;
+    const isDoc = isDocumentAttachmentData(attachmentData);
+    return [...getYuanbaoFileListRoot().querySelectorAll(YUANBAO_FILE_LIST_ITEM_SELECTOR)]
+      .filter(item => isYuanbaoFileListItemSettled(item) && (isDoc
+        ? yuanbaoDocumentItemMatchesName(item, normalizedName)
+        : yuanbaoImageItemMatchesName(item, normalizedName)))
+      .length;
   }
 
   async function openYuanbaoImagePicker(composer, attachmentData = null) {
@@ -5481,6 +5577,9 @@
       if (!fileInput && (isDoc || isHydrogenComposer)) {
         const findMatch = () => findGeminiMatchingFileInput(imageData, composerRoot);
         const uploadBtn = findGeminiUploadTrigger(composerRoot);
+        // No input matched yet, so any overlay input mounted now belongs to an incompatible
+        // (e.g. image/*,video/*) menu that may swallow the trigger click below.
+        const hadStaleOverlayBeforeClick = getGeminiOverlayFileInputs(composerRoot).length > 0;
         if (uploadBtn) {
           clickedUploadBtn = uploadBtn;
           uploadBtn.click();
@@ -5489,10 +5588,14 @@
         }
 
         // A just-dismissed upload menu can still be detaching with only its image/*,video/*
-        // input mounted; the trigger click is swallowed until that overlay is gone. Dismiss
-        // it, wait for its inputs to unmount, then re-open the menu once before deciding
-        // the file type is not accepted.
-        if (!fileInput && uploadBtn && getGeminiOverlayFileInputs(composerRoot).length > 0) {
+        // input mounted; the trigger click is swallowed until that overlay is gone (it may
+        // finish detaching during the wait above). Dismiss it, wait for its inputs to
+        // unmount, then re-open the menu once before deciding the file type is not accepted.
+        if (
+          !fileInput &&
+          uploadBtn &&
+          (hadStaleOverlayBeforeClick || getGeminiOverlayFileInputs(composerRoot).length > 0)
+        ) {
           await sleep(50);
           closeGeminiUploadMenu(clickedUploadBtn);
           const settleStart = Date.now();
@@ -6228,6 +6331,12 @@
     return Boolean(element?.matches?.('button.send-button'));
   }
 
+  /** True when a GLM-5.4 send-button is mounted but disabled (e.g. while attachments upload). */
+  function hasDisabledChatGLMGlm54SendButton() {
+    const buttons = [...document.querySelectorAll('button.send-button')];
+    return buttons.length > 0 && !buttons.some(button => isProviderSendControlEnabled('chatglm', button));
+  }
+
   function isChatGLMUploadCardErrored(card) {
     return [...card.classList].some(token => /(?:^|[-_])(?:error|failed|fail)$/i.test(token)) ||
       /^(?:error|failed|fail)$/i.test((card.getAttribute('data-status') || card.getAttribute('data-state') || '').trim()) ||
@@ -6246,11 +6355,52 @@
     return !card.querySelector(CHATGLM_UPLOAD_CARD_UNSETTLED_DESCENDANT_SELECTOR);
   }
 
-  function chatGLMUploadCardMatchesName(card, normalizedName) {
-    return [...card.querySelectorAll('.upload-card__name')].some(nameEl =>
-      (nameEl.textContent || '').trim().toLowerCase() === normalizedName ||
-      (nameEl.getAttribute('title') || '').trim().toLowerCase() === normalizedName
-    );
+  const CHATGLM_NAME_ELLIPSIS_RE = /\.{3}|\u2026/;
+  const CHATGLM_TRUNCATED_NAME_MIN_CHARS = 3;
+
+  /**
+   * True when a GLM-5.4 card label names `fileName`: the exact name, the name without its
+   * extension, or a truncated label such as "日本中部京都红叶之旅_..." / "日本...(1).docx".
+   */
+  function chatGLMCardLabelMatchesName(label, fileName) {
+    const text = (label || '').trim().toLowerCase();
+    const name = (fileName || '').trim().toLowerCase();
+    if (!text || !name) {
+      return false;
+    }
+    if (text === name) {
+      return true;
+    }
+    const stem = getAttachmentFileNameStem(name).toLowerCase();
+    if (stem && text === stem) {
+      return true;
+    }
+    const ellipsis = text.match(CHATGLM_NAME_ELLIPSIS_RE);
+    if (!ellipsis) {
+      return false;
+    }
+    const head = text.slice(0, ellipsis.index).trim();
+    const tail = text.slice(ellipsis.index + ellipsis[0].length).trim();
+    return head.length + tail.length >= CHATGLM_TRUNCATED_NAME_MIN_CHARS &&
+      head.length + tail.length < name.length &&
+      name.startsWith(head) &&
+      name.endsWith(tail);
+  }
+
+  function getChatGLMUploadCardLabels(card) {
+    return [...card.querySelectorAll('.upload-card__name')]
+      .flatMap(nameEl => [nameEl.textContent || '', nameEl.getAttribute('title') || ''])
+      .map(label => label.trim())
+      .filter(Boolean);
+  }
+
+  function chatGLMUploadCardMatchesName(card, fileName) {
+    return getChatGLMUploadCardLabels(card).some(label => chatGLMCardLabelMatchesName(label, fileName));
+  }
+
+  /** GLM-5.4 image cards render only a thumbnail, without a `.upload-card__name` label. */
+  function isChatGLMUnnamedUploadCard(card) {
+    return getChatGLMUploadCardLabels(card).length === 0;
   }
 
   function hasChatGLMGlm54UploadList() {
@@ -6260,11 +6410,17 @@
   /**
    * Snapshots each kind of ChatGLM attachment evidence separately so a new upload is
    * confirmed by any kind growing past its own baseline (mixed doc + image never stall).
+   * GLM-5.4 evidence is correlated with the requested file: a named card must match its
+   * name, and unnamed (thumbnail-only) cards only count for images. With `settledOnly`
+   * false (the baseline), still-uploading cards are included, so an unrelated card that
+   * was already loading can never confirm the new file just by finishing.
    */
-  function snapshotChatGLMAttachmentPreviews(fileName = '') {
-    const normalizedName = (fileName || '').trim().toLowerCase();
+  function snapshotChatGLMAttachmentPreviews(attachmentData, { settledOnly = true } = {}) {
+    const fileName = attachmentData?.name || '';
+    const normalizedName = fileName.trim().toLowerCase();
     const previewList = document.querySelector('.file-list-box-content-list');
-    const settledCards = [...document.querySelectorAll(CHATGLM_UPLOAD_CARD_SELECTOR)].filter(isChatGLMUploadCardSettled);
+    const cards = [...document.querySelectorAll(CHATGLM_UPLOAD_CARD_SELECTOR)]
+      .filter(card => (settledOnly ? isChatGLMUploadCardSettled(card) : !isChatGLMUploadCardErrored(card)));
     // The GLM-5.4 picker wrapper carries every card's filename, including errored ones,
     // so generic filename evidence is only used for the legacy UI.
     const legacyNames = normalizedName && !hasChatGLMGlm54UploadList()
@@ -6273,10 +6429,12 @@
     return {
       legacyList: previewList ? previewList.children.length : 0,
       legacyNames,
-      cards: settledCards.length,
       cardNames: normalizedName
-        ? settledCards.filter(card => chatGLMUploadCardMatchesName(card, normalizedName)).length
-        : 0
+        ? cards.filter(card => chatGLMUploadCardMatchesName(card, fileName)).length
+        : 0,
+      unnamedImageCards: isDocumentAttachmentData(attachmentData)
+        ? 0
+        : cards.filter(isChatGLMUnnamedUploadCard).length
     };
   }
 
@@ -6284,25 +6442,56 @@
     return Object.keys(current).some(key => current[key] > (previous[key] || 0));
   }
 
+  /**
+   * Splits fallback attachments into the ones still staged as non-errored GLM-5.4 cards and
+   * the ones that must be re-delivered. Each card backs at most one attachment: documents
+   * need a name match, images take a name match or else an unnamed thumbnail card.
+   */
+  function reconcileChatGLMRetainedAttachments(composerRoot, attachments) {
+    const cardRoot = composerRoot?.querySelector?.('.upload-list') ? composerRoot : document;
+    // Uploading cards still occupy the composer, so a retry must not upload them again.
+    const cards = [...cardRoot.querySelectorAll(CHATGLM_UPLOAD_CARD_SELECTOR)]
+      .filter(card => !isChatGLMUploadCardErrored(card));
+    const claimed = new Set();
+    const retainedIndexes = new Set();
+    const claim = (predicate) => {
+      (attachments || []).forEach((attachment, index) => {
+        if (retainedIndexes.has(index)) return;
+        const card = cards.find(candidate => !claimed.has(candidate) && predicate(candidate, attachment));
+        if (card) {
+          claimed.add(card);
+          retainedIndexes.add(index);
+        }
+      });
+    };
+    claim((card, attachment) => Boolean(attachment?.name) && chatGLMUploadCardMatchesName(card, attachment.name));
+    claim((card, attachment) => !isDocumentAttachmentData(attachment) && isChatGLMUnnamedUploadCard(card));
+    const retained = [];
+    const missing = [];
+    (attachments || []).forEach((attachment, index) => {
+      (retainedIndexes.has(index) ? retained : missing).push(attachment);
+    });
+    return { cardCount: cards.length, retained, missing };
+  }
+
   /** Attachments still staged in the ChatGLM composer (errored GLM-5.4 cards excluded). */
   function countChatGLMStagedAttachments(composerRoot, candidateImages = []) {
     const previewList = document.querySelector('.file-list-box-content-list');
     const legacyListCount = previewList ? previewList.children.length : 0;
-    const cardRoot = composerRoot?.querySelector?.('.upload-list') ? composerRoot : document;
-    // Uploading cards still occupy the composer, so a retry must not upload them again.
-    const liveCards = [...cardRoot.querySelectorAll(CHATGLM_UPLOAD_CARD_SELECTOR)]
-      .filter(card => !isChatGLMUploadCardErrored(card));
+    // Only cards that back one of the candidate attachments count, so a user's unrelated
+    // upload never stands in for a fallback attachment that is no longer staged.
+    const retainedCount = reconcileChatGLMRetainedAttachments(composerRoot, candidateImages).retained.length;
     const legacyNameCount = composerRoot && !hasChatGLMGlm54UploadList()
       ? (candidateImages || []).filter(img => img?.name && countFilenamePreviewEvidence(composerRoot, img.name) > 0).length
       : 0;
-    return legacyListCount + liveCards.length + legacyNameCount;
+    return legacyListCount + retainedCount + legacyNameCount;
   }
 
-  async function waitForChatGLMImagePreview(previousSnapshot, timeoutMs, fileName = '') {
+  async function waitForChatGLMImagePreview(previousSnapshot, timeoutMs, attachmentData) {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      if (hasChatGLMAttachmentPreviewIncrease(previousSnapshot, snapshotChatGLMAttachmentPreviews(fileName))) {
+      if (hasChatGLMAttachmentPreviewIncrease(previousSnapshot, snapshotChatGLMAttachmentPreviews(attachmentData))) {
         console.log('[Image Injection] ChatGLM attachment preview detected');
         return true;
       }
@@ -6369,7 +6558,7 @@
         return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
       }
 
-      const previousSnapshot = snapshotChatGLMAttachmentPreviews(imageData.name);
+      const previousSnapshot = snapshotChatGLMAttachmentPreviews(imageData, { settledOnly: false });
       const file = await createAttachmentFile(imageData);
 
       if (!assignFilesToInput(fileInput, [file])) {
@@ -6381,7 +6570,7 @@
       const accepted = await waitForChatGLMImagePreview(
         previousSnapshot,
         getPreviewTimeoutMs(imageData),
-        imageData.name
+        imageData
       );
       if (!accepted) {
         console.warn('[Image Injection] ChatGLM upload did not produce a preview');

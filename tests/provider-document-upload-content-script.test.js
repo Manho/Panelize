@@ -2166,7 +2166,9 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
 
   // ===== v2.3.2 live-QA regressions: Zhipu GLM-5.4 UI, Gemini multi-doc remount, Yuanbao "Local Files" =====
 
-  const mountChatGLMGlm54 = ({ cardState = 'done', layoutClass = '' } = {}) => {
+  // `renderName` returns the card's visible `.upload-card__name` text, or null for an
+  // unnamed (image-only) card, mirroring GLM-5.4's truncated / extension-less labels.
+  const mountChatGLMGlm54 = ({ cardState = 'done', layoutClass = '', renderName = (name) => name } = {}) => {
     window.happyDOM.setURL('https://chatglm.cn/');
     // The profile avatar dialog input precedes the composer in DOM order, like the live page.
     document.body.innerHTML = `
@@ -2203,9 +2205,12 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       uploaded.push(name);
       const card = document.createElement('div');
       card.className = cardState === 'error' ? 'upload-card upload-card--error' : 'upload-card';
-      card.innerHTML = `
+      const displayName = renderName(name);
+      card.innerHTML = displayName === null
+        ? `<img alt="" src="blob:https://chatglm.cn/${encodeURIComponent(name)}" />`
+        : `
         <div class="upload-card__info">
-          <div class="upload-card__name">${name}</div>
+          <div class="upload-card__name">${displayName}</div>
         </div>
       `;
       uploadList.append(card);
@@ -2638,6 +2643,449 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         provider: 'yuanbao',
         status: 'succeeded',
         succeededAttachmentIds: ['doc-pdf-1'],
+      })
+    );
+  });
+
+  // ===== v2.3.2 fix round 2: Codex review P1s + live Yuanbao preview confirmation =====
+
+  it('Gemini Hydrogen: re-opens once when a stale overlay present at the first click detaches during the initial wait', async () => {
+    const { uploads, triggerClicks, cleanup } = mountGeminiHydrogenWithLingeringOverlay({ withStalePane: true });
+    try {
+      // Start the fill 700ms into the stale pane's 1000ms detach: it vanishes mid-wait.
+      await vi.advanceTimersByTimeAsync(700);
+      expect(document.querySelector('.cdk-overlay-pane')).not.toBeNull();
+      dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-stale-overlay-fast-detach' });
+      await vi.advanceTimersByTimeAsync(15000);
+
+      expect(uploads).toEqual(['paper.pdf']);
+      expect(triggerClicks).toHaveBeenCalledTimes(2);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-stale-overlay-fast-detach',
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-pdf-1'],
+        })
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Zhipu GLM-5.4 UI: an earlier upload card settling never confirms a rejected PDF', async () => {
+    const { uploadList, fileInput } = mountChatGLMGlm54({ cardState: 'error' });
+    const old = document.createElement('div');
+    old.className = 'upload-card upload-card--loading';
+    old.innerHTML = '<span class="upload-card__name">old.png</span>';
+    uploadList.append(old);
+    fileInput.addEventListener('change', () => setTimeout(() => old.classList.remove('upload-card--loading'), 100));
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'chatglm-glm54-stale-card' });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-stale-card',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: an already-loading unnamed image card settling never confirms a new image upload', async () => {
+    const { uploadList, fileInput } = mountChatGLMGlm54({ cardState: 'error', renderName: () => null });
+    const old = document.createElement('div');
+    old.className = 'upload-card upload-card--loading';
+    old.innerHTML = '<img alt="" src="blob:https://chatglm.cn/old" />';
+    uploadList.append(old);
+    fileInput.addEventListener('change', () => setTimeout(() => old.classList.remove('upload-card--loading'), 100));
+
+    dispatchDocFill({ attachments: [makeImageAttachment()], requestId: 'chatglm-glm54-stale-image-card' });
+    await vi.advanceTimersByTimeAsync(9000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-stale-image-card',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: confirms DOCX + PDF + TXT + PNG with truncated, extension-less, and unnamed upload cards', async () => {
+    const displayNames = {
+      '日本中部京都红叶之旅_测试(1).docx': '日本中部京都红叶之旅_...',
+      'sample.pdf': 'sample.pdf',
+      'sample.txt': 'sample',
+    };
+    const { uploaded, uploadList, fileInput } = mountChatGLMGlm54({
+      renderName: (name) => (name in displayNames ? displayNames[name] : null),
+    });
+    fileInput.addEventListener('change', () => {
+      const card = uploadList.lastElementChild;
+      card.classList.add('upload-card--loading');
+      setTimeout(() => card.classList.remove('upload-card--loading'), 300);
+    });
+
+    dispatchDocFill({
+      attachments: [
+        makeDocxAttachment('glm-docx', '日本中部京都红叶之旅_测试(1).docx'),
+        makePdfAttachment('glm-pdf', 'sample.pdf'),
+        makeTxtAttachment('glm-txt', 'sample.txt'),
+        makeImageAttachment('glm-png', 'sample.png'),
+      ],
+      requestId: 'chatglm-glm54-four-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(8000);
+
+    expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt', 'sample.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-four-mixed',
+        status: 'succeeded',
+        succeededAttachmentIds: ['glm-docx', 'glm-pdf', 'glm-txt', 'glm-png'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: mixed named PDF and unnamed loading image both wait for settled cards', async () => {
+    const { fileInput, uploadList } = mountChatGLMGlm54();
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0].name !== 'diagram.png') return;
+      const card = uploadList.lastElementChild;
+      card.innerHTML = '<img alt="" src="blob:sample" />';
+      card.classList.add('upload-card--loading');
+      setTimeout(() => card.classList.remove('upload-card--loading'), 300);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment(), makeImageAttachment()], requestId: 'chatglm-glm54-unnamed-image' });
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(getLastActionResult().succeededAttachmentIds).toEqual(['doc-pdf-1', 'img-1']);
+  });
+
+  it('Zhipu GLM-5.4 UI: a retry re-uploads a fallback PDF whose card was replaced by an unrelated upload', async () => {
+    const { uploadList, uploaded } = mountChatGLMGlm54();
+    const pdf = makePdfAttachment();
+    dispatchDocFill({ attachments: [pdf], requestId: 'chatglm-glm54-unrelated-first' });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(uploaded).toEqual(['paper.pdf']);
+
+    uploadList.innerHTML = '<div class="upload-card"><span class="upload-card__name">other.png</span></div>';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-unrelated-retry', pdf);
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(uploaded).toEqual(['paper.pdf', 'paper.pdf']);
+    // The user's own other.png card stays staged.
+    expect([...uploadList.querySelectorAll('.upload-card__name')].map((el) => el.textContent)).toEqual([
+      'other.png',
+      'paper.pdf',
+    ]);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-unrelated-retry',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: a retry re-uploads only the missing fallback attachment and keeps the retained one', async () => {
+    const { uploadList, uploaded } = mountChatGLMGlm54();
+    const pdf = makePdfAttachment();
+    const png = makeImageAttachment();
+    dispatchDocFill({ attachments: [pdf, png], requestId: 'chatglm-glm54-partial-first' });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(uploaded).toEqual(['paper.pdf', 'diagram.png']);
+
+    [...uploadList.querySelectorAll('.upload-card')]
+      .find((card) => card.textContent.includes('diagram.png'))
+      .remove();
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-partial-retry', pdf, png);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(uploaded).toEqual(['paper.pdf', 'diagram.png', 'diagram.png']);
+    expect(uploadList.querySelectorAll('.upload-card')).toHaveLength(2);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-partial-retry',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1', 'img-1'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: TRIGGER_SEND with a disabled send-button never falls back to an Enter keypress', () => {
+    const { editor } = mountChatGLMGlm54();
+    const enter = vi.fn();
+    editor.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') enter();
+    });
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', context: 'multi-panel' });
+
+    expect(enter).not.toHaveBeenCalled();
+  });
+
+  it('Zhipu GLM-5.4 UI: auto-submit keeps retrying while the send-button is disabled and clicks it once enabled', async () => {
+    const { editor, sendButton } = mountChatGLMGlm54();
+    let enterWhileDisabled = 0;
+    const submitted = vi.fn();
+    editor.addEventListener('input', () => {
+      sendButton.classList.add('send-button--disabled');
+      setTimeout(() => sendButton.classList.remove('send-button--disabled'), 1000);
+    });
+    editor.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      if (sendButton.classList.contains('send-button--disabled')) {
+        enterWhileDisabled += 1;
+        return;
+      }
+      submitted();
+    });
+    sendButton.addEventListener('click', submitted);
+
+    dispatchMultiPanelMessage({ type: 'INJECT_TEXT', text: 'Slow GLM prompt', autoSubmit: true, context: 'multi-panel' });
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(enterWhileDisabled).toBe(0);
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * Live yuanbao.tencent.com composer (captured 2026-11-25): document cards render the
+   * extension-less name plus an uppercase type badge, image cards carry an
+   * aria-label="预览图片<name>" and an https <img> without alt, and every card embeds a
+   * "Re-upload" retry overlay that is display:none unless the upload failed.
+   */
+  const mountYuanbaoLive = ({ failedNames = [], ignoreImagesAfterDocs = false } = {}) => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat');
+    document.body.innerHTML = `
+      <div id="yb-composer">
+        <div class="pl-[6px] empty:hidden" data-input-resource-area="true">
+          <div class="FileList_inputFileList__tSu2d undefined">
+            <div class="swiper swiper-initialized swiper-horizontal FileList_swiper__sJ7Ih">
+              <div class="swiper-wrapper" id="yb-swiper"></div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-command-editor-specail">
+          <div class="ql-editor" contenteditable="true" data-placeholder="Ask"></div>
+        </div>
+        <button data-new-input-control="add-tools-trigger">+</button>
+      </div>
+    `;
+    const swiper = document.getElementById('yb-swiper');
+    const trigger = document.querySelector('[data-new-input-control="add-tools-trigger"]');
+    markVisible(trigger);
+    const uploaded = [];
+    const menuClicks = [];
+
+    const addDocCard = (name) => {
+      const dot = name.lastIndexOf('.');
+      const stem = name.slice(0, dot);
+      const ext = name.slice(dot + 1).toUpperCase();
+      const failed = failedNames.includes(name);
+      const slide = document.createElement('div');
+      slide.className = 'swiper-slide FileList_inputFileListSwiperItemFile__Sc3H_';
+      slide.innerHTML = `
+        <div class="FileList_inputFileListItem__sOOlP FileList_inputFileListItemPdf___5kgD bg-New-background-extra_hover">
+          <div class="FileList_inputFileListItemPdfIcon__VuNEY">
+            <img draggable="false" src="https://static.yuanbao.tencent.com/doc_normal_light.png" alt="icon">
+            <div class="FileList_inputFileListItemStatus__J9y4A FileList_inputFileListItemStatusLocalFile__I_WrF"></div>
+          </div>
+          <div class="FileList_inputFileListItemPdfInfo__pnCZB">
+            <div class="FileList_inputFileListItemPdfInfoName__2_V8V">${stem}</div>
+            <div class="FileList_inputFileListItemPdfInfoDetail__OmXZC">
+              <div class="FileList_finishShowCount__NY8SX">
+                <span class="FileList_fileType__B0xTp">${ext}</span>
+                <div class="FileList_divide__AzspK"></div>1.24KB
+              </div>
+            </div>
+          </div>
+          <div class="FileList_inputFileListItemClose__0Gnyx" aria-label="删除文件"></div>
+          <div class="FileList_inputFileListItemRetry__9Y_yI" aria-label="重新上传文件" style="${failed ? '' : 'display: none;'}">
+            <div class="FileList_retryIcon__6gEw8"></div>
+            <div class="FileList_retryText__mfuYQ">Re-upload</div>
+          </div>
+        </div>
+      `;
+      swiper.append(slide);
+    };
+    const addImageCard = (name) => {
+      const slide = document.createElement('div');
+      slide.className = 'swiper-slide FileList_inputFileListSwiperItemImage__3Gj6L';
+      slide.innerHTML = `
+        <div class="FileList_inputFileListItem__sOOlP FileList_inputFileListItemImage__EF_2N" aria-label="预览图片${name}">
+          <img src="https://hunyuan-prod-1258344703.cos.ap-guangzhou.myqcloud.com/${encodeURIComponent(name)}">
+        </div>
+      `;
+      swiper.append(slide);
+    };
+    const makeInput = (accept, onFile) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = accept;
+      input.addEventListener('change', () => {
+        const name = input.files[0].name;
+        uploaded.push(name);
+        setTimeout(() => onFile(name), 200);
+      });
+      document.body.append(input);
+    };
+
+    trigger.addEventListener('click', () => {
+      document.querySelector('#yb-menu')?.remove();
+      const menu = document.createElement('div');
+      menu.id = 'yb-menu';
+      ['Upload Image', 'Local Files', 'Tencent Docs'].forEach((label) => {
+        const item = document.createElement('div');
+        item.setAttribute('role', 'menuitem');
+        item.textContent = label;
+        markVisible(item);
+        item.addEventListener('click', () => {
+          menuClicks.push(label);
+          if (label === 'Local Files') {
+            makeInput('.pdf,.xls,.xlsx,.ppt,.pptx,.doc,.docx,.txt', addDocCard);
+          } else if (label === 'Upload Image') {
+            makeInput('.jpg,.jpeg,.png,.webp,.bmp,.gif', (name) => {
+              const hasDocs = swiper.querySelector('[class*="FileList_inputFileListSwiperItemFile__"]');
+              if (ignoreImagesAfterDocs && hasDocs) return;
+              addImageCard(name);
+            });
+          }
+        });
+        menu.append(item);
+      });
+      document.body.append(menu);
+    });
+
+    return { swiper, uploaded, menuClicks };
+  };
+
+  it('Yuanbao live UI: confirms a Local Files DOCX + PDF + TXT batch from extension-less names with hidden Re-upload overlays', async () => {
+    const { uploaded, menuClicks } = mountYuanbaoLive();
+
+    dispatchDocFill({
+      attachments: [
+        makeDocxAttachment('yb-docx', '日本中部京都红叶之旅_测试(1).docx'),
+        makePdfAttachment('yb-pdf', 'sample.pdf'),
+        makeTxtAttachment('yb-txt', 'sample.txt'),
+      ],
+      requestId: 'yuanbao-live-docs',
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(menuClicks).toEqual(['Local Files']);
+    expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-docs',
+        provider: 'yuanbao',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-docx', 'yb-pdf', 'yb-txt'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: confirms an Upload Image card identified by its aria-label and https <img> without alt', async () => {
+    const { uploaded, menuClicks } = mountYuanbaoLive();
+
+    dispatchDocFill({ attachments: [makeImageAttachment('yb-png', 'sample.png')], requestId: 'yuanbao-live-image' });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(menuClicks).toEqual(['Upload Image']);
+    expect(uploaded).toEqual(['sample.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-image',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-png'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: a card with a visible Re-upload overlay never confirms, while a sibling with a hidden overlay does', async () => {
+    mountYuanbaoLive({ failedNames: ['sample.txt'] });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('yb-pdf', 'sample.pdf'), makeTxtAttachment('yb-txt', 'sample.txt')],
+      requestId: 'yuanbao-live-failed-card',
+    });
+    await vi.advanceTimersByTimeAsync(15000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-failed-card',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: ['yb-pdf'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: an image silently dropped after documents does not confirm', async () => {
+    const { uploaded } = mountYuanbaoLive({ ignoreImagesAfterDocs: true });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('yb-pdf', 'sample.pdf'), makeImageAttachment('yb-png', 'sample.png')],
+      requestId: 'yuanbao-live-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(12000);
+
+    expect(uploaded).toEqual(['sample.pdf', 'sample.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-mixed',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: ['yb-pdf'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: a retry keeps staged cards and re-uploads only the fallback documents that are gone', async () => {
+    const { swiper, uploaded } = mountYuanbaoLive();
+    const pdf = makePdfAttachment('yb-pdf', 'sample.pdf');
+    const txt = makeTxtAttachment('yb-txt', 'sample.txt');
+    dispatchDocFill({ attachments: [pdf, txt], requestId: 'yuanbao-live-retry-first' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ requestId: 'yuanbao-live-retry-first', status: 'succeeded' })
+    );
+
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('yuanbao-live-retry-staged', pdf, txt);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(uploaded).toEqual(['sample.pdf', 'sample.txt']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-retry-staged',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-pdf', 'yb-txt'],
+      })
+    );
+
+    // Remove the TXT card only: its PDF sibling shares the "sample" stem but not the type badge.
+    [...swiper.querySelectorAll('[class*="FileList_fileType__"]')]
+      .find((badge) => badge.textContent === 'TXT')
+      .closest('.swiper-slide')
+      .remove();
+    document.querySelector('.ql-editor').textContent = '';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('yuanbao-live-retry-partial', pdf, txt);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(uploaded).toEqual(['sample.pdf', 'sample.txt', 'sample.txt']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-retry-partial',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-pdf', 'yb-txt'],
       })
     );
   });
