@@ -2163,4 +2163,482 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-pdf-1'] })
     );
   });
+
+  // ===== v2.3.2 live-QA regressions: Zhipu GLM-5.4 UI, Gemini multi-doc remount, Yuanbao "Local Files" =====
+
+  const mountChatGLMGlm54 = ({ cardState = 'done', layoutClass = '' } = {}) => {
+    window.happyDOM.setURL('https://chatglm.cn/');
+    // The profile avatar dialog input precedes the composer in DOM order, like the live page.
+    document.body.innerHTML = `
+      <div class="user-profile-edit-dialogs">
+        <input class="user-profile-edit-dialogs__hidden-input" type="file" accept="image/*" />
+      </div>
+      <header><button type="button" class="back-to-legacy">返回旧版</button></header>
+      <main class="${layoutClass}">
+        <div class="input-area">
+          <div class="upload-attachment-picker">
+            <input type="file" class="file-input" multiple="" />
+            <div class="upload-list"></div>
+          </div>
+          <div class="el-textarea">
+            <textarea class="el-textarea__inner" tabindex="0" autocomplete="off" placeholder="和我聊聊天吧～" rows="2"></textarea>
+          </div>
+          <button type="button" class="tool-icon-button tool-icon-button--add-menu" aria-label="添加"></button>
+          <button type="button" class="send-button send-button--disabled" aria-label="发送"></button>
+        </div>
+      </main>
+    `;
+    const editor = document.querySelector('textarea.el-textarea__inner');
+    const fileInput = document.querySelector('input.file-input');
+    const decoyInput = document.querySelector('.user-profile-edit-dialogs__hidden-input');
+    const sendButton = document.querySelector('button.send-button');
+    const uploadList = document.querySelector('.upload-list');
+    document.querySelectorAll('button, textarea').forEach(markVisible);
+
+    const uploaded = [];
+    const decoyUploads = [];
+    decoyInput.addEventListener('change', () => decoyUploads.push(decoyInput.files[0]?.name));
+    fileInput.addEventListener('change', () => {
+      const name = fileInput.files[0].name;
+      uploaded.push(name);
+      const card = document.createElement('div');
+      card.className = cardState === 'error' ? 'upload-card upload-card--error' : 'upload-card';
+      card.innerHTML = `
+        <div class="upload-card__info">
+          <div class="upload-card__name">${name}</div>
+        </div>
+      `;
+      uploadList.append(card);
+    });
+    editor.addEventListener('input', () => {
+      sendButton.classList.toggle('send-button--disabled', !editor.value.trim());
+    });
+
+    return { editor, fileInput, decoyInput, sendButton, uploadList, uploaded, decoyUploads };
+  };
+
+  it('Zhipu GLM-5.4 UI: fills the el-textarea composer and clicks the send-button only once it is enabled', async () => {
+    const { editor, sendButton } = mountChatGLMGlm54();
+    const sendClicks = vi.fn();
+    sendButton.addEventListener('click', sendClicks);
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', context: 'multi-panel' });
+    expect(sendClicks).not.toHaveBeenCalled();
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT',
+      text: 'hello glm-5.4',
+      autoSubmit: false,
+      context: 'multi-panel',
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(editor.value).toContain('hello glm-5.4');
+    expect(sendButton.classList.contains('send-button--disabled')).toBe(false);
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', context: 'multi-panel' });
+    expect(sendClicks).toHaveBeenCalledTimes(1);
+  });
+
+  it('Zhipu GLM-5.4 UI: uploads mixed PDF + PNG to the composer file-input (never the profile avatar input) and confirms each upload-card', async () => {
+    const { uploaded, decoyUploads, uploadList } = mountChatGLMGlm54();
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf'), makeImageAttachment('zhipu-png', 'diagram.png')],
+      text: 'Summarize both',
+      requestId: 'chatglm-glm54-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(decoyUploads).toEqual([]);
+    expect(uploaded).toEqual(['zhipu-test.pdf', 'diagram.png']);
+    expect(uploadList.querySelectorAll('.upload-card')).toHaveLength(2);
+    expect(document.querySelector('textarea.el-textarea__inner').value).toContain('Summarize both');
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-mixed',
+        provider: 'chatglm',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf', 'zhipu-png'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: keeps the composer file-input even when a page wrapper class mentions settings or avatar', async () => {
+    const { uploaded, decoyUploads } = mountChatGLMGlm54({ layoutClass: 'chat-settings-layout user-avatar-shell' });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf'), makeImageAttachment('zhipu-png', 'diagram.png')],
+      requestId: 'chatglm-glm54-wrapper-class',
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(decoyUploads).toEqual([]);
+    expect(uploaded).toEqual(['zhipu-test.pdf', 'diagram.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-wrapper-class',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf', 'zhipu-png'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: never counts an error-state upload-card as a confirmed upload', async () => {
+    const { uploaded } = mountChatGLMGlm54({ cardState: 'error' });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf')],
+      requestId: 'chatglm-glm54-error-card',
+    });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(uploaded).toEqual(['zhipu-test.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-error-card',
+        provider: 'chatglm',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: a retry keeps a staged upload-card and re-uploads only once the composer is cleared', async () => {
+    const { editor, uploaded, uploadList } = mountChatGLMGlm54();
+    const pdf = makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf');
+
+    dispatchDocFill({ attachments: [pdf], requestId: 'chatglm-glm54-first' });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(uploaded).toEqual(['zhipu-test.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ requestId: 'chatglm-glm54-first', status: 'succeeded' })
+    );
+
+    editor.value = '';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-retry-staged', pdf);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(uploaded).toEqual(['zhipu-test.pdf']);
+    expect(editor.value).toContain('Retry prompt');
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-retry-staged',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf'],
+      })
+    );
+
+    editor.value = '';
+    uploadList.replaceChildren();
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-retry-cleared', pdf);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(uploaded).toEqual(['zhipu-test.pdf', 'zhipu-test.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-retry-cleared',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf'],
+      })
+    );
+  });
+
+  it('Zhipu legacy UI: still routes mixed PDF + PNG through the el-upload input and file-list preview', async () => {
+    window.happyDOM.setURL('https://chatglm.cn/main/alltoolsdetail');
+    document.body.innerHTML = `
+      <div class="user-profile-edit-dialogs">
+        <input class="user-profile-edit-dialogs__hidden-input" type="file" accept="image/*" />
+      </div>
+      <div class="search-box-container">
+        <div class="upload-popover"><input class="el-upload__input" type="file" multiple /></div>
+        <div id="search-input-box">
+          <textarea class="scroll-display-none"></textarea>
+          <div class="enter is-main-chat"><div class="enter-icon-container"></div></div>
+        </div>
+      </div>
+      <div class="file-list-box-content-list"></div>
+    `;
+    const fileInput = document.querySelector('input.el-upload__input');
+    const decoyInput = document.querySelector('.user-profile-edit-dialogs__hidden-input');
+    const sendButton = document.querySelector('.enter-icon-container');
+    markVisible(sendButton);
+    const uploaded = [];
+    fileInput.addEventListener('change', () => {
+      uploaded.push(fileInput.files[0].name);
+      const item = document.createElement('div');
+      item.className = 'file-list-box-content-list-item';
+      document.querySelector('.file-list-box-content-list').append(item);
+    });
+    const mouseDowns = vi.fn();
+    const clicks = vi.fn();
+    sendButton.addEventListener('mousedown', mouseDowns);
+    sendButton.addEventListener('click', clicks);
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment(), makeImageAttachment()],
+      text: 'Legacy prompt',
+      autoSubmit: true,
+      requestId: 'chatglm-legacy-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(uploaded).toEqual(['paper.pdf', 'diagram.png']);
+    expect(decoyInput.files).toHaveLength(0);
+    expect(document.querySelector('textarea.scroll-display-none').value).toContain('Legacy prompt');
+    expect(mouseDowns).toHaveBeenCalledTimes(1);
+    expect(clicks).not.toHaveBeenCalled();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-legacy-mixed',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1', 'img-1'],
+      })
+    );
+  });
+
+  /**
+   * Gemini Hydrogen upload menu that, like the live CDK overlay, ignores trigger clicks
+   * while a previous menu pane is still detaching. Escape unmounts the document inputs
+   * at once but leaves the pane with its image/*,video/* input for STALE_PANE_MS.
+   */
+  const mountGeminiHydrogenWithLingeringOverlay = ({ withStalePane = false } = {}) => {
+    const STALE_PANE_MS = 1000;
+    mountGemini(`
+      <main>
+        <input-container>
+          <div id="gemini-hydrogen-previews"></div>
+          <div class="xap-uploader-dropzone" file-drop-zone>
+            <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          </div>
+          <uploader>
+            <button id="gemini-upload-tools" type="button" aria-label="Upload &amp; tools">
+              <mat-icon fonticon="add"></mat-icon>
+            </button>
+          </uploader>
+        </input-container>
+      </main>
+    `);
+    const previewsHost = document.getElementById('gemini-hydrogen-previews');
+    const uploadToolsBtn = document.getElementById('gemini-upload-tools');
+    const uploads = [];
+    const triggerClicks = vi.fn();
+
+    const addChip = (name, isImage) => {
+      const chip = document.createElement('uploader-file-preview');
+      chip.className = 'file-preview-chip ng-star-inserted';
+      chip.innerHTML = isImage
+        ? `<img src="blob:https://gemini.google.com/${encodeURIComponent(name)}" alt="Preview" />`
+        : `<span class="gem-attachment-text gds-body-s">${name.replace(/\.[^.]+$/, '')}</span>`;
+      previewsHost.append(chip);
+    };
+    const makeInput = (accept, isImage) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.className = 'hidden-file-input ng-star-inserted';
+      input.accept = accept;
+      input.addEventListener('change', () => {
+        const name = input.files[0].name;
+        uploads.push(name);
+        addChip(name, isImage);
+      });
+      return input;
+    };
+    const mountPane = ({ includeDocInput }) => {
+      const pane = document.createElement('div');
+      pane.className = 'cdk-overlay-pane';
+      pane.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      if (includeDocInput) {
+        const docInput = makeInput('.txt,.pdf,.doc,.docx,.md,.csv,.json', false);
+        docInput.dataset.kind = 'doc';
+        pane.append(docInput);
+      }
+      pane.append(makeInput('image/*,video/*', true));
+      document.body.append(pane);
+      return pane;
+    };
+
+    uploadToolsBtn.addEventListener('click', () => {
+      triggerClicks();
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      mountPane({ includeDocInput: true });
+    });
+    const beginDetach = (pane) => {
+      pane.querySelectorAll('input[data-kind="doc"]').forEach((input) => input.remove());
+      if (pane.dataset.detaching) return;
+      pane.dataset.detaching = 'true';
+      setTimeout(() => pane.remove(), STALE_PANE_MS);
+    };
+    const onEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      const pane = document.querySelector('.cdk-overlay-pane');
+      if (pane) beginDetach(pane);
+    };
+    document.addEventListener('keydown', onEscape);
+    if (withStalePane) {
+      beginDetach(mountPane({ includeDocInput: false }));
+    }
+
+    return { uploads, triggerClicks, cleanup: () => document.removeEventListener('keydown', onEscape) };
+  };
+
+  it('Gemini Hydrogen: re-mounts the document input when a detaching overlay only leaves an image/*,video/* input', async () => {
+    const { uploads, triggerClicks, cleanup } = mountGeminiHydrogenWithLingeringOverlay({ withStalePane: true });
+    try {
+      expect(document.querySelectorAll('.cdk-overlay-pane input[type="file"]')).toHaveLength(1);
+      expect(document.querySelector('.cdk-overlay-pane input').accept).toBe('image/*,video/*');
+
+      dispatchDocFill({ attachments: [makePdfAttachment('sample-pdf', 'sample.pdf')], requestId: 'gemini-stale-overlay-pdf' });
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(uploads).toEqual(['sample.pdf']);
+      expect(triggerClicks.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-stale-overlay-pdf',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['sample-pdf'],
+        })
+      );
+      expect(getLastActionResult().skippedAttachments).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Gemini Hydrogen: uploads DOCX -> PDF -> TXT -> PNG sequentially without a type-not-accepted race', async () => {
+    const { uploads, cleanup } = mountGeminiHydrogenWithLingeringOverlay();
+    try {
+      dispatchDocFill({
+        attachments: [
+          makeDocxAttachment('race-docx', '日本中部京都红叶之旅_测试(1).docx'),
+          makePdfAttachment('race-pdf', 'sample.pdf'),
+          makeTxtAttachment('race-txt', 'sample.txt'),
+          makeImageAttachment('race-png', 'sample.png'),
+        ],
+        requestId: 'gemini-multi-doc-race',
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+
+      expect(uploads).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt', 'sample.png']);
+      const result = getLastActionResult();
+      expect(result).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-multi-doc-race',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['race-docx', 'race-pdf', 'race-txt', 'race-png'],
+        })
+      );
+      expect(result.skippedAttachments).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Gemini Hydrogen: still skips a document as type-not-accepted when a re-opened menu only offers image/*,video/*', async () => {
+    mountGemini(`
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <uploader><button id="img-only-upload" aria-label="Upload &amp; tools">+</button></uploader>
+      </input-container>
+    `);
+    const triggerClicks = vi.fn();
+    document.getElementById('img-only-upload').addEventListener('click', () => {
+      triggerClicks();
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<div class="cdk-overlay-pane"><div role="menu"><input type="file" class="hidden-file-input" accept="image/*,video/*" /></div></div>'
+      );
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+    try {
+      dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-image-only-menu' });
+      await vi.advanceTimersByTimeAsync(6000);
+
+      expect(triggerClicks).toHaveBeenCalledTimes(2);
+      expect(document.querySelector('.cdk-overlay-pane')).toBeNull();
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-image-only-menu',
+          status: 'skipped',
+          reason: 'type-not-accepted',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'paper.pdf', reason: 'type-not-accepted' }],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Yuanbao English UI: picks the "Local Files" menu item for documents (never Upload Image or Tencent Docs)', async () => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat');
+    document.body.innerHTML = `
+      <div id="yb-composer">
+        <div class="chat-command-editor-specail">
+          <div class="ql-editor" contenteditable="true" data-placeholder="Ask"></div>
+        </div>
+        <button data-new-input-control="add-tools-trigger">+</button>
+        <div id="yb-list"></div>
+      </div>
+    `;
+    const trigger = document.querySelector('[data-new-input-control="add-tools-trigger"]');
+    markVisible(trigger);
+    const menuClicks = [];
+    const uploaded = [];
+    trigger.addEventListener('click', () => {
+      if (document.getElementById('yb-menu')) return;
+      const menu = document.createElement('div');
+      menu.id = 'yb-menu';
+      ['Search', 'Upload Image', 'Local Files', 'Tencent Docs'].forEach((label) => {
+        const item = document.createElement('div');
+        item.setAttribute('role', 'menuitem');
+        item.innerHTML = `<span class="icon"></span><span>${label}</span>`;
+        markVisible(item);
+        item.addEventListener('click', () => {
+          menuClicks.push(label);
+          if (label === 'Upload Image') {
+            const imgInput = document.createElement('input');
+            imgInput.type = 'file';
+            imgInput.accept = 'image/*';
+            document.body.append(imgInput);
+          }
+          if (label !== 'Local Files') return;
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.multiple = true;
+          input.accept = '.pdf,.docx,.txt';
+          input.addEventListener('change', () => {
+            uploaded.push(input.files[0].name);
+            const card = document.createElement('div');
+            card.className = 'FileList_inputFileListItem__abc';
+            card.textContent = input.files[0].name;
+            document.getElementById('yb-list').append(card);
+          });
+          document.body.append(input);
+        });
+        menu.append(item);
+      });
+      document.body.append(menu);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'yuanbao-local-files' });
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(menuClicks).toEqual(['Local Files']);
+    expect(uploaded).toEqual(['paper.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-local-files',
+        provider: 'yuanbao',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      })
+    );
+  });
 });
