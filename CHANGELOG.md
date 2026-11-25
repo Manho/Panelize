@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.2 - 2026-11-25
+- Support the updated Zhipu / ChatGLM GLM-5.4 composer, send button, and mixed document/image attachment cards while preserving legacy fallback behavior.
+- Fix Gemini Hydrogen multi-document sequential uploads when a detaching attachment overlay swallows the initial Upload & tools click.
+- Fix Tencent Yuanbao English UI (Local Files) document uploads, FileList preview confirmation, and sequential multi-file menu re-arming.
+
 ## 2.3.1 - 2026-11-24
 - Fixed document and image uploads on Gemini new Hydrogen UI by scoping upload trigger discovery to the composer ("Upload & tools"), mounting accept-matched hidden file inputs, dismissing the overlay menu cleanly, and supporting extension-stripped attachment chips.
 - Fixed Qwen Global (chat.qwen.ai) document uploads by prioritizing composer drop delivery, hardening preview confirmation per attachment kind, and preventing duplicate uploads on slow drops.
