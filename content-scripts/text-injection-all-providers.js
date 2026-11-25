@@ -114,6 +114,11 @@
   const YUANBAO_TEMP_CHAT_CLICK_COOLDOWN_MS = 5000;
   const IMAGE_UPLOAD_PREVIEW_TIMEOUT_MS = 6000;
   const DOCUMENT_UPLOAD_PREVIEW_TIMEOUT_MS = 10000;
+  // ChatGPT renders its attachment card as soon as React handles the input's
+  // change event, so each attempt only waits briefly. Two attempts plus the gap
+  // must stay well under the 8s single-attachment panel action timeout.
+  const CHATGPT_PREVIEW_ATTEMPT_TIMEOUT_MS = 2500;
+  const CHATGPT_PREVIEW_RETRY_DELAY_MS = 300;
   const SLOW_COMPOSER_PROVIDERS = new Set([
     'deepseek', 'kimi', 'doubao', 'chatglm', 'zai-global', 'yuanbao'
   ]);
@@ -249,7 +254,22 @@
 
   // Provider-specific file input selectors for image and document upload
   const FILE_INPUT_SELECTORS = {
-    chatgpt: ['input[type="file"][data-testid="file-upload-input"]', 'input[type="file"]'],
+    // Ordered by preference. The live composer form also mounts a mobile
+    // camera-capture input first in DOM order; findChatgptFileInput() drops it
+    // whenever another input exists. The bare selector keeps legacy layouts working.
+    chatgpt: [
+      'input[type="file"][data-testid="file-upload-input"]:not([capture])',
+      'input[type="file"][aria-label="Attach files"]:not([capture])',
+      [
+        'input[type="file"][multiple]:not([capture]):not([accept])',
+        'input[type="file"][multiple]:not([capture])[accept=""]',
+        'input[type="file"][multiple]:not([capture])[accept*="*/*"]'
+      ].join(', '),
+      'input[type="file"][aria-label="Attach photos"]:not([capture])',
+      'input[type="file"][aria-label="Attach photos or videos"]:not([capture])',
+      'input[type="file"]:not([capture])',
+      'input[type="file"]'
+    ],
     claude: ['input[type="file"]'],
     gemini: [
       'input.hidden-file-input[type="file"]',
@@ -3233,6 +3253,9 @@
   }
 
   function getComposerRootForAttachmentCheck(provider, input) {
+    if (provider === 'chatgpt') {
+      return getChatgptComposerForm() || input?.closest?.('form') || input?.parentElement || null;
+    }
     if (provider === 'deepseek') return getDeepSeekComposer();
     if (provider === 'kimi') return getKimiComposer();
     if (provider === 'grok') return getGrokComposer();
@@ -3265,7 +3288,11 @@
     // Gemini and Qwen Global run their own rejection-filtered checks below, so an
     // "Upload failed: paper.pdf" alert is never mistaken for a staged attachment.
     // ChatGLM's GLM-5.4 picker wrapper also names errored cards, so it runs its own check too.
-    const usesFilteredPreviewCheck = provider === 'gemini' || provider === 'qwen-global' || provider === 'chatglm';
+    // ChatGPT's check also matches duplicate-suffixed names ("Mizuho(4).png").
+    const usesFilteredPreviewCheck = provider === 'gemini' ||
+      provider === 'qwen-global' ||
+      provider === 'chatglm' ||
+      provider === 'chatgpt';
     if (
       composerRoot &&
       !usesFilteredPreviewCheck &&
@@ -3324,6 +3351,16 @@
       if (countChatGLMStagedAttachments(composerRoot, candidateImages) > 0) {
         return false;
       }
+    } else if (provider === 'chatgpt') {
+      // Named thumbnails (<img alt="Mizuho.png">) confirm an upload, so they also keep it staged.
+      if (
+        countChatgptStagedAttachmentCards(composerRoot, candidateImages) > 0 ||
+        (candidateImages || []).some(
+          img => img?.name && countChatgptNamedAttachmentPreviews(composerRoot, img.name) > 0
+        )
+      ) {
+        return false;
+      }
     } else if (provider === 'qwen-global') {
       if (
         composerRoot &&
@@ -3339,13 +3376,13 @@
     return true;
   }
 
-  const PARTIAL_RETRY_PROVIDERS = new Set(['gemini', 'chatglm', 'yuanbao']);
+  const PARTIAL_RETRY_PROVIDERS = new Set(['gemini', 'chatglm', 'yuanbao', 'chatgpt']);
 
   /**
    * On a retry with an empty editor, splits fallback attachments into the ones still
-   * staged in the composer (Gemini chips, ChatGLM GLM-5.4 cards, Yuanbao FileList cards)
-   * and the ones that must be re-delivered. Returns null when the regular all-or-nothing
-   * retry decision applies.
+   * staged in the composer (Gemini chips, ChatGLM GLM-5.4 cards, Yuanbao FileList cards,
+   * ChatGPT composer attachment cards) and the ones that must be re-delivered. Returns
+   * null when the regular all-or-nothing retry decision applies.
    */
   function getPartialRetryPlan(provider, fallbackAttachments) {
     if (!PARTIAL_RETRY_PROVIDERS.has(provider)) {
@@ -3372,6 +3409,15 @@
     }
     let retained = [];
     let missing = [];
+    if (provider === 'chatgpt') {
+      ({ retained, missing } = reconcileChatgptRetainedAttachments(
+        getComposerRootForAttachmentCheck(provider, input),
+        fallbackAttachments
+      ));
+      // The composer still holds other cards (so it is not "cleared"), but none of
+      // the fallback attachments: re-deliver all of them instead of acknowledging.
+      return missing.length > 0 ? { retained, missing } : null;
+    }
     if (provider === 'chatglm') {
       if (!hasChatGLMGlm54UploadList()) {
         return null;
@@ -3708,7 +3754,7 @@
     let result;
     switch (provider) {
       case 'chatgpt':
-        result = await injectImageToChatGPT(imageData);
+        result = await injectImageToChatGPT(imageData, { retry });
         break;
       case 'claude':
         result = await injectImageToClaude(imageData);
@@ -5098,27 +5144,431 @@
     return { matched, hadAnyInput: candidates.length > 0 };
   }
 
+  const CHATGPT_CAMERA_INPUT_LABEL_RE = /take a photo|拍照/i;
+  const CHATGPT_ATTACHMENT_CARD_SELECTOR = '[class*="composer-attachment"], [data-testid*="attachment"]';
+  const CHATGPT_REMOVE_LABEL_PREFIX_RE = /^\s*(?:remove|移除|删除)\s*/i;
+  const CHATGPT_GENERIC_ATTACHMENT_LABEL_RE =
+    /^(?:(?:the|this|uploaded|attached)\s+)?(?:files?|attachments?|images?|photos?|pictures?|documents?|uploads?)$|^(?:文件|附件|图片|照片|文档)$/i;
+  const CHATGPT_CARD_ERROR_MARKER_SELECTOR =
+    '.text-token-text-error, [data-state="error"], [aria-invalid="true"], [role="alert"]';
+  const CHATGPT_LOCALIZED_REJECTION_TEXT_RE = /失败|不支持|无法上传|无法|错误|出错|过大|太大|被拒绝/;
+
+  function isChatgptCameraCaptureInput(input) {
+    return input.hasAttribute('capture') ||
+      CHATGPT_CAMERA_INPUT_LABEL_RE.test(input.getAttribute('aria-label') || '');
+  }
+
+  function getChatgptComposerForm() {
+    return window.PanelizeChatgptComposer?.findForm() || null;
+  }
+
+  /**
+   * Picks ChatGPT's composer file input, composer-scoped first, in the order of
+   * FILE_INPUT_SELECTORS.chatgpt. Camera-capture inputs ("Take a photo") are
+   * only used when no other file input is mounted.
+   */
+  function findChatgptFileInput(attachmentData) {
+    const form = getChatgptComposerForm();
+    const scopes = form ? [form, document] : [document];
+    const seen = new Set();
+    const ordered = [];
+    for (const scope of scopes) {
+      for (const selector of FILE_INPUT_SELECTORS.chatgpt) {
+        for (const input of scope.querySelectorAll(selector)) {
+          if (!seen.has(input)) {
+            seen.add(input);
+            ordered.push(input);
+          }
+        }
+      }
+    }
+    const nonCameraInputs = ordered.filter(input => !isChatgptCameraCaptureInput(input));
+    const pool = nonCameraInputs.length > 0 ? nonCameraInputs : ordered;
+    const matched = pool.find(input => acceptsAttachmentFile(input, attachmentData)) || null;
+    return { matched, hadAnyInput: ordered.length > 0 };
+  }
+
+  /**
+   * The composer form that holds the active file input, so a form React remounted
+   * during hydration is followed instead of the detached original.
+   */
+  function getChatgptAttachmentRoot(fileInput = null, editor = null) {
+    const connectedForm = element => (element?.isConnected ? element.closest?.('form') : null) || null;
+    return connectedForm(fileInput) ||
+      getChatgptComposerForm() ||
+      connectedForm(editor) ||
+      document.body;
+  }
+
+  /**
+   * Classifies ChatGPT's displayed attachment name against the uploaded file name:
+   * 'exact', or 'variant' for the duplicate suffix ChatGPT appends
+   * ("sample.pdf" -> "sample(4).pdf"). With `allowStem`, a displayed name without
+   * its extension ("sample", "sample(4)") is a variant as well.
+   */
+  function createChatgptAttachmentNameMatcher(fileName, { allowStem = false } = {}) {
+    const name = (fileName || '').trim().toLowerCase();
+    if (!name) {
+      return null;
+    }
+    const stem = getAttachmentFileNameStem(name);
+    const ext = stem ? name.slice(name.lastIndexOf('.')) : '';
+    const suffixed = stem
+      ? new RegExp(`^${escapeRegExp(stem)}\\s*\\(\\d+\\)${escapeRegExp(ext)}$`, 'u')
+      : null;
+    const stemOnly = stem && allowStem
+      ? new RegExp(`^${escapeRegExp(stem)}(?:\\s*\\(\\d+\\))?$`, 'u')
+      : null;
+    return candidate => {
+      const value = (candidate || '').trim().toLowerCase();
+      if (!value) {
+        return null;
+      }
+      if (value === name) {
+        return 'exact';
+      }
+      return suffixed?.test(value) || stemOnly?.test(value) ? 'variant' : null;
+    };
+  }
+
+  function isChatgptEditorNode(element) {
+    return Boolean(element.closest('textarea, input, [contenteditable="true"]'));
+  }
+
+  // The name in a Remove control's label, ignoring generic labels ("Remove file").
+  function getChatgptRemoveLabelName(label) {
+    if (!CHATGPT_REMOVE_LABEL_PREFIX_RE.test(label || '')) {
+      return '';
+    }
+    const remainder = label.replace(CHATGPT_REMOVE_LABEL_PREFIX_RE, '').trim();
+    return CHATGPT_GENERIC_ATTACHMENT_LABEL_RE.test(remainder) ? '' : remainder;
+  }
+
+  function isChatgptRemoveButton(element) {
+    return element.matches('button[aria-label], [role="button"][aria-label]') &&
+      Boolean(getChatgptRemoveLabelName(element.getAttribute('aria-label') || ''));
+  }
+
+  // "Mizuho(4).png" or "report.docx", but not "1.2MB", "Document" or "Upload failed".
+  function isChatgptFileNameShapedText(text) {
+    const value = (text || '').trim();
+    if (!value || value.length > 240 || !getAttachmentFileNameStem(value)) {
+      return false;
+    }
+    return /^\.[a-z][a-z0-9]{0,9}$/i.test(value.slice(value.lastIndexOf('.')));
+  }
+
+  /**
+   * Filenames an attachment card (or bare thumbnail) displays: Remove control labels,
+   * data-file-name attributes, and filename-shaped image alt or leaf text.
+   */
+  function getChatgptCardFileNames(card) {
+    const names = new Set();
+    [card, ...card.querySelectorAll('*')].forEach(element => {
+      const removeName = getChatgptRemoveLabelName(element.getAttribute('aria-label') || '');
+      const alt = element.getAttribute('alt') || '';
+      const leafText = element.childElementCount === 0 ? (element.textContent || '') : '';
+      [
+        removeName,
+        element.getAttribute('data-file-name') || '',
+        element.getAttribute('data-filename') || '',
+        isChatgptFileNameShapedText(alt) ? alt : '',
+        isChatgptFileNameShapedText(leafText) ? leafText : ''
+      ].forEach(value => {
+        const trimmed = value.trim();
+        if (trimmed) {
+          names.add(trimmed);
+        }
+      });
+    });
+    return [...names];
+  }
+
+  /**
+   * True when a card or thumbnail can belong to `fileName`. A card that names a file
+   * must name this one; an unnamed card only counts for an image, and only when it
+   * actually shows a thumbnail.
+   */
+  function isChatgptAttachmentUnitForFile(unit, fileName, isImage) {
+    const names = getChatgptCardFileNames(unit);
+    if (names.length > 0) {
+      const matchesName = createChatgptAttachmentNameMatcher(fileName, { allowStem: true });
+      return Boolean(matchesName) && names.some(name => Boolean(matchesName(name)));
+    }
+    return Boolean(isImage) && Boolean(unit.matches('img') || unit.querySelector('img'));
+  }
+
+  /**
+   * The innermost attachment card holding `element`: a card-classed ancestor, else
+   * the closest ancestor with a Remove control as a direct child, else the element.
+   */
+  function getChatgptAttachmentUnit(element, root) {
+    const card = element.closest(CHATGPT_ATTACHMENT_CARD_SELECTOR);
+    if (card && card !== root && root.contains(card) && !card.matches('button, input')) {
+      return card;
+    }
+    for (let node = element; node && node !== root; node = node.parentElement) {
+      if ([...node.children].some(isChatgptRemoveButton)) {
+        return node;
+      }
+    }
+    return element;
+  }
+
+  function getChatgptAttachmentCards(root) {
+    if (!root) {
+      return [];
+    }
+    const cards = new Set();
+    root.querySelectorAll(CHATGPT_ATTACHMENT_CARD_SELECTOR).forEach(element => {
+      if (
+        element === root ||
+        element.matches('button, input') ||
+        isChatgptEditorNode(element) ||
+        element.querySelector('input[type="file"], textarea, [contenteditable="true"]')
+      ) {
+        return;
+      }
+      cards.add(element);
+    });
+    root.querySelectorAll('button[aria-label]').forEach(button => {
+      const label = button.getAttribute('aria-label') || '';
+      if (!CHATGPT_REMOVE_LABEL_PREFIX_RE.test(label) || !label.replace(CHATGPT_REMOVE_LABEL_PREFIX_RE, '').trim()) {
+        return;
+      }
+      const card = button.closest(CHATGPT_ATTACHMENT_CARD_SELECTOR);
+      cards.add(card && root.contains(card) && card !== root ? card : (button.parentElement || button));
+    });
+    // Count each card once even when nested elements match the card selector.
+    return [...cards].filter(card => ![...cards].some(other => other !== card && other.contains(card)));
+  }
+
+  /**
+   * True for an errored card: explicit error markers (".text-token-text-error",
+   * data-state="error", role="alert"), or English or Chinese failure wording
+   * ("Upload failed", "上传失败") beyond the card's own file names.
+   */
+  function isChatgptCardRejected(card, fileName) {
+    const normalizedName = (fileName || '').trim().toLowerCase();
+    if (card.matches(CHATGPT_CARD_ERROR_MARKER_SELECTOR) || card.querySelector(CHATGPT_CARD_ERROR_MARKER_SELECTOR)) {
+      return true;
+    }
+    if (isRejectionUiElement(card, normalizedName)) {
+      return true;
+    }
+    const ownNames = [normalizedName, ...getChatgptCardFileNames(card).map(name => name.toLowerCase())]
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    const text = ownNames.reduce(
+      (remaining, name) => remaining.split(name).join(' '),
+      getElementAccessibleText(card)
+    );
+    return CHATGPT_LOCALIZED_REJECTION_TEXT_RE.test(text);
+  }
+
+  /**
+   * Staged (non-errored) composer attachment cards. A card stays staged when it
+   * is clean relative to any candidate name, so a file named "error-log.txt" is
+   * not mistaken for an error card.
+   */
+  function countChatgptStagedAttachmentCards(root, candidateAttachments = []) {
+    const names = ['', ...(candidateAttachments || []).map(item => item?.name || '').filter(Boolean)];
+    return getChatgptAttachmentCards(root)
+      .filter(card => names.some(name => !isChatgptCardRejected(card, name)))
+      .length;
+  }
+
+  /**
+   * Non-errored cards or elements naming `fileName`, one entry per card, each with
+   * its match kind ('exact' outranks a duplicate-suffix 'variant').
+   */
+  function getChatgptNamedAttachmentEvidence(root, fileName) {
+    const matchesName = createChatgptAttachmentNameMatcher(fileName);
+    if (!root || !matchesName) {
+      return [];
+    }
+    const evidence = new Map();
+    root.querySelectorAll('button[aria-label], [role="button"][aria-label], img[alt], [data-file-name], [data-filename], div, span, p').forEach(element => {
+      if (isChatgptEditorNode(element)) {
+        return;
+      }
+      const label = element.getAttribute('aria-label') || '';
+      const candidates = [
+        CHATGPT_REMOVE_LABEL_PREFIX_RE.test(label) ? label.replace(CHATGPT_REMOVE_LABEL_PREFIX_RE, '') : '',
+        element.getAttribute('alt') || '',
+        element.getAttribute('data-file-name') || '',
+        element.getAttribute('data-filename') || '',
+        element.childElementCount === 0 && (element.textContent || '').length <= 240 ? element.textContent : ''
+      ];
+      const kinds = candidates.map(matchesName).filter(Boolean);
+      if (kinds.length === 0) {
+        return;
+      }
+      const unit = getChatgptAttachmentUnit(element, root);
+      if (isChatgptCardRejected(unit, fileName) || isRejectionUiElement(element, (fileName || '').trim().toLowerCase())) {
+        return;
+      }
+      const kind = kinds.includes('exact') || evidence.get(unit) === 'exact' ? 'exact' : 'variant';
+      evidence.set(unit, kind);
+    });
+    return [...evidence].map(([unit, kind]) => ({ unit, kind }));
+  }
+
+  function countChatgptNamedAttachmentPreviews(root, fileName) {
+    return getChatgptNamedAttachmentEvidence(root, fileName).length;
+  }
+
+  /**
+   * Matches each retained composer card to at most one fallback attachment: exact
+   * file names claim cards first, duplicate-suffixed names ("Mizuho(4).png") only
+   * take cards that are still unclaimed.
+   */
+  function reconcileChatgptRetainedAttachments(root, attachments) {
+    const list = attachments || [];
+    const evidence = list.map(attachment => (
+      attachment?.name ? getChatgptNamedAttachmentEvidence(root, attachment.name) : []
+    ));
+    const claimedUnits = new Set();
+    const retainedIndexes = new Set();
+    ['exact', 'variant'].forEach(kind => {
+      list.forEach((_attachment, index) => {
+        if (retainedIndexes.has(index)) {
+          return;
+        }
+        const match = evidence[index].find(item => item.kind === kind && !claimedUnits.has(item.unit));
+        if (match) {
+          claimedUnits.add(match.unit);
+          retainedIndexes.add(index);
+        }
+      });
+    });
+    return {
+      retained: list.filter((_attachment, index) => retainedIndexes.has(index)),
+      missing: list.filter((_attachment, index) => !retainedIndexes.has(index))
+    };
+  }
+
+  function countChatgptAttachmentThumbnails(root, fileName, isImage = true) {
+    if (!root) {
+      return 0;
+    }
+    return [...root.querySelectorAll('img')].filter(img => {
+      if (isChatgptEditorNode(img) || !/^(?:data:image\/|blob:|https?:)/i.test(img.getAttribute('src') || '')) {
+        return false;
+      }
+      const unit = getChatgptAttachmentUnit(img, root);
+      if (unit !== img && isChatgptCardRejected(unit, fileName)) {
+        return false;
+      }
+      return isChatgptAttachmentUnitForFile(unit, fileName, isImage);
+    }).length;
+  }
+
+  // Evidence attributable to `fileName`: a card naming another file never counts.
+  function getChatgptAttachmentEvidence(root, fileName, isImage = true) {
+    return {
+      cards: getChatgptAttachmentCards(root).filter(card => (
+        !isChatgptCardRejected(card, fileName) && isChatgptAttachmentUnitForFile(card, fileName, isImage)
+      )).length,
+      named: countChatgptNamedAttachmentPreviews(root, fileName),
+      thumbnails: countChatgptAttachmentThumbnails(root, fileName, isImage)
+    };
+  }
+
+  function hasNewChatgptAttachmentEvidence(root, fileName, baseline, isImage = true) {
+    const current = getChatgptAttachmentEvidence(root, fileName, isImage);
+    return current.cards > baseline.cards ||
+      current.named > baseline.named ||
+      current.thumbnails > baseline.thumbnails;
+  }
+
   // ChatGPT-specific image & document injection
-  async function injectImageToChatGPT(imageData) {
+  async function injectImageToChatGPT(imageData, { retry = false } = {}) {
     try {
-      const { matched: fileInput, hadAnyInput } = findMatchingFileInputFromSelectors(
-        FILE_INPUT_SELECTORS.chatgpt,
-        imageData
-      );
-      if (fileInput) {
-        const file = await createAttachmentFile(imageData);
+      const pendingKey = getProviderImageKey('chatgpt', imageData);
+      const { matched: firstInput, hadAnyInput } = findChatgptFileInput(imageData);
+      if (!firstInput) {
+        if (hadAnyInput && isDocumentAttachmentData(imageData)) {
+          return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
+        }
+        console.warn('[Image Injection] ChatGPT: No file input found');
+        return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+      }
+
+      const isImage = !isDocumentAttachmentData(imageData);
+      let root = getChatgptAttachmentRoot(firstInput);
+      const pendingUpload = pendingProviderImageUploads.get(pendingKey);
+      pendingProviderImageUploads.delete(pendingKey);
+      if (
+        retry &&
+        pendingUpload &&
+        Date.now() - pendingUpload.startedAt < 30000 &&
+        countChatgptNamedAttachmentPreviews(root, imageData.name) > pendingUpload.previousCount
+      ) {
+        // The earlier attempt's preview landed after it reported preview-timeout.
+        console.log('[Image Injection] ChatGPT: Late preview confirmed on retry');
+        return createImageInjectionSuccess();
+      }
+
+      // Compare every attempt with the baseline taken before the first dispatch,
+      // so a slow preview from attempt one is never followed by a duplicate upload.
+      // If React remounts the composer form, rebase on the live form instead.
+      let baseline = getChatgptAttachmentEvidence(root, imageData.name, isImage);
+      let fileInput = firstInput;
+      // Returns true when the remounted form already shows a new preview against the
+      // old baseline (an earlier attempt landed there); otherwise rebases on it.
+      const syncLiveRoot = () => {
+        const liveRoot = getChatgptAttachmentRoot(fileInput);
+        if (liveRoot === root) {
+          return false;
+        }
+        if (hasNewChatgptAttachmentEvidence(liveRoot, imageData.name, baseline, isImage)) {
+          root = liveRoot;
+          return true;
+        }
+        root = liveRoot;
+        baseline = getChatgptAttachmentEvidence(root, imageData.name, isImage);
+        return false;
+      };
+      const hasPreview = () => syncLiveRoot() ||
+        hasNewChatgptAttachmentEvidence(root, imageData.name, baseline, isImage);
+      const file = await createAttachmentFile(imageData);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          // An unhydrated composer (right after reload or New chat) drops the first
+          // change event; React may also remount the input once it hydrates.
+          await sleep(CHATGPT_PREVIEW_RETRY_DELAY_MS);
+          if (hasPreview()) {
+            return createImageInjectionSuccess();
+          }
+          fileInput = findChatgptFileInput(imageData).matched;
+          if (!fileInput) {
+            break;
+          }
+          // Rebase before dispatch, so a card the new form mounts synchronously is new.
+          if (syncLiveRoot()) {
+            return createImageInjectionSuccess();
+          }
+          console.warn('[Image Injection] ChatGPT: No attachment preview yet, retrying file input once');
+        }
         if (!assignFilesToInput(fileInput, [file])) {
           return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
         }
         dispatchFileInputEvents(fileInput);
-        console.log('[Image Injection] ChatGPT: File input triggered');
-        return createImageInjectionSuccess();
+        const accepted = await waitForPreviewIncrease(
+          () => (hasPreview() ? 1 : 0),
+          0,
+          CHATGPT_PREVIEW_ATTEMPT_TIMEOUT_MS
+        );
+        if (accepted) {
+          console.log('[Image Injection] ChatGPT: Attachment preview confirmed');
+          return createImageInjectionSuccess();
+        }
       }
-      if (hadAnyInput && isDocumentAttachmentData(imageData)) {
-        return createImageInjectionSkipped(IMAGE_INJECTION_REASONS.TYPE_NOT_ACCEPTED);
-      }
-      console.warn('[Image Injection] ChatGPT: No file input found');
-      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.CONTROL_NOT_FOUND);
+
+      console.warn('[Image Injection] ChatGPT: No attachment preview appeared after retry');
+      rememberPendingProviderImage('chatgpt', imageData, baseline.named);
+      return createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
     } catch (error) {
       console.error('[Image Injection] ChatGPT error:', error);
       return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);

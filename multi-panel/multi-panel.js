@@ -2867,14 +2867,12 @@ export async function broadcastMessage(text, autoSubmit = true) {
         const resultsByPanelId = new Map(
           mergedResults.map(result => [result.panelId, result])
         );
+        // chrome://extensions stringifies console arguments, so log plain
+        // `provider:reason` text instead of objects ("[object Object]").
         const failedPanels = panels
           .filter(panel => summary.failedPanelIds.has(panel.id))
-          .map(panel => ({
-            panelId: panel.id,
-            provider: panel.providerId,
-            reason: resultsByPanelId.get(panel.id)?.reason || 'injection-error'
-          }));
-        console.warn('[Multi-Panel] Attachment fill failed for panels:', failedPanels);
+          .map(panel => `${panel.providerId}:${resultsByPanelId.get(panel.id)?.reason || 'injection-error'}`);
+        console.warn(`[Multi-Panel] Attachment fill failed for panels: ${failedPanels.join(', ')}`);
       }
 
       if (successfulCount > 0) {

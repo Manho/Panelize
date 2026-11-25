@@ -2494,6 +2494,171 @@ describe('content-scripts/custom-provider-driver.js', () => {
     }
   }, 15000);
 
+  const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  const MIMO_DOCX_NAME = '日本中部京都红叶之旅_图文行程(1).docx';
+
+  function makeDocxPayload(id, name) {
+    const bytes = new TextEncoder().encode(`PK\u0003\u0004${name}`).buffer;
+    return { id, kind: 'document', name, type: DOCX_MIME, ext: '.docx', size: bytes.byteLength, bytes };
+  }
+
+  /**
+   * Mirrors the live Xiaomi MiMo composer (aistudio.xiaomimimo.com): one
+   * accumulating `<input type="file" multiple>`, images render a blob <img>
+   * tagged with the filename, documents render a `.group/file` chip tagged by
+   * aria-label, and every remove button is an unlabeled SVG icon.
+   */
+  function setupMimoComposer(env) {
+    env.document.body.innerHTML = `
+      <form id="composer-form">
+        <div id="previews"></div>
+        <input id="file-input" type="file" multiple />
+        <textarea id="composer"></textarea>
+      </form>
+    `;
+    setLayoutRect(env.document.getElementById('composer'));
+    const fileInput = env.document.getElementById('file-input');
+    const previews = env.document.getElementById('previews');
+    const changeBatches = [];
+    let seq = 0;
+    fileInput.addEventListener('change', () => {
+      const files = Array.from(fileInput.files || []);
+      changeBatches.push(files.map((f) => f.name));
+      for (const f of files) {
+        seq += 1;
+        const item = env.document.createElement('div');
+        item.setAttribute('aria-label', f.name);
+        item.setAttribute('data-pa-id', `file_item_${seq}`);
+        if (f.type.startsWith('image/')) {
+          item.className = 'relative size-14 rounded-lg';
+          const img = env.document.createElement('img');
+          img.setAttribute('src', `blob:https://aistudio.xiaomimimo.com/${seq}`);
+          item.appendChild(img);
+        } else {
+          item.className = 'group/file relative flex items-center rounded-lg';
+        }
+        const removeBtn = env.document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.innerHTML = '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"></path></svg>';
+        item.appendChild(removeBtn);
+        previews.appendChild(item);
+      }
+    });
+    return { fileInput, previews, changeBatches };
+  }
+
+  function mimoImagePayload(id, name) {
+    return { id, kind: 'image', name, type: 'image/png', dataUrl: PNG_DATA_URL };
+  }
+
+  it('confirms an image then a document on a Xiaomi MiMo-style multiple input with unlabeled remove icons', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      const { changeBatches } = setupMimoComposer(env);
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-mimo-img-doc',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          mimoImagePayload('img-mizuho', 'Mizuho.png'),
+          makeDocxPayload('doc-kyoto', MIMO_DOCX_NAME),
+        ],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-mimo-img-doc')).toBeDefined(), {
+        timeout: 12000,
+        interval: 50,
+      });
+      const result = findActionResult(env, 'req-mimo-img-doc');
+      expect(changeBatches).toEqual([['Mizuho.png'], [MIMO_DOCX_NAME]]);
+      expect(result.status).toBe('succeeded');
+      expect(result.succeededAttachmentIds).toEqual(['img-mizuho', 'doc-kyoto']);
+    } finally {
+      await env.close();
+    }
+  }, 20000);
+
+  it('confirms two images then a document when staged blob previews outnumber the new filename chip', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      const { changeBatches } = setupMimoComposer(env);
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-mimo-2img-doc',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          mimoImagePayload('img-a', 'Mizuho.png'),
+          mimoImagePayload('img-b', 'Arashiyama.png'),
+          makeDocxPayload('doc-kyoto', MIMO_DOCX_NAME),
+        ],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-mimo-2img-doc')).toBeDefined(), {
+        timeout: 12000,
+        interval: 50,
+      });
+      const result = findActionResult(env, 'req-mimo-2img-doc');
+      expect(changeBatches).toEqual([['Mizuho.png', 'Arashiyama.png'], [MIMO_DOCX_NAME]]);
+      expect(result.status).toBe('succeeded');
+      expect(result.succeededAttachmentIds).toEqual(['img-a', 'img-b', 'doc-kyoto']);
+    } finally {
+      await env.close();
+    }
+  }, 20000);
+
+  it('ACKs exactly one of two same-name documents after a staged image when only one distinct filename chip is provable', async () => {
+    const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
+    try {
+      const { changeBatches, previews } = setupMimoComposer(env);
+      env.evaluateDriver();
+      env.postFromHost({
+        type: 'INJECT_TEXT_WITH_IMAGES',
+        context: 'multi-panel',
+        providerId: CUSTOM_PROVIDER_ID,
+        requestId: 'req-mimo-img-same-docs',
+        action: 'fill',
+        text: '',
+        images: [],
+        attachments: [
+          mimoImagePayload('img-mizuho', 'Mizuho.png'),
+          makeDocxPayload('doc-a', 'itinerary.docx'),
+          makeDocxPayload('doc-b', 'itinerary.docx'),
+        ],
+        autoSubmit: false,
+      });
+
+      await vi.waitFor(() => expect(findActionResult(env, 'req-mimo-img-same-docs')).toBeDefined(), {
+        timeout: 12000,
+        interval: 50,
+      });
+      const result = findActionResult(env, 'req-mimo-img-same-docs');
+      expect(changeBatches).toEqual([['Mizuho.png'], ['itinerary.docx', 'itinerary.docx']]);
+      expect(previews.querySelectorAll('[aria-label="itinerary.docx"]').length).toBe(2);
+      // Filename evidence is distinct-name only, so two same-name chips prove
+      // one new document: the image plus exactly one document are ACKed.
+      expect(result.status).toBe('failed');
+      expect(result.reason).toBe('preview-timeout');
+      expect(result.succeededAttachmentIds).toHaveLength(2);
+      expect(result.succeededAttachmentIds[0]).toBe('img-mizuho');
+      const ackedDocs = result.succeededAttachmentIds.filter((id) => id === 'doc-a' || id === 'doc-b');
+      expect(ackedDocs).toHaveLength(1);
+    } finally {
+      await env.close();
+    }
+  }, 20000);
+
   it('prefers the nearest form-less ancestor scope over a sibling library input under a shared compact parent', async () => {
     const env = createDriverEnvironment({ ancestorOrigins: [EXTENSION_ORIGIN] });
     try {

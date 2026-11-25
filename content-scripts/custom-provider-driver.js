@@ -1893,17 +1893,49 @@
 
     const count = Math.max(previewImages.length, removeCount, filenameMatches);
     const pending = disabledPreviewCount > 0 || busyIndicators.length > 0;
-    return { count, pending };
+    return {
+      count,
+      previewImageCount: previewImages.length,
+      removeCount,
+      filenameMatchCount: filenameMatches,
+      pending,
+    };
+  }
+
+  /**
+   * Net attachment increase between two inspectComposerAttachments snapshots.
+   * Each signal is compared against its own baseline: an aggregate max would
+   * let an earlier staged image (blob preview) mask a later document whose
+   * only evidence is a filename chip, e.g. 1 image + 1 document yields
+   * max(1, 0, 1) - max(1, 0, 0) = 0 although the document did appear.
+   */
+  function computeAttachmentDelta(baselineState, currentState) {
+    if (!currentState) {
+      return 0;
+    }
+    if (!baselineState || typeof baselineState !== 'object') {
+      const baselineCount = Number(baselineState) || 0;
+      return Math.max(0, (currentState.count || 0) - baselineCount);
+    }
+    const previewImageDelta = Math.max(
+      0,
+      (currentState.previewImageCount || 0) - (baselineState.previewImageCount || 0)
+    );
+    const removeDelta = Math.max(0, (currentState.removeCount || 0) - (baselineState.removeCount || 0));
+    const filenameDelta = Math.max(
+      0,
+      (currentState.filenameMatchCount || 0) - (baselineState.filenameMatchCount || 0)
+    );
+    return Math.max(previewImageDelta, removeDelta, filenameDelta);
   }
 
   async function waitForComposerUploadSettle(
     composer,
-    baselineCount,
+    baselineState,
     expectedAdded,
     timeoutMs = 5500,
     fileNames = []
   ) {
-    const targetCount = baselineCount + expectedAdded;
     const deadline = Date.now() + timeoutMs;
     let bestAdded = 0;
 
@@ -1911,14 +1943,11 @@
       await sleep(45);
       const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
       const state = inspectComposerAttachments(activeComposer, fileNames);
-      const added = Math.max(0, state.count - baselineCount);
+      const added = computeAttachmentDelta(baselineState, state);
       if (added > bestAdded) {
         bestAdded = added;
       }
       if (added >= expectedAdded && !state.pending) {
-        return { ok: true, addedCount: expectedAdded };
-      }
-      if (state.count >= targetCount && !state.pending) {
         return { ok: true, addedCount: expectedAdded };
       }
     }
@@ -1951,7 +1980,7 @@
       return { handled: false, ok: false, addedCount: 0 };
     }
 
-    const baseline = inspectComposerAttachments(composer, fileNames).count;
+    const baselineState = inspectComposerAttachments(composer, fileNames);
     try {
       composer.focus({ preventScroll: true });
     } catch {
@@ -1988,13 +2017,13 @@
       }
 
       if (pasteIntercepted) {
-        const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
+        const settled = await waitForComposerUploadSettle(composer, baselineState, files.length, 4500, fileNames);
         return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
       }
 
       await sleep(10);
-      if (inspectComposerAttachments(composer, fileNames).count > baseline) {
-        const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
+      if (computeAttachmentDelta(baselineState, inspectComposerAttachments(composer, fileNames)) > 0) {
+        const settled = await waitForComposerUploadSettle(composer, baselineState, files.length, 4500, fileNames);
         return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
       }
     }
@@ -2026,13 +2055,13 @@
     }
 
     if (dropIntercepted) {
-      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
+      const settled = await waitForComposerUploadSettle(composer, baselineState, files.length, 4500, fileNames);
       return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
     }
 
     await sleep(10);
-    if (inspectComposerAttachments(composer, fileNames).count > baseline) {
-      const settled = await waitForComposerUploadSettle(composer, baseline, files.length, 4500, fileNames);
+    if (computeAttachmentDelta(baselineState, inspectComposerAttachments(composer, fileNames)) > 0) {
+      const settled = await waitForComposerUploadSettle(composer, baselineState, files.length, 4500, fileNames);
       return { handled: true, ok: settled.ok, addedCount: settled.addedCount };
     }
 
@@ -2098,10 +2127,10 @@
    * baseline snapshot. Used for partial batches: an aggregate preview count
    * never identifies which file of the batch completed.
    */
-  function collectEntriesWithNewEvidence(composer, entries, baselineEvidence, baselineCount = 0) {
+  function collectEntriesWithNewEvidence(composer, entries, baselineEvidence, baselineState = 0) {
     const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
     const names = entries.map((entry) => entry.name);
-    const previewDelta = Math.max(0, inspectComposerAttachments(activeComposer, names).count - baselineCount);
+    const previewDelta = computeAttachmentDelta(baselineState, inspectComposerAttachments(activeComposer, names));
     const candidates = [];
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i];
@@ -2119,7 +2148,7 @@
    * and documents must show their own filename preview whenever the page
    * renders filename previews for this batch.
    */
-  function collectVerifiedBatchIds(composer, fileInput, entries, baselineEvidence, baselineCount) {
+  function collectVerifiedBatchIds(composer, fileInput, entries, baselineEvidence, baselineState) {
     const activeComposer = composer && composer.isConnected ? composer : findComposerElement() || composer;
     const stagedNameCounts = new Map();
     const stagedFiles = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
@@ -2148,20 +2177,20 @@
       candidates.push(i);
     }
     const names = entries.map((entry) => entry.name);
-    const previewDelta = Math.max(0, inspectComposerAttachments(activeComposer, names).count - baselineCount);
+    const previewDelta = computeAttachmentDelta(baselineState, inspectComposerAttachments(activeComposer, names));
     return capSameNameAcknowledgments(entries, candidates, previewDelta);
   }
 
   async function uploadEntryBatchToFileInput(composer, fileInput, groupEntries, settleTimeoutMs) {
     const groupNames = groupEntries.map((e) => e.name);
-    const baseline = inspectComposerAttachments(composer, groupNames).count;
+    const baselineState = inspectComposerAttachments(composer, groupNames);
     const baselineEvidence = snapshotPerNameEvidence(composer, groupEntries);
     if (!assignFilesToFileInput(fileInput, groupEntries.map((entry) => entry.file))) {
       return { ok: false, reason: ACTION_FAILURE_REASONS.INJECTION_ERROR, succeededIds: [] };
     }
     const settled = await waitForComposerUploadSettle(
       composer,
-      baseline,
+      baselineState,
       groupEntries.length,
       settleTimeoutMs,
       groupNames
@@ -2173,7 +2202,7 @@
         fileInput,
         groupEntries,
         baselineEvidence,
-        baseline
+        baselineState
       );
       if (verifiedIds.length === expectedIds.length) {
         return { ok: true, succeededIds: verifiedIds };
@@ -2183,7 +2212,7 @@
     return {
       ok: false,
       reason: ACTION_FAILURE_REASONS.PREVIEW_TIMEOUT,
-      succeededIds: collectEntriesWithNewEvidence(composer, groupEntries, baselineEvidence, baseline),
+      succeededIds: collectEntriesWithNewEvidence(composer, groupEntries, baselineEvidence, baselineState),
     };
   }
 
@@ -2192,13 +2221,13 @@
     for (let i = 0; i < groupEntries.length; i += 1) {
       const entry = groupEntries[i];
       const currentInput = findFileInputForAttachment(composer, entry.meta).input || fileInput;
-      const baseline = inspectComposerAttachments(composer, [entry.name]).count;
+      const baselineState = inspectComposerAttachments(composer, [entry.name]);
       if (!assignFilesToFileInput(currentInput, [entry.file])) {
         return { ok: false, reason: ACTION_FAILURE_REASONS.INJECTION_ERROR, succeededIds };
       }
       const settled = await waitForComposerUploadSettle(
         composer,
-        baseline,
+        baselineState,
         1,
         settleTimeoutMs,
         [entry.name]
@@ -2310,10 +2339,10 @@
 
     if (imageEntries.length > 0) {
       const imageBaselineEvidence = snapshotPerNameEvidence(composer, imageEntries);
-      const imageBaselineCount = inspectComposerAttachments(
+      const imageBaselineState = inspectComposerAttachments(
         composer,
         imageEntries.map((entry) => entry.name)
-      ).count;
+      );
       const imageResult = await tryPasteOrDropFiles(
         composer,
         imageEntries.map((entry) => entry.file),
@@ -2340,7 +2369,7 @@
             composer,
             imageEntries,
             imageBaselineEvidence,
-            imageBaselineCount
+            imageBaselineState
           ),
           skippedAttachments,
         };

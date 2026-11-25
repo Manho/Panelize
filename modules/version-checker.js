@@ -47,6 +47,10 @@ export async function loadVersionInfo() {
  * @returns {Promise<LatestReleaseInfo|null>} Latest release or null on error.
  */
 export async function fetchLatestRelease() {
+  // Network failures and non-2xx responses (including the unauthenticated API's
+  // 403 rate limit) are expected and transient. Log them as warnings, since
+  // console.error from extension pages shows up on chrome://extensions as an error.
+  let isTransientFailure = true;
   try {
     const response = await fetch(GITHUB_LATEST_RELEASE_URL, {
       headers: {
@@ -58,6 +62,7 @@ export async function fetchLatestRelease() {
     if (!response.ok) {
       throw new Error(`GitHub fetch error: ${response.status}`);
     }
+    isTransientFailure = false;
 
     const release = await response.json();
     const versionMatch = /^v?(\d+\.\d+\.\d+)$/.exec(release.tag_name ?? '');
@@ -78,7 +83,11 @@ export async function fetchLatestRelease() {
       downloadUrl: releaseAsset?.browser_download_url || release.html_url
     };
   } catch (error) {
-    console.error('Error fetching latest GitHub release:', error);
+    if (isTransientFailure) {
+      console.warn('Error fetching latest GitHub release:', error);
+    } else {
+      console.error('Error fetching latest GitHub release:', error);
+    }
     return null;
   }
 }

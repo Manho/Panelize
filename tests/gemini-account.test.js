@@ -314,8 +314,19 @@ describe('multi-panel Gemini account selector & Send All cleared-panel retry', (
     });
 
     // Pass 1: Send All -> DeepSeek succeeds, Kimi fails
+    const warnSpy = vi.spyOn(console, 'warn');
     await mod.broadcastMessage('Analyze this chart', true);
     expect(document.getElementById('send-status').textContent).toBe('Filled 1/2; 1 failed');
+    // chrome://extensions stringifies every console argument, so the failed panel
+    // list must be readable text rather than `[object Object]`.
+    const fillFailureLogs = warnSpy.mock.calls.filter(
+      ([message]) => typeof message === 'string' && message.startsWith('[Multi-Panel] Attachment fill failed')
+    );
+    expect(fillFailureLogs).toEqual([
+      ['[Multi-Panel] Attachment fill failed for panels: kimi:preview-timeout']
+    ]);
+    expect(fillFailureLogs.flat().join(' ')).not.toContain('[object Object]');
+    warnSpy.mockRestore();
 
     deepseek.fakeWindow.postMessage.mockClear();
     kimi.fakeWindow.postMessage.mockClear();
