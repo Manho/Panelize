@@ -2163,4 +2163,1031 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       expect.objectContaining({ status: 'succeeded', succeededAttachmentIds: ['doc-pdf-1'] })
     );
   });
+
+  // ===== v2.3.2 live-QA regressions: Zhipu GLM-5.4 UI, Gemini multi-doc remount, Yuanbao "Local Files" =====
+
+  // `renderName` returns the card's visible `.upload-card__name` text, or null for an
+  // unnamed (image-only) card, mirroring GLM-5.4's truncated / extension-less labels.
+  const mountChatGLMGlm54 = ({ cardState = 'done', layoutClass = '', renderName = (name) => name } = {}) => {
+    window.happyDOM.setURL('https://chatglm.cn/');
+    // The profile avatar dialog input precedes the composer in DOM order, like the live page.
+    document.body.innerHTML = `
+      <div class="user-profile-edit-dialogs">
+        <input class="user-profile-edit-dialogs__hidden-input" type="file" accept="image/*" />
+      </div>
+      <header><button type="button" class="back-to-legacy">返回旧版</button></header>
+      <main class="${layoutClass}">
+        <div class="input-area">
+          <div class="upload-attachment-picker">
+            <input type="file" class="file-input" multiple="" />
+            <div class="upload-list"></div>
+          </div>
+          <div class="el-textarea">
+            <textarea class="el-textarea__inner" tabindex="0" autocomplete="off" placeholder="和我聊聊天吧～" rows="2"></textarea>
+          </div>
+          <button type="button" class="tool-icon-button tool-icon-button--add-menu" aria-label="添加"></button>
+          <button type="button" class="send-button send-button--disabled" aria-label="发送"></button>
+        </div>
+      </main>
+    `;
+    const editor = document.querySelector('textarea.el-textarea__inner');
+    const fileInput = document.querySelector('input.file-input');
+    const decoyInput = document.querySelector('.user-profile-edit-dialogs__hidden-input');
+    const sendButton = document.querySelector('button.send-button');
+    const uploadList = document.querySelector('.upload-list');
+    document.querySelectorAll('button, textarea').forEach(markVisible);
+
+    const uploaded = [];
+    const decoyUploads = [];
+    decoyInput.addEventListener('change', () => decoyUploads.push(decoyInput.files[0]?.name));
+    fileInput.addEventListener('change', () => {
+      const name = fileInput.files[0].name;
+      uploaded.push(name);
+      const card = document.createElement('div');
+      card.className = cardState === 'error' ? 'upload-card upload-card--error' : 'upload-card';
+      const displayName = renderName(name);
+      card.innerHTML = displayName === null
+        ? `<img alt="" src="blob:https://chatglm.cn/${encodeURIComponent(name)}" />`
+        : `
+        <div class="upload-card__info">
+          <div class="upload-card__name">${displayName}</div>
+        </div>
+      `;
+      uploadList.append(card);
+    });
+    editor.addEventListener('input', () => {
+      sendButton.classList.toggle('send-button--disabled', !editor.value.trim());
+    });
+
+    return { editor, fileInput, decoyInput, sendButton, uploadList, uploaded, decoyUploads };
+  };
+
+  it('Zhipu GLM-5.4 UI: fills the el-textarea composer and clicks the send-button only once it is enabled', async () => {
+    const { editor, sendButton } = mountChatGLMGlm54();
+    const sendClicks = vi.fn();
+    sendButton.addEventListener('click', sendClicks);
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', context: 'multi-panel' });
+    expect(sendClicks).not.toHaveBeenCalled();
+
+    dispatchMultiPanelMessage({
+      type: 'INJECT_TEXT',
+      text: 'hello glm-5.4',
+      autoSubmit: false,
+      context: 'multi-panel',
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(editor.value).toContain('hello glm-5.4');
+    expect(sendButton.classList.contains('send-button--disabled')).toBe(false);
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', context: 'multi-panel' });
+    expect(sendClicks).toHaveBeenCalledTimes(1);
+  });
+
+  it('Zhipu GLM-5.4 UI: uploads mixed PDF + PNG to the composer file-input (never the profile avatar input) and confirms each upload-card', async () => {
+    const { uploaded, decoyUploads, uploadList } = mountChatGLMGlm54();
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf'), makeImageAttachment('zhipu-png', 'diagram.png')],
+      text: 'Summarize both',
+      requestId: 'chatglm-glm54-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(decoyUploads).toEqual([]);
+    expect(uploaded).toEqual(['zhipu-test.pdf', 'diagram.png']);
+    expect(uploadList.querySelectorAll('.upload-card')).toHaveLength(2);
+    expect(document.querySelector('textarea.el-textarea__inner').value).toContain('Summarize both');
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-mixed',
+        provider: 'chatglm',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf', 'zhipu-png'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: keeps the composer file-input even when a page wrapper class mentions settings or avatar', async () => {
+    const { uploaded, decoyUploads } = mountChatGLMGlm54({ layoutClass: 'chat-settings-layout user-avatar-shell' });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf'), makeImageAttachment('zhipu-png', 'diagram.png')],
+      requestId: 'chatglm-glm54-wrapper-class',
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(decoyUploads).toEqual([]);
+    expect(uploaded).toEqual(['zhipu-test.pdf', 'diagram.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-wrapper-class',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf', 'zhipu-png'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: never counts an error-state upload-card as a confirmed upload', async () => {
+    const { uploaded } = mountChatGLMGlm54({ cardState: 'error' });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf')],
+      requestId: 'chatglm-glm54-error-card',
+    });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(uploaded).toEqual(['zhipu-test.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-error-card',
+        provider: 'chatglm',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: a retry keeps a staged upload-card and re-uploads only once the composer is cleared', async () => {
+    const { editor, uploaded, uploadList } = mountChatGLMGlm54();
+    const pdf = makePdfAttachment('zhipu-pdf', 'zhipu-test.pdf');
+
+    dispatchDocFill({ attachments: [pdf], requestId: 'chatglm-glm54-first' });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(uploaded).toEqual(['zhipu-test.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ requestId: 'chatglm-glm54-first', status: 'succeeded' })
+    );
+
+    editor.value = '';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-retry-staged', pdf);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(uploaded).toEqual(['zhipu-test.pdf']);
+    expect(editor.value).toContain('Retry prompt');
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-retry-staged',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf'],
+      })
+    );
+
+    editor.value = '';
+    uploadList.replaceChildren();
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-retry-cleared', pdf);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(uploaded).toEqual(['zhipu-test.pdf', 'zhipu-test.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-retry-cleared',
+        status: 'succeeded',
+        succeededAttachmentIds: ['zhipu-pdf'],
+      })
+    );
+  });
+
+  it('Zhipu legacy UI: still routes mixed PDF + PNG through the el-upload input and file-list preview', async () => {
+    window.happyDOM.setURL('https://chatglm.cn/main/alltoolsdetail');
+    document.body.innerHTML = `
+      <div class="user-profile-edit-dialogs">
+        <input class="user-profile-edit-dialogs__hidden-input" type="file" accept="image/*" />
+      </div>
+      <div class="search-box-container">
+        <div class="upload-popover"><input class="el-upload__input" type="file" multiple /></div>
+        <div id="search-input-box">
+          <textarea class="scroll-display-none"></textarea>
+          <div class="enter is-main-chat"><div class="enter-icon-container"></div></div>
+        </div>
+      </div>
+      <div class="file-list-box-content-list"></div>
+    `;
+    const fileInput = document.querySelector('input.el-upload__input');
+    const decoyInput = document.querySelector('.user-profile-edit-dialogs__hidden-input');
+    const sendButton = document.querySelector('.enter-icon-container');
+    markVisible(sendButton);
+    const uploaded = [];
+    fileInput.addEventListener('change', () => {
+      uploaded.push(fileInput.files[0].name);
+      const item = document.createElement('div');
+      item.className = 'file-list-box-content-list-item';
+      document.querySelector('.file-list-box-content-list').append(item);
+    });
+    const mouseDowns = vi.fn();
+    const clicks = vi.fn();
+    sendButton.addEventListener('mousedown', mouseDowns);
+    sendButton.addEventListener('click', clicks);
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment(), makeImageAttachment()],
+      text: 'Legacy prompt',
+      autoSubmit: true,
+      requestId: 'chatglm-legacy-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(uploaded).toEqual(['paper.pdf', 'diagram.png']);
+    expect(decoyInput.files).toHaveLength(0);
+    expect(document.querySelector('textarea.scroll-display-none').value).toContain('Legacy prompt');
+    expect(mouseDowns).toHaveBeenCalledTimes(1);
+    expect(clicks).not.toHaveBeenCalled();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-legacy-mixed',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1', 'img-1'],
+      })
+    );
+  });
+
+  /**
+   * Gemini Hydrogen upload menu that, like the live CDK overlay, ignores trigger clicks
+   * while a previous menu pane is still detaching. Escape unmounts the document inputs
+   * at once but leaves the pane with its image/*,video/* input for STALE_PANE_MS.
+   */
+  const mountGeminiHydrogenWithLingeringOverlay = ({ withStalePane = false } = {}) => {
+    const STALE_PANE_MS = 1000;
+    mountGemini(`
+      <main>
+        <input-container>
+          <div id="gemini-hydrogen-previews"></div>
+          <div class="xap-uploader-dropzone" file-drop-zone>
+            <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          </div>
+          <uploader>
+            <button id="gemini-upload-tools" type="button" aria-label="Upload &amp; tools">
+              <mat-icon fonticon="add"></mat-icon>
+            </button>
+          </uploader>
+        </input-container>
+      </main>
+    `);
+    const previewsHost = document.getElementById('gemini-hydrogen-previews');
+    const uploadToolsBtn = document.getElementById('gemini-upload-tools');
+    const uploads = [];
+    const triggerClicks = vi.fn();
+
+    const addChip = (name, isImage) => {
+      const chip = document.createElement('uploader-file-preview');
+      chip.className = 'file-preview-chip ng-star-inserted';
+      chip.innerHTML = isImage
+        ? `<img src="blob:https://gemini.google.com/${encodeURIComponent(name)}" alt="Preview" />`
+        : `<span class="gem-attachment-text gds-body-s">${name.replace(/\.[^.]+$/, '')}</span>`;
+      previewsHost.append(chip);
+    };
+    const makeInput = (accept, isImage) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.className = 'hidden-file-input ng-star-inserted';
+      input.accept = accept;
+      input.addEventListener('change', () => {
+        const name = input.files[0].name;
+        uploads.push(name);
+        addChip(name, isImage);
+      });
+      return input;
+    };
+    const mountPane = ({ includeDocInput }) => {
+      const pane = document.createElement('div');
+      pane.className = 'cdk-overlay-pane';
+      pane.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      if (includeDocInput) {
+        const docInput = makeInput('.txt,.pdf,.doc,.docx,.md,.csv,.json', false);
+        docInput.dataset.kind = 'doc';
+        pane.append(docInput);
+      }
+      pane.append(makeInput('image/*,video/*', true));
+      document.body.append(pane);
+      return pane;
+    };
+
+    uploadToolsBtn.addEventListener('click', () => {
+      triggerClicks();
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      mountPane({ includeDocInput: true });
+    });
+    const beginDetach = (pane) => {
+      pane.querySelectorAll('input[data-kind="doc"]').forEach((input) => input.remove());
+      if (pane.dataset.detaching) return;
+      pane.dataset.detaching = 'true';
+      setTimeout(() => pane.remove(), STALE_PANE_MS);
+    };
+    const onEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      const pane = document.querySelector('.cdk-overlay-pane');
+      if (pane) beginDetach(pane);
+    };
+    document.addEventListener('keydown', onEscape);
+    if (withStalePane) {
+      beginDetach(mountPane({ includeDocInput: false }));
+    }
+
+    return { uploads, triggerClicks, cleanup: () => document.removeEventListener('keydown', onEscape) };
+  };
+
+  it('Gemini Hydrogen: re-mounts the document input when a detaching overlay only leaves an image/*,video/* input', async () => {
+    const { uploads, triggerClicks, cleanup } = mountGeminiHydrogenWithLingeringOverlay({ withStalePane: true });
+    try {
+      expect(document.querySelectorAll('.cdk-overlay-pane input[type="file"]')).toHaveLength(1);
+      expect(document.querySelector('.cdk-overlay-pane input').accept).toBe('image/*,video/*');
+
+      dispatchDocFill({ attachments: [makePdfAttachment('sample-pdf', 'sample.pdf')], requestId: 'gemini-stale-overlay-pdf' });
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(uploads).toEqual(['sample.pdf']);
+      expect(triggerClicks.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-stale-overlay-pdf',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['sample-pdf'],
+        })
+      );
+      expect(getLastActionResult().skippedAttachments).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Gemini Hydrogen: uploads DOCX -> PDF -> TXT -> PNG sequentially without a type-not-accepted race', async () => {
+    const { uploads, cleanup } = mountGeminiHydrogenWithLingeringOverlay();
+    try {
+      dispatchDocFill({
+        attachments: [
+          makeDocxAttachment('race-docx', '日本中部京都红叶之旅_测试(1).docx'),
+          makePdfAttachment('race-pdf', 'sample.pdf'),
+          makeTxtAttachment('race-txt', 'sample.txt'),
+          makeImageAttachment('race-png', 'sample.png'),
+        ],
+        requestId: 'gemini-multi-doc-race',
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+
+      expect(uploads).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt', 'sample.png']);
+      const result = getLastActionResult();
+      expect(result).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-multi-doc-race',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['race-docx', 'race-pdf', 'race-txt', 'race-png'],
+        })
+      );
+      expect(result.skippedAttachments).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Gemini Hydrogen: still skips a document as type-not-accepted when a re-opened menu only offers image/*,video/*', async () => {
+    mountGemini(`
+      <input-container>
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        <uploader><button id="img-only-upload" aria-label="Upload &amp; tools">+</button></uploader>
+      </input-container>
+    `);
+    const triggerClicks = vi.fn();
+    document.getElementById('img-only-upload').addEventListener('click', () => {
+      triggerClicks();
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        '<div class="cdk-overlay-pane"><div role="menu"><input type="file" class="hidden-file-input" accept="image/*,video/*" /></div></div>'
+      );
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+    try {
+      dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-image-only-menu' });
+      await vi.advanceTimersByTimeAsync(6000);
+
+      expect(triggerClicks).toHaveBeenCalledTimes(2);
+      expect(document.querySelector('.cdk-overlay-pane')).toBeNull();
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-image-only-menu',
+          status: 'skipped',
+          reason: 'type-not-accepted',
+          skippedAttachments: [{ id: 'doc-pdf-1', name: 'paper.pdf', reason: 'type-not-accepted' }],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Yuanbao English UI: picks the "Local Files" menu item for documents (never Upload Image or Tencent Docs)', async () => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat');
+    document.body.innerHTML = `
+      <div id="yb-composer">
+        <div class="chat-command-editor-specail">
+          <div class="ql-editor" contenteditable="true" data-placeholder="Ask"></div>
+        </div>
+        <button data-new-input-control="add-tools-trigger">+</button>
+        <div id="yb-list"></div>
+      </div>
+    `;
+    const trigger = document.querySelector('[data-new-input-control="add-tools-trigger"]');
+    markVisible(trigger);
+    const menuClicks = [];
+    const uploaded = [];
+    trigger.addEventListener('click', () => {
+      if (document.getElementById('yb-menu')) return;
+      const menu = document.createElement('div');
+      menu.id = 'yb-menu';
+      ['Search', 'Upload Image', 'Local Files', 'Tencent Docs'].forEach((label) => {
+        const item = document.createElement('div');
+        item.setAttribute('role', 'menuitem');
+        item.innerHTML = `<span class="icon"></span><span>${label}</span>`;
+        markVisible(item);
+        item.addEventListener('click', () => {
+          menuClicks.push(label);
+          if (label === 'Upload Image') {
+            const imgInput = document.createElement('input');
+            imgInput.type = 'file';
+            imgInput.accept = 'image/*';
+            document.body.append(imgInput);
+          }
+          if (label !== 'Local Files') return;
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.multiple = true;
+          input.accept = '.pdf,.docx,.txt';
+          input.addEventListener('change', () => {
+            uploaded.push(input.files[0].name);
+            const card = document.createElement('div');
+            card.className = 'FileList_inputFileListItem__abc';
+            card.textContent = input.files[0].name;
+            document.getElementById('yb-list').append(card);
+          });
+          document.body.append(input);
+        });
+        menu.append(item);
+      });
+      document.body.append(menu);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'yuanbao-local-files' });
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(menuClicks).toEqual(['Local Files']);
+    expect(uploaded).toEqual(['paper.pdf']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-local-files',
+        provider: 'yuanbao',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      })
+    );
+  });
+
+  // ===== v2.3.2 fix round 2: Codex review P1s + live Yuanbao preview confirmation =====
+
+  it('Gemini Hydrogen: re-opens once when a stale overlay present at the first click detaches during the initial wait', async () => {
+    const { uploads, triggerClicks, cleanup } = mountGeminiHydrogenWithLingeringOverlay({ withStalePane: true });
+    try {
+      // Start the fill 700ms into the stale pane's 1000ms detach: it vanishes mid-wait.
+      await vi.advanceTimersByTimeAsync(700);
+      expect(document.querySelector('.cdk-overlay-pane')).not.toBeNull();
+      dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'gemini-stale-overlay-fast-detach' });
+      await vi.advanceTimersByTimeAsync(15000);
+
+      expect(uploads).toEqual(['paper.pdf']);
+      expect(triggerClicks).toHaveBeenCalledTimes(2);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-stale-overlay-fast-detach',
+          status: 'succeeded',
+          succeededAttachmentIds: ['doc-pdf-1'],
+        })
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Zhipu GLM-5.4 UI: an earlier upload card settling never confirms a rejected PDF', async () => {
+    const { uploadList, fileInput } = mountChatGLMGlm54({ cardState: 'error' });
+    const old = document.createElement('div');
+    old.className = 'upload-card upload-card--loading';
+    old.innerHTML = '<span class="upload-card__name">old.png</span>';
+    uploadList.append(old);
+    fileInput.addEventListener('change', () => setTimeout(() => old.classList.remove('upload-card--loading'), 100));
+
+    dispatchDocFill({ attachments: [makePdfAttachment()], requestId: 'chatglm-glm54-stale-card' });
+    await vi.advanceTimersByTimeAsync(13000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-stale-card',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: an already-loading unnamed image card settling never confirms a new image upload', async () => {
+    const { uploadList, fileInput } = mountChatGLMGlm54({ cardState: 'error', renderName: () => null });
+    const old = document.createElement('div');
+    old.className = 'upload-card upload-card--loading';
+    old.innerHTML = '<img alt="" src="blob:https://chatglm.cn/old" />';
+    uploadList.append(old);
+    fileInput.addEventListener('change', () => setTimeout(() => old.classList.remove('upload-card--loading'), 100));
+
+    dispatchDocFill({ attachments: [makeImageAttachment()], requestId: 'chatglm-glm54-stale-image-card' });
+    await vi.advanceTimersByTimeAsync(9000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-stale-image-card',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: [],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: confirms DOCX + PDF + TXT + PNG with truncated, extension-less, and unnamed upload cards', async () => {
+    const displayNames = {
+      '日本中部京都红叶之旅_测试(1).docx': '日本中部京都红叶之旅_...',
+      'sample.pdf': 'sample.pdf',
+      'sample.txt': 'sample',
+    };
+    const { uploaded, uploadList, fileInput } = mountChatGLMGlm54({
+      renderName: (name) => (name in displayNames ? displayNames[name] : null),
+    });
+    fileInput.addEventListener('change', () => {
+      const card = uploadList.lastElementChild;
+      card.classList.add('upload-card--loading');
+      setTimeout(() => card.classList.remove('upload-card--loading'), 300);
+    });
+
+    dispatchDocFill({
+      attachments: [
+        makeDocxAttachment('glm-docx', '日本中部京都红叶之旅_测试(1).docx'),
+        makePdfAttachment('glm-pdf', 'sample.pdf'),
+        makeTxtAttachment('glm-txt', 'sample.txt'),
+        makeImageAttachment('glm-png', 'sample.png'),
+      ],
+      requestId: 'chatglm-glm54-four-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(8000);
+
+    expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt', 'sample.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-four-mixed',
+        status: 'succeeded',
+        succeededAttachmentIds: ['glm-docx', 'glm-pdf', 'glm-txt', 'glm-png'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: mixed named PDF and unnamed loading image both wait for settled cards', async () => {
+    const { fileInput, uploadList } = mountChatGLMGlm54();
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0].name !== 'diagram.png') return;
+      const card = uploadList.lastElementChild;
+      card.innerHTML = '<img alt="" src="blob:sample" />';
+      card.classList.add('upload-card--loading');
+      setTimeout(() => card.classList.remove('upload-card--loading'), 300);
+    });
+
+    dispatchDocFill({ attachments: [makePdfAttachment(), makeImageAttachment()], requestId: 'chatglm-glm54-unnamed-image' });
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(getLastActionResult().succeededAttachmentIds).toEqual(['doc-pdf-1', 'img-1']);
+  });
+
+  it('Zhipu GLM-5.4 UI: a retry re-uploads a fallback PDF whose card was replaced by an unrelated upload', async () => {
+    const { uploadList, uploaded } = mountChatGLMGlm54();
+    const pdf = makePdfAttachment();
+    dispatchDocFill({ attachments: [pdf], requestId: 'chatglm-glm54-unrelated-first' });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(uploaded).toEqual(['paper.pdf']);
+
+    uploadList.innerHTML = '<div class="upload-card"><span class="upload-card__name">other.png</span></div>';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-unrelated-retry', pdf);
+    await vi.advanceTimersByTimeAsync(2500);
+
+    expect(uploaded).toEqual(['paper.pdf', 'paper.pdf']);
+    // The user's own other.png card stays staged.
+    expect([...uploadList.querySelectorAll('.upload-card__name')].map((el) => el.textContent)).toEqual([
+      'other.png',
+      'paper.pdf',
+    ]);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-unrelated-retry',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: a retry re-uploads only the missing fallback attachment and keeps the retained one', async () => {
+    const { uploadList, uploaded } = mountChatGLMGlm54();
+    const pdf = makePdfAttachment();
+    const png = makeImageAttachment();
+    dispatchDocFill({ attachments: [pdf, png], requestId: 'chatglm-glm54-partial-first' });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(uploaded).toEqual(['paper.pdf', 'diagram.png']);
+
+    [...uploadList.querySelectorAll('.upload-card')]
+      .find((card) => card.textContent.includes('diagram.png'))
+      .remove();
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('chatglm-glm54-partial-retry', pdf, png);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(uploaded).toEqual(['paper.pdf', 'diagram.png', 'diagram.png']);
+    expect(uploadList.querySelectorAll('.upload-card')).toHaveLength(2);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'chatglm-glm54-partial-retry',
+        status: 'succeeded',
+        succeededAttachmentIds: ['doc-pdf-1', 'img-1'],
+      })
+    );
+  });
+
+  it('Zhipu GLM-5.4 UI: TRIGGER_SEND with a disabled send-button never falls back to an Enter keypress', () => {
+    const { editor } = mountChatGLMGlm54();
+    const enter = vi.fn();
+    editor.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') enter();
+    });
+
+    dispatchMultiPanelMessage({ type: 'TRIGGER_SEND', context: 'multi-panel' });
+
+    expect(enter).not.toHaveBeenCalled();
+  });
+
+  it('Zhipu GLM-5.4 UI: auto-submit keeps retrying while the send-button is disabled and clicks it once enabled', async () => {
+    const { editor, sendButton } = mountChatGLMGlm54();
+    let enterWhileDisabled = 0;
+    const submitted = vi.fn();
+    editor.addEventListener('input', () => {
+      sendButton.classList.add('send-button--disabled');
+      setTimeout(() => sendButton.classList.remove('send-button--disabled'), 1000);
+    });
+    editor.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      if (sendButton.classList.contains('send-button--disabled')) {
+        enterWhileDisabled += 1;
+        return;
+      }
+      submitted();
+    });
+    sendButton.addEventListener('click', submitted);
+
+    dispatchMultiPanelMessage({ type: 'INJECT_TEXT', text: 'Slow GLM prompt', autoSubmit: true, context: 'multi-panel' });
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(enterWhileDisabled).toBe(0);
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * Live yuanbao.tencent.com composer (captured 2026-11-25): document cards render the
+   * extension-less name plus an uppercase type badge, image cards carry an
+   * aria-label="预览图片<name>" and an https <img> without alt, and every card embeds a
+   * "Re-upload" retry overlay that is display:none unless the upload failed.
+   *
+   * Live CDP probe: each `<input type="file">` is mounted lazily by its menu item and then
+   * stays mounted across files, but its `change` handler is one-shot. Only clicking
+   * Add -> "Local Files" / "Upload Image" again re-arms it; reusing the mounted input
+   * without that click is silently ignored. The menu closes when an item is clicked.
+   */
+  const mountYuanbaoLive = ({ failedNames = [], ignoreImagesAfterDocs = false, localFilesLabel = 'Local Files' } = {}) => {
+    window.happyDOM.setURL('https://yuanbao.tencent.com/chat');
+    document.body.innerHTML = `
+      <div id="yb-composer">
+        <div class="pl-[6px] empty:hidden" data-input-resource-area="true">
+          <div class="FileList_inputFileList__tSu2d undefined">
+            <div class="swiper swiper-initialized swiper-horizontal FileList_swiper__sJ7Ih">
+              <div class="swiper-wrapper" id="yb-swiper"></div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-command-editor-specail">
+          <div class="ql-editor" contenteditable="true" data-placeholder="Ask"></div>
+        </div>
+        <button data-new-input-control="add-tools-trigger">+</button>
+      </div>
+    `;
+    const swiper = document.getElementById('yb-swiper');
+    const trigger = document.querySelector('[data-new-input-control="add-tools-trigger"]');
+    markVisible(trigger);
+    const uploaded = [];
+    const menuClicks = [];
+
+    const addDocCard = (name) => {
+      const dot = name.lastIndexOf('.');
+      const stem = name.slice(0, dot);
+      const ext = name.slice(dot + 1).toUpperCase();
+      const failed = failedNames.includes(name);
+      const slide = document.createElement('div');
+      slide.className = 'swiper-slide FileList_inputFileListSwiperItemFile__Sc3H_';
+      slide.innerHTML = `
+        <div class="FileList_inputFileListItem__sOOlP FileList_inputFileListItemPdf___5kgD bg-New-background-extra_hover">
+          <div class="FileList_inputFileListItemPdfIcon__VuNEY">
+            <img draggable="false" src="https://static.yuanbao.tencent.com/doc_normal_light.png" alt="icon">
+            <div class="FileList_inputFileListItemStatus__J9y4A FileList_inputFileListItemStatusLocalFile__I_WrF"></div>
+          </div>
+          <div class="FileList_inputFileListItemPdfInfo__pnCZB">
+            <div class="FileList_inputFileListItemPdfInfoName__2_V8V">${stem}</div>
+            <div class="FileList_inputFileListItemPdfInfoDetail__OmXZC">
+              <div class="FileList_finishShowCount__NY8SX">
+                <span class="FileList_fileType__B0xTp">${ext}</span>
+                <div class="FileList_divide__AzspK"></div>1.24KB
+              </div>
+            </div>
+          </div>
+          <div class="FileList_inputFileListItemClose__0Gnyx" aria-label="删除文件"></div>
+          <div class="FileList_inputFileListItemRetry__9Y_yI" aria-label="重新上传文件" style="${failed ? '' : 'display: none;'}">
+            <div class="FileList_retryIcon__6gEw8"></div>
+            <div class="FileList_retryText__mfuYQ">Re-upload</div>
+          </div>
+        </div>
+      `;
+      swiper.append(slide);
+    };
+    const addImageCard = (name) => {
+      const slide = document.createElement('div');
+      slide.className = 'swiper-slide FileList_inputFileListSwiperItemImage__3Gj6L';
+      slide.innerHTML = `
+        <div class="FileList_inputFileListItem__sOOlP FileList_inputFileListItemImage__EF_2N" aria-label="预览图片${name}">
+          <img src="https://hunyuan-prod-1258344703.cos.ap-guangzhou.myqcloud.com/${encodeURIComponent(name)}">
+        </div>
+      `;
+      swiper.append(slide);
+    };
+    const pickers = new Map();
+    const armPicker = (key, accept, onFile) => {
+      let picker = pickers.get(key);
+      if (!picker) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.accept = accept;
+        picker = { input, armed: false };
+        input.addEventListener('change', () => {
+          if (!picker.armed) return;
+          picker.armed = false;
+          const name = input.files[0].name;
+          uploaded.push(name);
+          setTimeout(() => onFile(name), 200);
+        });
+        document.body.append(input);
+        pickers.set(key, picker);
+      }
+      picker.armed = true;
+    };
+
+    trigger.addEventListener('click', () => {
+      document.querySelector('#yb-menu')?.remove();
+      const menu = document.createElement('div');
+      menu.id = 'yb-menu';
+      ['Upload Image', localFilesLabel, 'Tencent Docs'].forEach((label) => {
+        const item = document.createElement('div');
+        item.setAttribute('role', 'menuitem');
+        item.textContent = label;
+        markVisible(item);
+        item.addEventListener('click', () => {
+          menuClicks.push(label);
+          menu.remove();
+          if (label === 'Local Files') {
+            armPicker('doc', '.pdf,.xls,.xlsx,.ppt,.pptx,.doc,.docx,.txt', addDocCard);
+          } else if (label === 'Upload Image') {
+            armPicker('image', '.jpg,.jpeg,.png,.webp,.bmp,.gif', (name) => {
+              const hasDocs = swiper.querySelector('[class*="FileList_inputFileListSwiperItemFile__"]');
+              if (ignoreImagesAfterDocs && hasDocs) return;
+              addImageCard(name);
+            });
+          }
+        });
+        menu.append(item);
+      });
+      document.body.append(menu);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') document.querySelector('#yb-menu')?.remove();
+    });
+
+    return { swiper, uploaded, menuClicks, pickers };
+  };
+
+  it('Yuanbao live UI: confirms a Local Files DOCX + PDF + TXT batch from extension-less names with hidden Re-upload overlays', async () => {
+    const { uploaded, menuClicks } = mountYuanbaoLive();
+
+    dispatchDocFill({
+      attachments: [
+        makeDocxAttachment('yb-docx', '日本中部京都红叶之旅_测试(1).docx'),
+        makePdfAttachment('yb-pdf', 'sample.pdf'),
+        makeTxtAttachment('yb-txt', 'sample.txt'),
+      ],
+      requestId: 'yuanbao-live-docs',
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(menuClicks).toEqual(['Local Files', 'Local Files', 'Local Files']);
+    expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-docs',
+        provider: 'yuanbao',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-docx', 'yb-pdf', 'yb-txt'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: re-arms the one-shot Local Files input before every sequential document, including same-stem PDF + TXT', async () => {
+    const { swiper, uploaded, menuClicks, pickers } = mountYuanbaoLive();
+
+    dispatchDocFill({
+      attachments: [
+        makeDocxAttachment('yb-docx', '日本中部京都红叶之旅_测试(1).docx'),
+        makePdfAttachment('yb-pdf', 'sample.pdf'),
+        makeTxtAttachment('yb-txt', 'sample.txt'),
+      ],
+      requestId: 'yuanbao-live-rearm-docs',
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // The same mounted input serves every file; each one needed its own menu click.
+    expect(pickers.size).toBe(1);
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
+    expect(menuClicks).toEqual(['Local Files', 'Local Files', 'Local Files']);
+    expect(uploaded).toEqual(['日本中部京都红叶之旅_测试(1).docx', 'sample.pdf', 'sample.txt']);
+    const cards = [...swiper.querySelectorAll('[class*="FileList_inputFileListItem__"]')];
+    expect(cards.map((card) => card.querySelector('[class*="FileList_inputFileListItemPdfInfoName__"]').textContent))
+      .toEqual(['日本中部京都红叶之旅_测试(1)', 'sample', 'sample']);
+    expect(cards.map((card) => card.querySelector('[class*="FileList_fileType__"]').textContent))
+      .toEqual(['DOCX', 'PDF', 'TXT']);
+    expect(document.getElementById('yb-menu')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-rearm-docs',
+        provider: 'yuanbao',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-docx', 'yb-pdf', 'yb-txt'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: re-arms the one-shot Upload Image input before every sequential image', async () => {
+    const { swiper, uploaded, menuClicks, pickers } = mountYuanbaoLive();
+
+    dispatchDocFill({
+      attachments: [makeImageAttachment('yb-png-1', 'first.png'), makeImageAttachment('yb-png-2', 'second.png')],
+      requestId: 'yuanbao-live-rearm-images',
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(pickers.size).toBe(1);
+    expect(menuClicks).toEqual(['Upload Image', 'Upload Image']);
+    expect(uploaded).toEqual(['first.png', 'second.png']);
+    expect(swiper.querySelectorAll('[class*="FileList_inputFileListItemImage__"]')).toHaveLength(2);
+    expect(document.getElementById('yb-menu')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-rearm-images',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-png-1', 'yb-png-2'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: never reuses a mounted input when the Local Files menu item is missing, and closes the menu', async () => {
+    const { uploaded, menuClicks } = mountYuanbaoLive({ localFilesLabel: 'Renamed Entry' });
+    const staleInput = document.createElement('input');
+    staleInput.type = 'file';
+    staleInput.multiple = true;
+    staleInput.accept = '.pdf,.docx,.txt';
+    const staleChange = vi.fn();
+    staleInput.addEventListener('change', staleChange);
+    document.body.append(staleInput);
+
+    dispatchDocFill({ attachments: [makePdfAttachment('yb-pdf', 'sample.pdf')], requestId: 'yuanbao-live-no-menu' });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(menuClicks).toEqual([]);
+    expect(uploaded).toEqual([]);
+    expect(staleChange).not.toHaveBeenCalled();
+    expect(document.getElementById('yb-menu')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-no-menu',
+        status: 'failed',
+        reason: 'control-not-found',
+      })
+    );
+  });
+
+  it('Yuanbao live UI: confirms an Upload Image card identified by its aria-label and https <img> without alt', async () => {
+    const { uploaded, menuClicks } = mountYuanbaoLive();
+
+    dispatchDocFill({ attachments: [makeImageAttachment('yb-png', 'sample.png')], requestId: 'yuanbao-live-image' });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(menuClicks).toEqual(['Upload Image']);
+    expect(uploaded).toEqual(['sample.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-image',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-png'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: a card with a visible Re-upload overlay never confirms, while a sibling with a hidden overlay does', async () => {
+    mountYuanbaoLive({ failedNames: ['sample.txt'] });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('yb-pdf', 'sample.pdf'), makeTxtAttachment('yb-txt', 'sample.txt')],
+      requestId: 'yuanbao-live-failed-card',
+    });
+    await vi.advanceTimersByTimeAsync(15000);
+
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-failed-card',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: ['yb-pdf'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: an image silently dropped after documents does not confirm', async () => {
+    const { uploaded } = mountYuanbaoLive({ ignoreImagesAfterDocs: true });
+
+    dispatchDocFill({
+      attachments: [makePdfAttachment('yb-pdf', 'sample.pdf'), makeImageAttachment('yb-png', 'sample.png')],
+      requestId: 'yuanbao-live-mixed',
+    });
+    await vi.advanceTimersByTimeAsync(12000);
+
+    expect(uploaded).toEqual(['sample.pdf', 'sample.png']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-mixed',
+        status: 'failed',
+        reason: 'preview-timeout',
+        succeededAttachmentIds: ['yb-pdf'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: a retry keeps staged cards and re-uploads only the fallback documents that are gone', async () => {
+    const { swiper, uploaded } = mountYuanbaoLive();
+    const pdf = makePdfAttachment('yb-pdf', 'sample.pdf');
+    const txt = makeTxtAttachment('yb-txt', 'sample.txt');
+    dispatchDocFill({ attachments: [pdf, txt], requestId: 'yuanbao-live-retry-first' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({ requestId: 'yuanbao-live-retry-first', status: 'succeeded' })
+    );
+
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('yuanbao-live-retry-staged', pdf, txt);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(uploaded).toEqual(['sample.pdf', 'sample.txt']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-retry-staged',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-pdf', 'yb-txt'],
+      })
+    );
+
+    // Remove the TXT card only: its PDF sibling shares the "sample" stem but not the type badge.
+    [...swiper.querySelectorAll('[class*="FileList_fileType__"]')]
+      .find((badge) => badge.textContent === 'TXT')
+      .closest('.swiper-slide')
+      .remove();
+    document.querySelector('.ql-editor').textContent = '';
+    window.parent.postMessage.mockClear();
+    dispatchRetryWithFallback('yuanbao-live-retry-partial', pdf, txt);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(uploaded).toEqual(['sample.pdf', 'sample.txt', 'sample.txt']);
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-retry-partial',
+        status: 'succeeded',
+        succeededAttachmentIds: ['yb-pdf', 'yb-txt'],
+      })
+    );
+  });
 });
