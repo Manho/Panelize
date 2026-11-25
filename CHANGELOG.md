@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.3 - 2026-11-25
+- Harden ChatGPT attachment uploads by skipping the mobile camera-capture input, preferring the composer multi-file input, verifying staged attachment previews, and retrying once on hydration drops instead of blindly succeeding.
+- Fix false preview-timeout / Retry Failed on Custom Web UI providers (such as Xiaomi MiMo) during mixed image + document uploads by tracking preview images, remove controls, and filename chips independently.
+- Log transient GitHub release check errors (such as 403 rate limits) as warnings and format failed attachment panel warnings as readable provider:reason strings.
+
 ## 2.3.2 - 2026-11-25
 - Support the updated Zhipu / ChatGLM GLM-5.4 composer, send button, and mixed document/image attachment cards while preserving legacy fallback behavior.
 - Fix Gemini Hydrogen multi-document sequential uploads when a detaching attachment overlay swallows the initial Upload & tools click.
