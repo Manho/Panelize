@@ -140,7 +140,14 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
     const uploaded = [];
     const docInput = document.getElementById('doc-input');
     docInput.addEventListener('change', () => {
-      uploaded.push({ name: docInput.files[0].name, type: docInput.files[0].type, size: docInput.files[0].size });
+      const file = docInput.files[0];
+      uploaded.push({ name: file.name, type: file.type, size: file.size });
+      // ChatGPT stages the document as a removable composer attachment card.
+      docInput.closest('form').insertAdjacentHTML(
+        'afterbegin',
+        `<div class="group/composer-attachment relative block"><div>${file.name}</div>` +
+          `<button type="button" aria-label="Remove ${file.name}">x</button></div>`
+      );
     });
 
     const promptEl = document.getElementById('prompt-textarea');

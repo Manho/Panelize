@@ -7,7 +7,8 @@
  * Focus steals use plain `element.focus()` from page scripts, which is how
  * provider SPAs autofocus their composer after load, new chat, or send. Each
  * steal is recorded in `window.__fixture.steals`, and marked `blurred` once
- * the composer loses focus afterwards.
+ * the composer loses focus afterwards. Selected files are staged as
+ * `.composer-attachment-surface` cards, the preview the content script awaits.
  *
  * @param {object} [config]
  * @param {number[]} [config.loadStealDelays] - Composer autofocus delays after load.
@@ -50,7 +51,27 @@ ${composerHtml}
     const form = document.querySelector('form[data-type="unified-composer"]');
     const composer = form.querySelector('[contenteditable="true"]');
     const sendButton = form.querySelector('button[aria-label^="Send"]');
-    window.__fixture = { steals: [], sends: 0, newChats: 0, sentTexts: [], straySends: [] };
+    window.__fixture = { steals: [], sends: 0, newChats: 0, sentTexts: [], straySends: [], uploadedFiles: [] };
+
+    // Like the live composer, stage each selected file as a removable
+    // attachment card; the content script waits for that preview.
+    form.querySelectorAll('input[type="file"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        [...input.files].forEach((file) => {
+          window.__fixture.uploadedFiles.push(file.name);
+          const card = document.createElement('div');
+          card.className = 'composer-attachment-surface';
+          const label = document.createElement('span');
+          label.textContent = file.name;
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.setAttribute('aria-label', 'Remove ' + file.name);
+          remove.addEventListener('click', () => card.remove());
+          card.append(label, remove);
+          form.prepend(card);
+        });
+      });
+    });
 
     document.addEventListener('submit', (event) => event.preventDefault());
     document.querySelectorAll('button[aria-label^="Send"]').forEach((button) => {
@@ -104,6 +125,7 @@ ${composerHtml}
       window.__fixture.sends += 1;
       window.__fixture.sentTexts.push(composer.textContent);
       composer.textContent = '';
+      form.querySelectorAll('.composer-attachment-surface').forEach((card) => card.remove());
       scheduleComposerFocus(config.sendStealDelays, 'send');
       if (config.busyAfterSendMs > 0) {
         setTimeout(() => {

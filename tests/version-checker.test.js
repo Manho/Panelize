@@ -101,4 +101,27 @@ describe('version checker', () => {
     });
     expect(result.error).toBeTruthy();
   });
+
+  it.each([
+    ['a GitHub 403 rate limit', () => vi.fn().mockResolvedValue({ ok: false, status: 403 })],
+    ['an offline network failure', () => vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))]
+  ])('logs %s as a warning, never as an extension error', async (_label, createFetch) => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    global.fetch = createFetch();
+
+    await expect(fetchLatestRelease()).resolves.toBeNull();
+    const result = await checkForUpdates();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith('Error fetching latest GitHub release:', expect.any(Error));
+    expect(result).toMatchObject({
+      updateAvailable: false,
+      currentVersion: '1.2.5',
+      latestVersion: null,
+      releaseUrl: getReleasesUrl(),
+      downloadUrl: getReleasesUrl()
+    });
+    expect(result.error).toBeTruthy();
+  });
 });
