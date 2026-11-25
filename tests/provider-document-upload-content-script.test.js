@@ -2867,7 +2867,7 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
    * Add -> "Local Files" / "Upload Image" again re-arms it; reusing the mounted input
    * without that click is silently ignored. The menu closes when an item is clicked.
    */
-  const mountYuanbaoLive = ({ failedNames = [], ignoreImagesAfterDocs = false } = {}) => {
+  const mountYuanbaoLive = ({ failedNames = [], ignoreImagesAfterDocs = false, localFilesLabel = 'Local Files' } = {}) => {
     window.happyDOM.setURL('https://yuanbao.tencent.com/chat');
     document.body.innerHTML = `
       <div id="yb-composer">
@@ -2957,7 +2957,7 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       document.querySelector('#yb-menu')?.remove();
       const menu = document.createElement('div');
       menu.id = 'yb-menu';
-      ['Upload Image', 'Local Files', 'Tencent Docs'].forEach((label) => {
+      ['Upload Image', localFilesLabel, 'Tencent Docs'].forEach((label) => {
         const item = document.createElement('div');
         item.setAttribute('role', 'menuitem');
         item.textContent = label;
@@ -2978,6 +2978,9 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         menu.append(item);
       });
       document.body.append(menu);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') document.querySelector('#yb-menu')?.remove();
     });
 
     return { swiper, uploaded, menuClicks, pickers };
@@ -3061,6 +3064,32 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
         requestId: 'yuanbao-live-rearm-images',
         status: 'succeeded',
         succeededAttachmentIds: ['yb-png-1', 'yb-png-2'],
+      })
+    );
+  });
+
+  it('Yuanbao live UI: never reuses a mounted input when the Local Files menu item is missing, and closes the menu', async () => {
+    const { uploaded, menuClicks } = mountYuanbaoLive({ localFilesLabel: 'Renamed Entry' });
+    const staleInput = document.createElement('input');
+    staleInput.type = 'file';
+    staleInput.multiple = true;
+    staleInput.accept = '.pdf,.docx,.txt';
+    const staleChange = vi.fn();
+    staleInput.addEventListener('change', staleChange);
+    document.body.append(staleInput);
+
+    dispatchDocFill({ attachments: [makePdfAttachment('yb-pdf', 'sample.pdf')], requestId: 'yuanbao-live-no-menu' });
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(menuClicks).toEqual([]);
+    expect(uploaded).toEqual([]);
+    expect(staleChange).not.toHaveBeenCalled();
+    expect(document.getElementById('yb-menu')).toBeNull();
+    expect(getLastActionResult()).toEqual(
+      expect.objectContaining({
+        requestId: 'yuanbao-live-no-menu',
+        status: 'failed',
+        reason: 'control-not-found',
       })
     );
   });
