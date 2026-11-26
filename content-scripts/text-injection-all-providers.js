@@ -1168,6 +1168,61 @@
     setTimeout(() => document.removeEventListener('focusin', captureFocus, true), USER_FOCUS_RESTORE_WINDOW_MS);
   }
 
+  const FOCUS_WITHOUT_USER_ACTIVATION_FEATURE = 'focus-without-user-activation';
+
+  function canProgrammaticallyFocus() {
+    const policy = typeof document.permissionsPolicy?.allowsFeature === 'function'
+      ? document.permissionsPolicy
+      : document.featurePolicy;
+
+    if (policy && typeof policy.allowsFeature === 'function') {
+      try {
+        const supportedFeatures = typeof policy.features === 'function'
+          ? policy.features()
+          : null;
+        const isFeatureSupported = !Array.isArray(supportedFeatures) ||
+          supportedFeatures.includes(FOCUS_WITHOUT_USER_ACTIVATION_FEATURE);
+
+        if (
+          isFeatureSupported &&
+          policy.allowsFeature(FOCUS_WITHOUT_USER_ACTIVATION_FEATURE) === false
+        ) {
+          let isTopFrame = false;
+          try {
+            isTopFrame = window.top === window;
+          } catch {
+            isTopFrame = false;
+          }
+          const frameHasFocus =
+            typeof document.hasFocus === 'function' ? document.hasFocus() : false;
+          return isTopFrame || frameHasFocus || Boolean(navigator.userActivation?.isActive);
+        }
+      } catch {
+        // Fall through and allow focus when policy inspection is unavailable.
+      }
+    }
+
+    return true;
+  }
+
+  function safeFocusElement(element, options) {
+    if (!element || typeof element.focus !== 'function' || !canProgrammaticallyFocus()) {
+      return false;
+    }
+
+    if (options !== undefined) {
+      try {
+        element.focus(options);
+        return true;
+      } catch {
+        // Fall through to plain focus() for environments that reject focus options.
+      }
+    }
+
+    element.focus();
+    return true;
+  }
+
   function restoreUserFocus() {
     const entry = lastUserFocus;
     lastUserFocus = null;
@@ -1175,11 +1230,7 @@
       return;
     }
 
-    try {
-      entry.element.focus({ preventScroll: true });
-    } catch {
-      entry.element.focus();
-    }
+    safeFocusElement(entry.element, { preventScroll: true });
   }
 
   function stopMultiPanelUserInteractionTracking() {
@@ -1432,11 +1483,7 @@
     const wasPreviouslyTouched = touchedFormControls.has(element);
     touchedFormControls.add(element);
 
-    try {
-      element.focus({ preventScroll: true });
-    } catch {
-      element.focus?.();
-    }
+    safeFocusElement(element, { preventScroll: true });
 
     const prototype = element.tagName === 'INPUT'
       ? window.HTMLInputElement.prototype
@@ -1528,7 +1575,7 @@
 
   function clearRichTextInput(provider, element, { focus = true } = {}) {
     if (focus !== false) {
-      element.focus();
+      safeFocusElement(element);
     }
 
     if (provider !== 'kimi' && provider !== 'doubao') {
@@ -1940,7 +1987,7 @@
       return false;
     }
 
-    input.focus();
+    safeFocusElement(input);
     const enterEvent = new KeyboardEvent('keydown', {
       key: 'Enter',
       code: 'Enter',
@@ -2074,7 +2121,7 @@
         const input = findProviderInput('deepseek');
         if (input) {
           console.log('[Text Injection] Triggering Enter key on DeepSeek input');
-          input.focus();
+          safeFocusElement(input);
           // Trigger multiple events for better compatibility
           const events = [
             new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
@@ -2107,7 +2154,7 @@
           if (input) {
             console.log('[Text Injection] Triggering Enter key on provider input:', provider);
             // Focus first
-            input.focus();
+            safeFocusElement(input);
             // Trigger multiple events for better compatibility
             const events = [
               new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),
@@ -2993,7 +3040,7 @@
         setFormControlValue(element, newValue);
       } else {
         // For contenteditable elements - append text without clearing existing content
-        element.focus();
+        safeFocusElement(element);
 
         // Move cursor to end first
         try {
@@ -6500,7 +6547,7 @@
       dataTransfer.items.add(file);
 
       // Focus the editor first
-      editor.focus();
+      safeFocusElement(editor);
 
       // Simulate paste event with the image
       const pasteEvent = new ClipboardEvent('paste', {
@@ -6608,9 +6655,7 @@
         document.querySelector('[msfilecopypaste]');
 
       if (pasteTarget) {
-        if (typeof pasteTarget.focus === 'function') {
-          pasteTarget.focus();
-        }
+        safeFocusElement(pasteTarget);
 
         const pasteEvent = new ClipboardEvent('paste', {
           bubbles: true,
@@ -6925,7 +6970,7 @@
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
 
-    editor.focus();
+    safeFocusElement(editor);
     editor.dispatchEvent(new ClipboardEvent('paste', {
       bubbles: true,
       cancelable: true,
@@ -7508,7 +7553,7 @@
       const file = await createAttachmentFile(imageData);
 
       // Focus the element first
-      targetElement.focus();
+      safeFocusElement(targetElement);
       dispatchFileDragEvents(targetElement, file);
 
       return true;

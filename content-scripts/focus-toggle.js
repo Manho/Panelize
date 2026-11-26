@@ -84,11 +84,52 @@ function findProviderInput() {
 }
 
 /**
+ * Check whether programmatic focus is permitted by Permissions Policy / user activation
+ */
+function canFocusWithoutUserActivation() {
+  const policy = typeof document.permissionsPolicy?.allowsFeature === 'function'
+    ? document.permissionsPolicy
+    : document.featurePolicy;
+
+  if (policy && typeof policy.allowsFeature === 'function') {
+    try {
+      const supportedFeatures = typeof policy.features === 'function'
+        ? policy.features()
+        : null;
+      const isFeatureSupported = !Array.isArray(supportedFeatures) ||
+        supportedFeatures.includes('focus-without-user-activation');
+
+      if (
+        isFeatureSupported &&
+        policy.allowsFeature('focus-without-user-activation') === false
+      ) {
+        let isTopFrame = false;
+        try {
+          isTopFrame = window.top === window;
+        } catch {
+          isTopFrame = false;
+        }
+        const frameHasFocus =
+          typeof document.hasFocus === 'function' ? document.hasFocus() : false;
+        return isTopFrame || frameHasFocus || Boolean(navigator.userActivation?.isActive);
+      }
+    } catch {
+      // Fall through and allow focus when policy inspection is unavailable.
+    }
+  }
+
+  return true;
+}
+
+/**
  * Focus the provider's input element
  */
 function focusProviderInput() {
   const input = findProviderInput();
   if (input) {
+    if (!canFocusWithoutUserActivation()) {
+      return false;
+    }
     input.focus();
     // For contenteditable elements, also set cursor at end
     if (input.isContentEditable) {
