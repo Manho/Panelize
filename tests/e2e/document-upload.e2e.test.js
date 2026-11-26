@@ -545,11 +545,11 @@ test.describe('Document upload E2E (Issue #118 Item #5)', () => {
           wrapper.innerHTML = '<!----><!---->';
           textField.prepend(wrapper);
         }
-        if (window.__geminiFixture.mode === 'deferred') {
-          await fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/ProcessFile?bl=test&seq=' + window.__geminiFixture.uploaded.length, {
-            method: 'POST',
-            body: file.name,
-          });
+        const res = await fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/ProcessFile?bl=test&file=' + encodeURIComponent(file.name), {
+          method: 'POST',
+          body: file.name,
+        });
+        if (window.__geminiFixture.mode === 'deferred' || !res.ok) {
           return;
         }
         let container = wrapper.querySelector('uploader-file-preview-container');
@@ -590,7 +590,7 @@ test.describe('Document upload E2E (Issue #118 Item #5)', () => {
       await extension.context.route('https://gemini.google.com/**', async (route) => {
         const url = route.request().url();
         if (url.includes('BardFrontendService/ProcessFile')) {
-          const status = url.includes('seq=4') ? 500 : 200;
+          const status = url.includes('file=broken-upload.txt') ? 500 : 200;
           await route.fulfill({ status, contentType: 'application/json', body: ')]}\'\n[]' });
           return;
         }
@@ -642,7 +642,7 @@ test.describe('Document upload E2E (Issue #118 Item #5)', () => {
       await expect(page.locator('#fill-input-btn')).toHaveAttribute('data-retry-failed', 'false');
       await expect(page.locator('.attachment-doc-chip')).toHaveCount(0);
 
-      // 3) Genuine failure (deferred + ProcessFile 500 on seq=4) -> MUST fail with Retry Failed!
+      // 3) Genuine failure (deferred + ProcessFile 500 for broken-upload.txt) -> MUST fail with Retry Failed!
       await getGeminiFrame().evaluate(() => {
         window.__geminiFixture.mode = 'deferred';
         document.querySelector('.attachment-preview-wrapper')?.remove();

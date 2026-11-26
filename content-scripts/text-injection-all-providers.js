@@ -4114,22 +4114,33 @@
       .trim();
   }
 
+  function parseTruncatedFileNameCandidate(label) {
+    const cleaned = stripTruncatedNameWrapper(label);
+    if (!cleaned) {
+      return null;
+    }
+    const ellipsis = cleaned.match(TRUNCATED_NAME_ELLIPSIS_RE);
+    if (!ellipsis) {
+      return null;
+    }
+    return {
+      cleaned,
+      head: cleaned.slice(0, ellipsis.index).trim(),
+      tail: cleaned.slice(ellipsis.index + ellipsis[0].length).trim(),
+    };
+  }
+
   /**
    * True when `label` is an ellipsis-truncated form of `fileName` or its stem,
    * e.g. Gemini's middle truncation "very-long-...2026-final" or trailing "report...".
    */
   function matchesTruncatedFileName(label, fileName) {
-    const cleaned = stripTruncatedNameWrapper(label);
+    const parsed = parseTruncatedFileNameCandidate(label);
     const name = (fileName || '').trim().toLowerCase();
-    if (!cleaned || !name) {
+    if (!parsed || !name) {
       return false;
     }
-    const ellipsis = cleaned.match(TRUNCATED_NAME_ELLIPSIS_RE);
-    if (!ellipsis) {
-      return false;
-    }
-    const head = cleaned.slice(0, ellipsis.index).trim();
-    const tail = cleaned.slice(ellipsis.index + ellipsis[0].length).trim();
+    const { head, tail } = parsed;
     if (head.length + tail.length < TRUNCATED_NAME_MIN_CHARS) {
       return false;
     }
@@ -4147,22 +4158,37 @@
    * Removes ellipsis-truncated occurrences of `normalizedName` from `text` so a
    * truncated filename containing words like "error" or "failure" (e.g.
    * "fix-gemini-...failure" or "My Very Long ... failure") is not mistaken for
-   * an upload rejection banner.
+   * an upload rejection banner. Uses linear-time token scanning and refuses to
+   * strip head-only rejection words (e.g. "Upload failed…" for "failed-jobs.csv").
    */
   function stripMatchingTruncatedFileNameTokens(text, normalizedName, candidateLabels = []) {
     if (!text || !normalizedName || !TRUNCATED_NAME_ELLIPSIS_RE.test(text)) {
       return text;
     }
+    const maxCandidateLength = normalizedName.length + 16;
+    const getStripTarget = (candidate) => {
+      const parsed = parseTruncatedFileNameCandidate(candidate);
+      if (!parsed || parsed.cleaned.length > maxCandidateLength) {
+        return null;
+      }
+      if (!parsed.tail && REJECTION_TEXT_RE.test(parsed.head)) {
+        return null;
+      }
+      return matchesTruncatedFileName(parsed.cleaned, normalizedName) ? parsed.cleaned : null;
+    };
     let result = text;
     for (const label of candidateLabels) {
-      const cleaned = stripTruncatedNameWrapper(label);
-      if (cleaned && TRUNCATED_NAME_ELLIPSIS_RE.test(cleaned) && matchesTruncatedFileName(cleaned, normalizedName)) {
-        result = result.split(cleaned).join(' ');
+      const stripTarget = getStripTarget(label);
+      if (stripTarget) {
+        result = result.split(stripTarget).join(' ');
       }
     }
-    return result.replace(/[^\s,;:]+(?:\.{3}|\u2026)[^\s,;:]*|[^\s,;:]*?(?:\.{3}|\u2026)[^\s,;:]+/g, (token) =>
-      matchesTruncatedFileName(token, normalizedName) ? ' ' : token
-    );
+    return result.replace(/[^\s,;:]+/g, (token) => {
+      if (token.length > maxCandidateLength || !TRUNCATED_NAME_ELLIPSIS_RE.test(token)) {
+        return token;
+      }
+      return getStripTarget(token) ? ' ' : token;
+    });
   }
 
   /**
@@ -5937,15 +5963,26 @@
     return Boolean(!textField || textField.classList?.contains('with-file-preview'));
   }
 
-  function countGeminiRejectionAlerts() {
-    let count = 0;
+  const GEMINI_DEFERRED_UPLOAD_SETTLE_MS = 500;
+
+  function getGeminiRejectionAlertElements() {
+    const alerts = new Set();
     document.querySelectorAll(REJECTION_UI_SELECTOR).forEach((el) => {
       const text = getElementAccessibleText(el);
       if (text && REJECTION_TEXT_RE.test(text)) {
-        count += 1;
+        alerts.add(el);
       }
     });
-    return count;
+    return alerts;
+  }
+
+  function hasNewGeminiRejectionAlert(baselineAlerts) {
+    for (const el of getGeminiRejectionAlertElements()) {
+      if (!baselineAlerts.has(el)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function isCompletedGeminiProcessFileEntry(entry) {
@@ -6120,10 +6157,22 @@
       }
       return chip.parts.some(part => matchesTruncatedFileName(part, name)) ? 'truncated' : false;
     };
-    const tryAssign = (accept) => {
+    const tryAssign = (accept, { rejectAmbiguousChip = false } = {}) => {
       attachments.forEach((attachment, attachmentIndex) => {
         if (assignments.has(attachmentIndex)) return;
-        const chipIndex = chips.findIndex((chip, index) => !claimed.has(index) && accept(chip, attachment));
+        const chipIndex = chips.findIndex((chip, index) => {
+          if (claimed.has(index) || !accept(chip, attachment)) return false;
+          if (!rejectAmbiguousChip) return true;
+          // Skip a truncated chip when multiple distinct unassigned filenames match it,
+          // so a surviving chip from file B can never suppress re-uploading missing file A.
+          const distinctMatchingNames = new Set();
+          attachments.forEach((candidate, candidateIndex) => {
+            if (!assignments.has(candidateIndex) && accept(chip, candidate)) {
+              distinctMatchingNames.add((candidate?.name || '').trim().toLowerCase() || `#${candidateIndex}`);
+            }
+          });
+          return distinctMatchingNames.size === 1;
+        });
         if (chipIndex >= 0) {
           claimed.add(chipIndex);
           assignments.set(attachmentIndex, chipIndex);
@@ -6139,8 +6188,13 @@
       matchesName(chip, attachment) === 'stem' && chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment)));
     tryAssign((chip, attachment) => matchesName(chip, attachment) === 'stem' && badgeAgrees(chip, attachment));
     tryAssign((chip, attachment) =>
-      matchesName(chip, attachment) === 'truncated' && chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment)));
-    tryAssign((chip, attachment) => matchesName(chip, attachment) === 'truncated' && badgeAgrees(chip, attachment));
+      matchesName(chip, attachment) === 'truncated' && chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment)),
+      { rejectAmbiguousChip: true }
+    );
+    tryAssign((chip, attachment) =>
+      matchesName(chip, attachment) === 'truncated' && badgeAgrees(chip, attachment),
+      { rejectAmbiguousChip: true }
+    );
     tryAssign((chip, attachment) => !isDocumentAttachmentData(attachment) && chip.hasImageMedia);
 
     const retained = [];
@@ -6308,7 +6362,7 @@
           ? countGeminiAttachmentPreviews(previewScope, imageData, { excludeRejectionUi: true })
           : 0;
         const wasDeferredAtStart = shouldConfirmPreview && hasGeminiDeferredPreviewWrapper(previewScope);
-        const baselineRejectionAlerts = shouldConfirmPreview ? countGeminiRejectionAlerts() : 0;
+        const baselineRejectionAlerts = shouldConfirmPreview ? getGeminiRejectionAlertElements() : new Set();
         const uploadTracker = shouldConfirmPreview ? startGeminiUploadResourceTracker() : null;
 
         try {
@@ -6329,25 +6383,43 @@
           }
 
           if (shouldConfirmPreview) {
+            let deferredConfirmSince = null;
             const isUploadConfirmed = () => {
-              const noNewRejection = countGeminiRejectionAlerts() <= baselineRejectionAlerts;
+              const hasNewRejection = hasNewGeminiRejectionAlert(baselineRejectionAlerts);
               const currentPreviews = countGeminiAttachmentPreviews(previewScope, imageData, {
                 excludeRejectionUi: true
               });
               if (currentPreviews > previousPreviewCount) {
-                // If an earlier unnamed image was uploaded while @defer was pending and the
-                // preview container just resolved mid-flight, wait for this upload's own
-                // ProcessFile completion (or >1 image chips) before confirming.
-                if (wasDeferredAtStart && !isDoc && currentPreviews <= 1 && !uploadTracker?.hasCompletedUpload()) {
-                  return false;
+                // If @defer was pending at upload start and resolved mid-flight (rendering earlier
+                // already-confirmed chips), require this upload's own ProcessFile 2xx completion
+                // and a brief rejection-free settle window before confirming.
+                if (wasDeferredAtStart) {
+                  if (hasNewRejection || !uploadTracker?.hasCompletedUpload()) {
+                    deferredConfirmSince = null;
+                    return false;
+                  }
+                  const now = Date.now();
+                  if (deferredConfirmSince === null) {
+                    deferredConfirmSince = now;
+                  }
+                  return now - deferredConfirmSince >= GEMINI_DEFERRED_UPLOAD_SETTLE_MS;
                 }
                 return true;
               }
-              return Boolean(
-                noNewRejection &&
+              const deferredReady = Boolean(
+                !hasNewRejection &&
                 hasGeminiDeferredPreviewWrapper(previewScope) &&
                 uploadTracker?.hasCompletedUpload()
               );
+              if (!deferredReady) {
+                deferredConfirmSince = null;
+                return false;
+              }
+              const now = Date.now();
+              if (deferredConfirmSince === null) {
+                deferredConfirmSince = now;
+              }
+              return now - deferredConfirmSince >= GEMINI_DEFERRED_UPLOAD_SETTLE_MS;
             };
             const confirmed = await waitForPreviewIncrease(
               () => (isUploadConfirmed() ? 1 : 0),
