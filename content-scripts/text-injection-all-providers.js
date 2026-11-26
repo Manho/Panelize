@@ -4154,12 +4154,16 @@
     );
   }
 
+  const BARE_REJECTION_WORD_RE =
+    /^(?:fail(?:ed|ure|s)?|errors?|unsupported|not supported|rejected|unable|cannot|can't|couldn't|could not|too large)$/i;
+
   /**
    * Removes ellipsis-truncated occurrences of `normalizedName` from `text` so a
    * truncated filename containing words like "error" or "failure" (e.g.
    * "fix-gemini-...failure" or "My Very Long ... failure") is not mistaken for
    * an upload rejection banner. Uses linear-time token scanning and refuses to
-   * strip head-only rejection words (e.g. "Upload failed…" for "failed-jobs.csv").
+   * strip bare head-only rejection words (e.g. "Upload failed…" for "failed-jobs.csv")
+   * while still allowing compound prefixes like "failed-jobs-2026…".
    */
   function stripMatchingTruncatedFileNameTokens(text, normalizedName, candidateLabels = []) {
     if (!text || !normalizedName || !TRUNCATED_NAME_ELLIPSIS_RE.test(text)) {
@@ -4171,7 +4175,7 @@
       if (!parsed || parsed.cleaned.length > maxCandidateLength) {
         return null;
       }
-      if (!parsed.tail && REJECTION_TEXT_RE.test(parsed.head)) {
+      if (!parsed.tail && BARE_REJECTION_WORD_RE.test(parsed.head)) {
         return null;
       }
       return matchesTruncatedFileName(parsed.cleaned, normalizedName) ? parsed.cleaned : null;
@@ -6163,15 +6167,30 @@
         const chipIndex = chips.findIndex((chip, index) => {
           if (claimed.has(index) || !accept(chip, attachment)) return false;
           if (!rejectAmbiguousChip) return true;
-          // Skip a truncated chip when multiple distinct unassigned filenames match it,
-          // so a surviving chip from file B can never suppress re-uploading missing file A.
+          // Skip a truncated chip when multiple distinct unassigned filenames match it
+          // and fewer unclaimed matching chips remain than colliding attachments, so a
+          // surviving chip from file B never suppresses re-uploading missing file A
+          // while fully retained colliding sets keep normal partial-retry behavior.
+          const matchingUnassigned = [];
           const distinctMatchingNames = new Set();
           attachments.forEach((candidate, candidateIndex) => {
             if (!assignments.has(candidateIndex) && accept(chip, candidate)) {
+              matchingUnassigned.push(candidate);
               distinctMatchingNames.add((candidate?.name || '').trim().toLowerCase() || `#${candidateIndex}`);
             }
           });
-          return distinctMatchingNames.size === 1;
+          if (distinctMatchingNames.size <= 1) {
+            return true;
+          }
+          const competingChips = chips.reduce(
+            (count, candidateChip, candidateChipIndex) =>
+              !claimed.has(candidateChipIndex) &&
+              matchingUnassigned.some((candidate) => accept(candidateChip, candidate))
+                ? count + 1
+                : count,
+            0
+          );
+          return competingChips >= matchingUnassigned.length;
         });
         if (chipIndex >= 0) {
           claimed.add(chipIndex);
