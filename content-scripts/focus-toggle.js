@@ -103,7 +103,15 @@ function canFocusWithoutUserActivation() {
         isFeatureSupported &&
         policy.allowsFeature('focus-without-user-activation') === false
       ) {
-        return Boolean(navigator.userActivation?.isActive);
+        let isTopFrame = false;
+        try {
+          isTopFrame = window.top === window;
+        } catch {
+          isTopFrame = false;
+        }
+        const frameHasFocus =
+          typeof document.hasFocus === 'function' ? document.hasFocus() : false;
+        return isTopFrame || frameHasFocus || Boolean(navigator.userActivation?.isActive);
       }
     } catch {
       // Fall through and allow focus when policy inspection is unavailable.

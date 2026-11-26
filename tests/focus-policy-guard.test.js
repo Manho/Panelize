@@ -48,7 +48,12 @@ function setLayoutRect(element, { left = 20, top = 500, width = 600, height = 48
   return element;
 }
 
-function configurePolicyEnvironment(win, { featurePolicy, permissionsPolicy, userActivation } = {}) {
+function configurePolicyEnvironment(
+  win,
+  { featurePolicy, permissionsPolicy, userActivation, hasFocus = false } = {}
+) {
+  win.document.hasFocus = () => hasFocus;
+
   if (featurePolicy !== undefined) {
     Object.defineProperty(win.document, 'featurePolicy', {
       configurable: true,
@@ -69,11 +74,13 @@ function configurePolicyEnvironment(win, { featurePolicy, permissionsPolicy, use
   }
 }
 
-function createProviderWindow(url, policyConfig = {}) {
+function createProviderWindow(url, { framed = true, ...policyConfig } = {}) {
   const win = new Window({ url, width: 1024, height: 768 });
-  const parent = { postMessage: vi.fn() };
-  Object.defineProperty(win, 'parent', { configurable: true, value: parent });
-  Object.defineProperty(win, 'top', { configurable: true, value: parent });
+  const parent = framed ? { postMessage: vi.fn() } : win.eval('window.parent');
+  if (framed) {
+    Object.defineProperty(win, 'parent', { configurable: true, value: parent });
+    Object.defineProperty(win, 'top', { configurable: true, value: parent });
+  }
   win.chrome = {
     ...globalThis.chrome,
     runtime: {
@@ -140,6 +147,7 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
         allowsFeature,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -178,6 +186,7 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
         allowsFeature,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -212,6 +221,7 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
         allowsFeature: () => false,
       },
       userActivation: { isActive: true, hasBeenActive: true },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -238,13 +248,86 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
     }
   });
 
-  it('skips element.focus() on Gemini contenteditable when disallowed without user activation and still injects text cleanly', async () => {
+  it('allows focus() in a denied iframe when isActive is false but document.hasFocus() is true', async () => {
     const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: true,
+      featurePolicy: {
+        features: () => ['focus-without-user-activation'],
+        allowsFeature: () => false,
+      },
+      userActivation: { isActive: false, hasBeenActive: true },
+      hasFocus: true,
+    });
+    try {
+      env.document.body.innerHTML = `
+        <div class="input-area-container">
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        </div>
+      `;
+      const editor = env.document.querySelector('.ql-editor');
+      markVisible(editor, env.document);
+      const focusSpy = vi.spyOn(editor, 'focus');
+
+      env.win.eval(TEXT_INJECTION_SOURCE);
+      env.postFromHost({
+        type: 'INJECT_TEXT',
+        text: 'hello focused iframe',
+        autoSubmit: false,
+        context: 'multi-panel',
+      });
+
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(editor.textContent).toContain('hello focused iframe');
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('allows focus() in a top-level document (window.top === window) even when allowsFeature is false, hasFocus is false, and isActive is false', async () => {
+    const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: false,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
+    });
+    try {
+      env.document.body.innerHTML = `
+        <div class="input-area-container">
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+        </div>
+      `;
+      const editor = env.document.querySelector('.ql-editor');
+      markVisible(editor, env.document);
+      const focusSpy = vi.spyOn(editor, 'focus');
+
+      env.win.eval(TEXT_INJECTION_SOURCE);
+      env.postFromHost({
+        type: 'INJECT_TEXT',
+        text: 'hello top frame allowed',
+        autoSubmit: false,
+        context: 'multi-panel',
+      });
+
+      expect(env.win.top === env.win).toBe(true);
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(editor.textContent).toContain('hello top frame allowed');
+    } finally {
+      await env.close();
+    }
+  });
+
+  it('skips element.focus() on Gemini contenteditable in a cross-origin iframe when allowsFeature=false, hasFocus=false, and isActive=false, and still injects text cleanly', async () => {
+    const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: true,
+      featurePolicy: {
+        features: () => ['focus-without-user-activation'],
+        allowsFeature: () => false,
+      },
+      userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -264,6 +347,7 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
         context: 'multi-panel',
       });
 
+      expect(env.win.top === env.win).toBe(false);
       expect(focusSpy).not.toHaveBeenCalled();
       expect(editor.textContent).toContain('hello guarded gemini');
     } finally {
@@ -274,8 +358,10 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
   it('supports document.permissionsPolicy without a features() method and skips focus when disallowed', async () => {
     const allowsFeature = vi.fn(() => false);
     const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: true,
       permissionsPolicy: { allowsFeature },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -305,11 +391,13 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
 
   it('skips element.focus() on textarea providers (setFormControlValue) and still sets value cleanly', async () => {
     const env = createProviderWindow('https://chat.deepseek.com/', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -336,11 +424,13 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
 
   it('skips editor.focus() during Gemini image paste and clear input when disallowed without user activation', async () => {
     const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -385,13 +475,15 @@ describe('focus-without-user-activation guard in text-injection-all-providers.js
 });
 
 describe('focus-without-user-activation guard in custom-provider-driver.js', () => {
-  it('skips focus() when disallowed without user activation and still injects into textarea', async () => {
+  it('skips focus() when disallowed without user activation or frame focus and still injects into textarea', async () => {
     const env = createProviderWindow('https://custom.example.test/chat', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -427,13 +519,15 @@ describe('focus-without-user-activation guard in custom-provider-driver.js', () 
     }
   });
 
-  it('skips focus() when disallowed without user activation and still injects into contenteditable', async () => {
+  it('skips focus() when disallowed without user activation or frame focus and still injects into contenteditable', async () => {
     const env = createProviderWindow('https://custom.example.test/chat', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -470,13 +564,59 @@ describe('focus-without-user-activation guard in custom-provider-driver.js', () 
     }
   });
 
+  it('calls focus() in custom-provider-driver when document.hasFocus() is true even if userActivation.isActive is false', async () => {
+    const env = createProviderWindow('https://custom.example.test/chat', {
+      framed: true,
+      featurePolicy: {
+        features: () => ['focus-without-user-activation'],
+        allowsFeature: () => false,
+      },
+      userActivation: { isActive: false, hasBeenActive: true },
+      hasFocus: true,
+    });
+    try {
+      env.document.body.innerHTML = `
+        <form id="chat-form">
+          <textarea id="composer" placeholder="Ask anything"></textarea>
+          <button id="send-btn" type="submit">Send</button>
+        </form>
+      `;
+      const form = env.document.getElementById('chat-form');
+      const composer = env.document.getElementById('composer');
+      const sendBtn = env.document.getElementById('send-btn');
+      setLayoutRect(form, { top: 480, width: 700, height: 80 });
+      setLayoutRect(composer);
+      setLayoutRect(sendBtn, { left: 640, width: 60, height: 36 });
+      const focusSpy = vi.spyOn(composer, 'focus');
+
+      env.win.eval(CUSTOM_DRIVER_SOURCE);
+      env.postFromHost({
+        type: 'INJECT_TEXT',
+        context: 'multi-panel',
+        providerId: 'custom-123',
+        requestId: 'req-has-focus',
+        text: 'hello custom focused',
+        autoSubmit: false,
+      });
+
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(composer.value).toBe('hello custom focused');
+    } finally {
+      await env.close();
+    }
+  });
+
   it('calls focus() in custom-provider-driver when userActivation.isActive is true', async () => {
     const env = createProviderWindow('https://custom.example.test/chat', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: true, hasBeenActive: true },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -514,13 +654,15 @@ describe('focus-without-user-activation guard in custom-provider-driver.js', () 
 });
 
 describe('focus-without-user-activation guard in focus-toggle.js', () => {
-  it('skips focus and returns success=false when disallowed without user activation', async () => {
+  it('skips focus and returns success=false when disallowed without user activation or frame focus in a cross-origin iframe', async () => {
     const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => false,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `
@@ -546,13 +688,49 @@ describe('focus-without-user-activation guard in focus-toggle.js', () => {
     }
   });
 
+  it('allows focus in a top-level document even when allowsFeature=false, hasFocus=false, and isActive=false', async () => {
+    const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: false,
+      featurePolicy: {
+        features: () => ['focus-without-user-activation'],
+        allowsFeature: () => false,
+      },
+      userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
+    });
+    try {
+      env.document.body.innerHTML = `
+        <div class="ql-editor" contenteditable="true" role="textbox"></div>
+      `;
+      const editor = env.document.querySelector('.ql-editor');
+      markVisible(editor, env.document);
+      const focusSpy = vi.spyOn(editor, 'focus');
+
+      let listener = null;
+      env.win.chrome.runtime.onMessage.addListener = vi.fn((fn) => {
+        listener = fn;
+      });
+
+      env.win.eval(FOCUS_TOGGLE_SOURCE);
+      const sendResponse = vi.fn();
+      listener({ action: 'takeFocus' }, {}, sendResponse);
+
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      expect(sendResponse).toHaveBeenCalledWith({ success: true });
+    } finally {
+      await env.close();
+    }
+  });
+
   it('focuses and returns success=true when allowed', async () => {
     const env = createProviderWindow('https://gemini.google.com/app', {
+      framed: true,
       featurePolicy: {
         features: () => ['focus-without-user-activation'],
         allowsFeature: () => true,
       },
       userActivation: { isActive: false, hasBeenActive: false },
+      hasFocus: false,
     });
     try {
       env.document.body.innerHTML = `

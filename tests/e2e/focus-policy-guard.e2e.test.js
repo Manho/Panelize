@@ -1,10 +1,54 @@
-import { test, expect } from '@playwright/test';
-import { launchExtension, openMultiPanel } from './extension-harness.js';
+import { test, expect, chromium } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { isHeadedRun } from './browser-launch-options.js';
+import {
+  REPO_EXTENSION_PATH,
+  launchExtension,
+  openMultiPanel,
+  withExternalHostsBlocked,
+} from './extension-harness.js';
 
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64'
 );
+
+const POLICY_WARNING_PATTERN = /focus-without-user-activation|permissions policy violation|blocked focus call|unrecognized feature|origin trial controlled feature/i;
+
+function resolveBrandedChromePath() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const command of ['google-chrome', 'google-chrome-stable']) {
+    try {
+      const resolved = execFileSync('which', [command], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (resolved && existsSync(resolved)) {
+        return resolved;
+      }
+    } catch {
+      // Binary not on PATH.
+    }
+  }
+
+  return null;
+}
 
 function renderGeminiFixture() {
   return `<!doctype html>
@@ -28,19 +72,7 @@ function renderGeminiFixture() {
         allowsFocus: hasFeature ? fp.allowsFeature('focus-without-user-activation') : null,
         isActiveAtBoot: navigator.userActivation?.isActive ?? null,
       },
-      policyReports: [],
     };
-    if (typeof ReportingObserver === 'function') {
-      new ReportingObserver((reports) => {
-        for (const report of reports) {
-          window.__fixture.policyReports.push({
-            type: report.type,
-            featureId: report.body?.featureId || null,
-            message: report.body?.message || null,
-          });
-        }
-      }, { types: ['permissions-policy-violation', 'feature-policy-violation'], buffered: true }).observe();
-    }
     editor.addEventListener('paste', (event) => {
       window.__fixture.pastedImages += event.clipboardData?.files?.length || 0;
       event.preventDefault();
@@ -54,60 +86,89 @@ function renderGeminiFixture() {
 </html>`;
 }
 
-function renderDeepSeekFixture() {
-  return `<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>DeepSeek policy fixture</title></head>
-<body>
-  <main>
-    <textarea id="deepseek-editor" placeholder="Message DeepSeek" rows="2"></textarea>
-    <div role="button" tabindex="0" id="deepseek-send" class="ds-button">Send</div>
-  </main>
-  <script>
-    const editor = document.getElementById('deepseek-editor');
-    window.__fixture = { sentTexts: [] };
-    document.getElementById('deepseek-send').addEventListener('click', () => {
-      window.__fixture.sentTexts.push(editor.value);
-      editor.value = '';
-    });
-  </script>
-</body>
-</html>`;
-}
+async function launchBrandedChromeWithExtension(brandedChromePath, extensionPath = REPO_EXTENSION_PATH) {
+  const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'panelize-branded-chrome-'));
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    executablePath: brandedChromePath,
+    headless: !isHeadedRun(),
+    viewport: { width: 1280, height: 800 },
+    args: [
+      '--enable-unsafe-extension-debugging',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      ...withExternalHostsBlocked([]),
+    ],
+    ignoreDefaultArgs: ['--disable-extensions'],
+  });
 
-const POLICY_WARNING_PATTERN = /focus-without-user-activation|permissions policy violation|blocked focus call|unrecognized feature|origin trial controlled feature/i;
+  const browserCdp = await context.browser().newBrowserCDPSession();
+  const { id: extensionId } = await browserCdp.send('Extensions.loadUnpacked', {
+    path: extensionPath,
+  });
+
+  const isExtensionWorker = (worker) => worker.url().startsWith('chrome-extension://');
+  let serviceWorker = context.serviceWorkers().filter(isExtensionWorker).at(-1);
+  if (!serviceWorker) {
+    serviceWorker = await context.waitForEvent('serviceworker', isExtensionWorker);
+  }
+
+  return {
+    context,
+    serviceWorker,
+    extensionId,
+    extensionUrl: (relativePath) => `chrome-extension://${extensionId}/${relativePath}`,
+    async close() {
+      await browserCdp.detach().catch(() => {});
+      await context.close().catch(() => {});
+      await rm(userDataDir, { recursive: true, force: true });
+    },
+  };
+}
 
 test.describe('focus-without-user-activation policy guard E2E', () => {
   test.setTimeout(60000);
 
-  test('injects text and images into cross-origin provider iframes without emitting focus-without-user-activation violations when Blink enforces the policy', async () => {
-    const extension = await launchExtension({
-      viewport: { width: 1280, height: 800 },
-      args: ['--enable-blink-features=BlockingFocusWithoutUserActivation'],
-    });
+  test('emits zero focus-without-user-activation violations on branded Google Chrome when injecting into a sandboxed Gemini panel iframe', async () => {
+    const brandedChromePath = resolveBrandedChromePath();
+    test.skip(
+      !brandedChromePath,
+      'Requires branded Google Chrome (158+) to emit sandboxed focus-without-user-activation violations'
+    );
+
+    const extension = await launchBrandedChromeWithExtension(brandedChromePath);
     try {
+      // Enable Developer Mode and extension error collection before opening Multi-Panel
+      // so any real Chrome extension runtime error is recorded just like chrome://extensions/?errors=...
+      const extensionsPage = await extension.context.newPage();
+      await extensionsPage.goto('chrome://extensions/');
+      await extensionsPage.evaluate(async (id) => {
+        await chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true });
+        await chrome.developerPrivate.updateExtensionConfiguration({
+          extensionId: id,
+          errorCollection: true,
+        });
+      }, extension.extensionId);
+
+      // Plain Gemini fixture with NO Permissions-Policy header: the real Multi-Panel iframe
+      // `sandbox` attribute triggers Chrome's `focus-without-user-activation` policy.
       await extension.context.route('https://gemini.google.com/**', (route) =>
         route.fulfill({
           status: 200,
           contentType: 'text/html',
-          headers: { 'Permissions-Policy': 'focus-without-user-activation=()' },
           body: renderGeminiFixture(),
         })
       );
-      await extension.context.route('https://chat.deepseek.com/**', (route) =>
-        route.fulfill({
-          status: 200,
-          contentType: 'text/html',
-          headers: { 'Permissions-Policy': 'focus-without-user-activation=()' },
-          body: renderDeepSeekFixture(),
-        })
-      );
 
-      const page = await openMultiPanel(extension, {
-        providers: ['gemini', 'deepseek'],
-        layout: '1x2',
+      await extension.serviceWorker.evaluate(async (settings) => {
+        await chrome.storage.sync.set(settings);
+      }, {
+        enabledProviders: ['gemini'],
+        providerOrder: ['gemini'],
+        multiPanelProviders: ['gemini'],
+        multiPanelLayout: '1x1',
       });
 
+      const page = await extension.context.newPage();
       const policyConsoleMessages = [];
       page.on('console', (msg) => {
         const text = msg.text();
@@ -121,20 +182,25 @@ test.describe('focus-without-user-activation policy guard E2E', () => {
         }
       });
 
-      const geminiEditor = page.frameLocator('iframe[src*="gemini"]').locator('.ql-editor');
-      const deepseekEditor = page.frameLocator('iframe[src*="deepseek"]').locator('#deepseek-editor');
-      await expect(geminiEditor).toBeVisible();
-      await expect(deepseekEditor).toBeVisible();
+      await page.goto(extension.extensionUrl('multi-panel/multi-panel.html'));
+      // Wait for the panel iframe to finish loading from the host page without touching the
+      // iframe via frameLocator/evaluate first (CDP evaluation activates userGesture).
+      await page.waitForFunction(() => {
+        const iframes = document.querySelectorAll('#panel-grid iframe');
+        const loadings = Array.from(document.querySelectorAll('#panel-grid .panel-loading'));
+        return (
+          iframes.length === 1 &&
+          loadings.length === 1 &&
+          loadings.every((el) => el.classList.contains('hidden'))
+        );
+      });
 
-      // Fill text into both contenteditable (Gemini) and textarea (DeepSeek) without activating either iframe.
-      // Note: do NOT call frame.evaluate() before filling, as CDP Runtime.evaluate activates userGesture.
-      await page.fill('#unified-input', 'guarded cross-origin prompt');
+      // Fill text into the sandboxed Gemini iframe without user activation.
+      await page.fill('#unified-input', 'guarded branded chrome prompt');
       await page.click('#fill-input-btn');
+      await expect(page.locator('#send-status')).toHaveText('Filled 1 input');
 
-      await expect(geminiEditor).toHaveText('guarded cross-origin prompt');
-      await expect(deepseekEditor).toHaveValue('guarded cross-origin prompt');
-
-      // Also exercise image paste + fill on Gemini while the iframe still has no user activation.
+      // Exercise image paste + text fill while the iframe still has no user activation.
       await page.locator('#image-file-input').setInputFiles({
         name: 'pixel.png',
         mimeType: 'image/png',
@@ -143,22 +209,39 @@ test.describe('focus-without-user-activation policy guard E2E', () => {
       await expect(page.locator('.image-preview-item').first()).toBeVisible();
       await page.fill('#unified-input', ' with image');
       await page.click('#fill-input-btn');
+      await expect(page.locator('#send-status')).toHaveText('Filled 1 input');
+      await page.waitForTimeout(200);
 
-      await expect(geminiEditor).toContainText('with image');
-      await page.waitForTimeout(300);
-
-      // Inspect iframe state AFTER all unactivated injections have completed.
+      // Inspect iframe state and chrome://extensions runtime errors AFTER all fills finish.
       const geminiFrame = page.frames().find((f) => f.url().startsWith('https://gemini.google.com/'));
-      const fixture = await geminiFrame.evaluate(() => window.__fixture);
+      const frameResult = await geminiFrame.evaluate(() => ({
+        fixture: window.__fixture,
+        editorText: document.querySelector('.ql-editor')?.textContent || '',
+      }));
 
-      expect(fixture.bootPolicy).toEqual({
+      const runtimeErrors = await extensionsPage.evaluate(async (id) => {
+        const info = await chrome.developerPrivate.getExtensionInfo(id);
+        return (info.runtimeErrors || []).map((err) => ({
+          message: err.message,
+          source: err.source,
+          severity: err.severity,
+        }));
+      }, extension.extensionId);
+
+      const policyRuntimeErrors = runtimeErrors.filter((err) =>
+        POLICY_WARNING_PATTERN.test(err.message || '')
+      );
+
+      expect(frameResult.fixture.bootPolicy).toEqual({
         hasFeature: true,
         allowsFocus: false,
         isActiveAtBoot: false,
       });
-      expect(fixture.pastedImages).toBe(1);
-      expect(fixture.policyReports).toEqual([]);
+      expect(frameResult.editorText).toContain('guarded branded chrome prompt');
+      expect(frameResult.editorText).toContain('with image');
+      expect(frameResult.fixture.pastedImages).toBe(1);
       expect(policyConsoleMessages).toEqual([]);
+      expect(policyRuntimeErrors).toEqual([]);
     } finally {
       await extension.close();
     }

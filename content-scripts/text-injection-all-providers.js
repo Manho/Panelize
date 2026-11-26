@@ -1187,7 +1187,15 @@
           isFeatureSupported &&
           policy.allowsFeature(FOCUS_WITHOUT_USER_ACTIVATION_FEATURE) === false
         ) {
-          return Boolean(navigator.userActivation?.isActive);
+          let isTopFrame = false;
+          try {
+            isTopFrame = window.top === window;
+          } catch {
+            isTopFrame = false;
+          }
+          const frameHasFocus =
+            typeof document.hasFocus === 'function' ? document.hasFocus() : false;
+          return isTopFrame || frameHasFocus || Boolean(navigator.userActivation?.isActive);
         }
       } catch {
         // Fall through and allow focus when policy inspection is unavailable.
