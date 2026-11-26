@@ -331,6 +331,53 @@
     setTimeout(() => document.removeEventListener('focusin', captureFocus, true), USER_FOCUS_RESTORE_WINDOW_MS);
   }
 
+  const FOCUS_WITHOUT_USER_ACTIVATION_FEATURE = 'focus-without-user-activation';
+
+  function canProgrammaticallyFocus() {
+    const policy = typeof document.permissionsPolicy?.allowsFeature === 'function'
+      ? document.permissionsPolicy
+      : document.featurePolicy;
+
+    if (policy && typeof policy.allowsFeature === 'function') {
+      try {
+        const supportedFeatures = typeof policy.features === 'function'
+          ? policy.features()
+          : null;
+        const isFeatureSupported = !Array.isArray(supportedFeatures) ||
+          supportedFeatures.includes(FOCUS_WITHOUT_USER_ACTIVATION_FEATURE);
+
+        if (
+          isFeatureSupported &&
+          policy.allowsFeature(FOCUS_WITHOUT_USER_ACTIVATION_FEATURE) === false
+        ) {
+          return Boolean(navigator.userActivation?.isActive);
+        }
+      } catch {
+        // Fall through and allow focus when policy inspection is unavailable.
+      }
+    }
+
+    return true;
+  }
+
+  function safeFocusElement(element, options) {
+    if (!element || typeof element.focus !== 'function' || !canProgrammaticallyFocus()) {
+      return false;
+    }
+
+    if (options !== undefined) {
+      try {
+        element.focus(options);
+        return true;
+      } catch {
+        // Fall through to plain focus() for environments that reject focus options.
+      }
+    }
+
+    element.focus();
+    return true;
+  }
+
   function restoreUserFocus() {
     const entry = lastUserFocus;
     lastUserFocus = null;
@@ -340,12 +387,7 @@
     if (Date.now() - entry.at > USER_FOCUS_RESTORE_WINDOW_MS) {
       return false;
     }
-    try {
-      entry.element.focus({ preventScroll: true });
-    } catch {
-      entry.element.focus();
-    }
-    return true;
+    return safeFocusElement(entry.element, { preventScroll: true });
   }
 
   function stopUserInteractionTracking() {
@@ -622,11 +664,7 @@
 
   function setFormControlValue(el, nextValue, insertedChunk = '') {
     const previousValue = el.value || '';
-    try {
-      el.focus({ preventScroll: true });
-    } catch {
-      el.focus();
-    }
+    safeFocusElement(el, { preventScroll: true });
 
     try {
       el.dispatchEvent(
@@ -750,11 +788,7 @@
   }
 
   async function injectIntoContentEditable(el, text) {
-    try {
-      el.focus({ preventScroll: true });
-    } catch {
-      el.focus();
-    }
+    safeFocusElement(el, { preventScroll: true });
     moveCaretToEnd(el);
 
     const beforeRaw = getComposerText(el);
@@ -973,11 +1007,7 @@
     }
 
     if (isContentEditableElement(composer)) {
-      try {
-        composer.focus({ preventScroll: true });
-      } catch {
-        composer.focus();
-      }
+      safeFocusElement(composer, { preventScroll: true });
 
       let beforeInputHandled = false;
       const onBeforeInput = (evt) => {
@@ -1177,11 +1207,7 @@
 
   function dispatchEnterKeySequence(composer) {
     if (!composer) return false;
-    try {
-      composer.focus({ preventScroll: true });
-    } catch {
-      composer.focus();
-    }
+    safeFocusElement(composer, { preventScroll: true });
     const init = {
       key: 'Enter',
       code: 'Enter',
@@ -1981,11 +2007,7 @@
     }
 
     const baselineState = inspectComposerAttachments(composer, fileNames);
-    try {
-      composer.focus({ preventScroll: true });
-    } catch {
-      composer.focus();
-    }
+    safeFocusElement(composer, { preventScroll: true });
 
     const dt = buildFileDataTransfer(files);
 
