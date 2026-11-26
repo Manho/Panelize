@@ -3197,4 +3197,1015 @@ describe('provider document upload adapters (Tier A + Tier B)', () => {
       })
     );
   });
+
+  // ===== Gemini false-failure regression guards (deferred preview container + middle-truncated filenames) =====
+
+  const mountGeminiHydrogenDeferred = ({
+    completeProcessFile = true,
+    processFileStatus = 200,
+    processFileDelayMs = 400,
+    showRejectionAlert = false,
+    ignoreChange = false,
+  } = {}) => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <input-area-v2>
+          <div class="input-area">
+            <div class="text-input-field with-toolbox-drawer">
+              <div class="ql-editor" contenteditable="true" role="textbox"></div>
+              <button id="gemini-deferred-upload" type="button" aria-label="Upload &amp; tools">+</button>
+            </div>
+          </div>
+        </input-area-v2>
+      </input-container>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gemini-deferred-upload');
+    const textInputField = document.querySelector('.text-input-field');
+    [editor, uploadBtn].forEach(markVisible);
+
+    const resourceEntries = [];
+    const perfSpy = vi.spyOn(performance, 'getEntriesByType').mockImplementation((type) =>
+      type === 'resource' ? [...resourceEntries] : []
+    );
+
+    const uploads = [];
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+
+      const imgInput = document.createElement('input');
+      imgInput.type = 'file';
+      imgInput.multiple = true;
+      imgInput.className = 'hidden-file-input ng-star-inserted';
+      imgInput.accept = 'image/*,video/*';
+
+      const handleChange = (input) => {
+        const file = input.files?.[0];
+        if (!file || ignoreChange) return;
+        uploads.push(file.name);
+        // Gemini immediately adds .with-file-preview and mounts an empty .attachment-preview-wrapper
+        // while <uploader-file-preview-container> is deferred by Angular @defer (on idle).
+        textInputField.classList.add('with-file-preview');
+        if (!textInputField.querySelector('.attachment-preview-wrapper')) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'attachment-preview-wrapper ng-star-inserted';
+          wrapper.innerHTML = '<!----><!----><!---->';
+          textInputField.prepend(wrapper);
+        }
+        if (completeProcessFile) {
+          setTimeout(() => {
+            resourceEntries.push({
+              name: `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/ProcessFile?bl=test&seq=${uploads.length}`,
+              entryType: 'resource',
+              initiatorType: 'fetch',
+              responseStatus: processFileStatus,
+              duration: 280,
+              responseEnd: 1000 + uploads.length * 500,
+            });
+            if (showRejectionAlert) {
+              const snack = document.createElement('mat-snack-bar-container');
+              snack.setAttribute('role', 'alert');
+              snack.textContent = `Upload failed: ${file.name}`;
+              document.body.append(snack);
+            }
+          }, processFileDelayMs);
+        }
+      };
+
+      docInput.addEventListener('change', () => handleChange(docInput));
+      imgInput.addEventListener('change', () => handleChange(imgInput));
+      menu.append(docInput, imgInput);
+      document.body.append(overlay);
+    });
+
+    const onEscape = (event) => {
+      if (event.key === 'Escape') {
+        document.querySelector('.cdk-overlay-pane')?.remove();
+      }
+    };
+    document.addEventListener('keydown', onEscape);
+
+    return {
+      editor,
+      textInputField,
+      uploads,
+      cleanup: () => {
+        document.removeEventListener('keydown', onEscape);
+        perfSpy.mockRestore();
+      },
+    };
+  };
+
+  it('Gemini Hydrogen: confirms single file + text when <uploader-file-preview-container> is deferred by Angular @defer(on idle) and ProcessFile returns 200', async () => {
+    const { editor, textInputField, uploads, cleanup } = mountGeminiHydrogenDeferred();
+    try {
+      const txt = makeTxtAttachment('gem-defer-txt', 'sample-note.txt');
+      dispatchDocFill({
+        attachments: [txt],
+        text: 'Summarize the attached note.',
+        requestId: 'gemini-deferred-single-txt',
+      });
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(uploads).toEqual(['sample-note.txt']);
+      expect(editor.textContent).toContain('Summarize the attached note.');
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-deferred-single-txt',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['gem-defer-txt'],
+        })
+      );
+
+      // Retry while deferred wrapper is still staged must NOT re-upload, even if editor text was cleared.
+      editor.textContent = '';
+      window.parent.postMessage.mockClear();
+      dispatchRetryWithFallback('gemini-deferred-retry-staged', txt);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(uploads).toEqual(['sample-note.txt']);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-deferred-retry-staged',
+          status: 'succeeded',
+          succeededAttachmentIds: ['gem-defer-txt'],
+        })
+      );
+
+      // Once user submits/clears the composer (wrapper + class removed), retry re-uploads.
+      editor.textContent = '';
+      textInputField.classList.remove('with-file-preview');
+      textInputField.querySelector('.attachment-preview-wrapper')?.remove();
+      window.parent.postMessage.mockClear();
+      dispatchRetryWithFallback('gemini-deferred-retry-cleared', txt);
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(uploads).toEqual(['sample-note.txt', 'sample-note.txt']);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-deferred-retry-cleared',
+          status: 'succeeded',
+          succeededAttachmentIds: ['gem-defer-txt'],
+        })
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Gemini Hydrogen: confirms multiple mixed files (PNG + PDF + TXT) + text and file-only while preview container stays deferred', async () => {
+    const { editor, uploads, cleanup } = mountGeminiHydrogenDeferred();
+    try {
+      dispatchDocFill({
+        attachments: [
+          makeImageAttachment('gem-defer-img', 'diagram.png'),
+          makePdfAttachment('gem-defer-pdf', 'report.pdf'),
+          makeTxtAttachment('gem-defer-txt2', 'notes.txt'),
+        ],
+        text: 'Analyze all three files.',
+        requestId: 'gemini-deferred-multi',
+      });
+      await vi.advanceTimersByTimeAsync(8000);
+
+      expect(uploads).toEqual(['diagram.png', 'report.pdf', 'notes.txt']);
+      expect(editor.textContent).toContain('Analyze all three files.');
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-deferred-multi',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['gem-defer-img', 'gem-defer-pdf', 'gem-defer-txt2'],
+        })
+      );
+
+      // File-only (no text) while deferred also succeeds.
+      window.parent.postMessage.mockClear();
+      dispatchDocFill({
+        attachments: [makeTxtAttachment('gem-defer-only', 'file-only.txt')],
+        text: '',
+        requestId: 'gemini-deferred-file-only',
+      });
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-deferred-file-only',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['gem-defer-only'],
+        })
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('Gemini Hydrogen: still reports preview-timeout on genuine deferred upload failures (non-2xx ProcessFile, missing ProcessFile, rejection snackbar, or ignored change)', async () => {
+    // Case A: ProcessFile returns 500
+    {
+      const { cleanup } = mountGeminiHydrogenDeferred({ processFileStatus: 500 });
+      try {
+        dispatchDocFill({
+          attachments: [makeTxtAttachment('fail-500', 'fail.txt')],
+          text: 'Should fail',
+          requestId: 'gemini-deferred-fail-500',
+        });
+        await vi.advanceTimersByTimeAsync(13000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-deferred-fail-500',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: [],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+
+    // Case B: Wrapper appeared but ProcessFile never ran
+    {
+      const { cleanup } = mountGeminiHydrogenDeferred({ completeProcessFile: false });
+      try {
+        dispatchDocFill({
+          attachments: [makeTxtAttachment('fail-no-rpc', 'stalled.txt')],
+          text: 'Should fail',
+          requestId: 'gemini-deferred-fail-no-rpc',
+        });
+        await vi.advanceTimersByTimeAsync(13000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-deferred-fail-no-rpc',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: [],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+
+    // Case C: Rejection snackbar appeared alongside ProcessFile 200
+    {
+      const { cleanup } = mountGeminiHydrogenDeferred({ showRejectionAlert: true });
+      try {
+        dispatchDocFill({
+          attachments: [makeTxtAttachment('fail-snack', 'rejected.txt')],
+          text: 'Should fail',
+          requestId: 'gemini-deferred-fail-snack',
+        });
+        await vi.advanceTimersByTimeAsync(13000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-deferred-fail-snack',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: [],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+
+    // Case D: Unhydrated input ignored the change event completely
+    {
+      const { cleanup } = mountGeminiHydrogenDeferred({ ignoreChange: true });
+      try {
+        dispatchDocFill({
+          attachments: [makeTxtAttachment('fail-ignored', 'ignored.txt')],
+          text: 'Should fail',
+          requestId: 'gemini-deferred-fail-ignored',
+        });
+        await vi.advanceTimersByTimeAsync(13000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-deferred-fail-ignored',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: [],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+  });
+
+  it('Gemini Hydrogen: confirms middle-ellipsis truncated long filenames (including rejection-word stems and duplicates), reconciles retries, and rejects unrelated truncated chips', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <div class="text-input-field with-file-preview">
+          <div class="attachment-preview-wrapper">
+            <uploader-file-preview-container id="gem-trunc-previews"></uploader-file-preview-container>
+          </div>
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          <button id="gem-trunc-upload" type="button" aria-label="Upload &amp; tools">+</button>
+        </div>
+      </input-container>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gem-trunc-upload');
+    const previews = document.getElementById('gem-trunc-previews');
+    [editor, uploadBtn].forEach(markVisible);
+
+    const middleTruncate = (name) => {
+      const stem = name.replace(/\.[^.]+$/, '');
+      if (stem.length <= 20) return stem;
+      return `${stem.slice(0, 10)}...${stem.slice(-10)}`;
+    };
+
+    const uploads = [];
+    const seenCounts = new Map();
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      docInput.addEventListener('change', () => {
+        const file = docInput.files?.[0];
+        if (!file) return;
+        uploads.push(file.name);
+        if (file.name === 'dropped-long-file-that-fails-to-upload-2026.txt') {
+          // Simulate an unrelated chip already present or appearing with a different name.
+          const unrelated = document.createElement('uploader-file-preview');
+          unrelated.className = 'file-preview-chip ng-star-inserted';
+          unrelated.innerHTML = `
+            <span>TXT</span>
+            <span class="gem-attachment-text">other-file...2025-draft</span>
+            <button type="button" aria-label="close other-file...2025-draft"></button>
+          `;
+          previews.append(unrelated);
+          return;
+        }
+        const count = (seenCounts.get(file.name) || 0) + 1;
+        seenCounts.set(file.name, count);
+        const label = count > 1 ? `${middleTruncate(file.name)} (${count - 1})` : middleTruncate(file.name);
+        const badge = file.name.endsWith('.pdf') ? 'PDF' : 'TXT';
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        chip.innerHTML = `
+          <span>${badge}</span>
+          <span class="gem-attachment-text">${label}</span>
+          <button type="button" aria-label="close ${label}"></button>
+        `;
+        previews.append(chip);
+      });
+      menu.append(docInput);
+      document.body.append(overlay);
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      const longReport = makeTxtAttachment(
+        'long-1',
+        'very-long-quarterly-engineering-architecture-report-2026-final.txt'
+      );
+      const failureWordPdf = makePdfAttachment(
+        'long-2',
+        'fix-gemini-file-text-false-failure.pdf'
+      );
+      const longReportDup = makeTxtAttachment(
+        'long-3',
+        'very-long-quarterly-engineering-architecture-report-2026-final.txt'
+      );
+
+      dispatchDocFill({
+        attachments: [longReport, failureWordPdf, longReportDup],
+        text: 'Review the long-named files.',
+        requestId: 'gemini-middle-truncated-names',
+      });
+      await vi.advanceTimersByTimeAsync(8000);
+
+      expect(uploads).toEqual([
+        'very-long-quarterly-engineering-architecture-report-2026-final.txt',
+        'fix-gemini-file-text-false-failure.pdf',
+        'very-long-quarterly-engineering-architecture-report-2026-final.txt',
+      ]);
+      expect(editor.textContent).toContain('Review the long-named files.');
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-middle-truncated-names',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['long-1', 'long-2', 'long-3'],
+        })
+      );
+
+      // Partial retry: remove only failureWordPdf chip; retained truncated chips must NOT be re-uploaded.
+      const pdfChip = [...previews.querySelectorAll('uploader-file-preview')].find((el) =>
+        el.textContent.includes('PDF')
+      );
+      pdfChip.remove();
+      editor.textContent = '';
+      window.parent.postMessage.mockClear();
+      dispatchRetryWithFallback('gemini-truncated-partial-retry', longReport, failureWordPdf);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(uploads).toHaveLength(4);
+      expect(uploads.at(-1)).toBe('fix-gemini-file-text-false-failure.pdf');
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-truncated-partial-retry',
+          status: 'succeeded',
+          succeededAttachmentIds: ['long-1', 'long-2'],
+        })
+      );
+
+      // Unrelated truncated chip must NEVER confirm a dropped file.
+      window.parent.postMessage.mockClear();
+      dispatchDocFill({
+        attachments: [makeTxtAttachment('long-fail', 'dropped-long-file-that-fails-to-upload-2026.txt')],
+        text: 'Must fail',
+        requestId: 'gemini-truncated-unrelated-must-fail',
+      });
+      await vi.advanceTimersByTimeAsync(13000);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-truncated-unrelated-must-fail',
+          status: 'failed',
+          reason: 'preview-timeout',
+          succeededAttachmentIds: [],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Gemini Hydrogen (P1-1): does not confirm dropped 3rd PNG or 2nd duplicate-named doc when @defer resolves mid-flight with earlier chips', async () => {
+    const mountDeferredMidFlightResolve = ({ dropOnIndex, resolveEarlierChips }) => {
+      window.happyDOM.setURL('https://gemini.google.com/app');
+      document.body.innerHTML = `
+        <input-container>
+          <input-area-v2>
+            <div class="input-area">
+              <div class="text-input-field with-toolbox-drawer">
+                <div class="ql-editor" contenteditable="true" role="textbox"></div>
+                <button id="gemini-p11-upload" type="button" aria-label="Upload &amp; tools">+</button>
+              </div>
+            </div>
+          </input-area-v2>
+        </input-container>
+      `;
+      const editor = document.querySelector('.ql-editor');
+      const uploadBtn = document.getElementById('gemini-p11-upload');
+      const textInputField = document.querySelector('.text-input-field');
+      [editor, uploadBtn].forEach(markVisible);
+
+      const resourceEntries = [];
+      const perfSpy = vi.spyOn(performance, 'getEntriesByType').mockImplementation((type) =>
+        type === 'resource' ? [...resourceEntries] : []
+      );
+      const uploads = [];
+
+      uploadBtn.addEventListener('click', () => {
+        if (document.querySelector('.cdk-overlay-pane')) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'cdk-overlay-pane';
+        overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+        const menu = overlay.querySelector('[role="menu"]');
+
+        const docInput = document.createElement('input');
+        docInput.type = 'file';
+        docInput.multiple = true;
+        docInput.className = 'hidden-file-input';
+        docInput.accept = '.txt,.pdf,.doc,.docx';
+
+        const imgInput = document.createElement('input');
+        imgInput.type = 'file';
+        imgInput.multiple = true;
+        imgInput.className = 'hidden-file-input ng-star-inserted';
+        imgInput.accept = 'image/*,video/*';
+
+        const onChange = (input) => {
+          const file = input.files?.[0];
+          if (!file) return;
+          uploads.push(file.name);
+          const idx = uploads.length;
+          textInputField.classList.add('with-file-preview');
+          let wrapper = textInputField.querySelector('.attachment-preview-wrapper');
+          if (!wrapper) {
+            wrapper = document.createElement('div');
+            wrapper.className = 'attachment-preview-wrapper ng-star-inserted';
+            wrapper.innerHTML = '<!----><!---->';
+            textInputField.prepend(wrapper);
+          }
+          if (idx === dropOnIndex) {
+            // Silently drop this file (no ProcessFile RPC), while Angular @defer resolves and renders ONLY earlier chips.
+            setTimeout(() => {
+              const container = document.createElement('uploader-file-preview-container');
+              resolveEarlierChips(container);
+              wrapper.append(container);
+            }, 200);
+            return;
+          }
+          setTimeout(() => {
+            resourceEntries.push({
+              name: `https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/ProcessFile?bl=test&seq=${idx}`,
+              entryType: 'resource',
+              initiatorType: 'fetch',
+              responseStatus: 200,
+              duration: 180,
+              responseEnd: 500 + idx * 400,
+            });
+          }, 250);
+        };
+
+        docInput.addEventListener('change', () => onChange(docInput));
+        imgInput.addEventListener('change', () => onChange(imgInput));
+        menu.append(docInput, imgInput);
+        document.body.append(overlay);
+      });
+
+      const onEscape = (event) => {
+        if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+      };
+      document.addEventListener('keydown', onEscape);
+      return {
+        cleanup: () => {
+          document.removeEventListener('keydown', onEscape);
+          perfSpy.mockRestore();
+        },
+      };
+    };
+
+    // P1-1a: 3 PNGs under deferred preview; #3 is dropped while @defer resolves showing #1 and #2.
+    {
+      const { cleanup } = mountDeferredMidFlightResolve({
+        dropOnIndex: 3,
+        resolveEarlierChips: (container) => {
+          for (let i = 1; i <= 2; i += 1) {
+            const chip = document.createElement('uploader-file-preview');
+            chip.className = 'file-preview-chip';
+            chip.innerHTML = `<img src="blob:https://gemini.google.com/img-${i}" alt="preview">`;
+            container.append(chip);
+          }
+        },
+      });
+      try {
+        dispatchDocFill({
+          attachments: [
+            makeImageAttachment('p1-img-1', 'first.png'),
+            makeImageAttachment('p1-img-2', 'second.png'),
+            makeImageAttachment('p1-img-3', 'third.png'),
+          ],
+          text: 'Compare three images',
+          requestId: 'gemini-p11a-three-pngs',
+        });
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-p11a-three-pngs',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: ['p1-img-1', 'p1-img-2'],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+
+    // P1-1b: 2 duplicate-named docs (report.txt); #2 is dropped while @defer resolves showing #1.
+    {
+      const { cleanup } = mountDeferredMidFlightResolve({
+        dropOnIndex: 2,
+        resolveEarlierChips: (container) => {
+          const chip = document.createElement('uploader-file-preview');
+          chip.className = 'file-preview-chip';
+          chip.innerHTML = '<span>TXT</span><span class="gem-attachment-text">report</span>';
+          container.append(chip);
+        },
+      });
+      try {
+        dispatchDocFill({
+          attachments: [
+            makeTxtAttachment('p1-doc-1', 'report.txt'),
+            makeTxtAttachment('p1-doc-2', 'report.txt'),
+          ],
+          text: 'Compare duplicate docs',
+          requestId: 'gemini-p11b-dup-docs',
+        });
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-p11b-dup-docs',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: ['p1-doc-1'],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+  });
+
+  it('Gemini Hydrogen (P1-2 & P2-2): fails when a rejection snackbar appears 150ms after ProcessFile 200 or replaces a dismissed prior alert', async () => {
+    // P1-2: ProcessFile 200 completes at +400ms, then rejection snackbar mounts 150ms later (+550ms).
+    {
+      const { cleanup } = mountGeminiHydrogenDeferred({
+        processFileStatus: 200,
+        processFileDelayMs: 400,
+        showRejectionAlert: false,
+      });
+      try {
+        setTimeout(() => {
+          const snack = document.createElement('mat-snack-bar-container');
+          snack.setAttribute('role', 'alert');
+          snack.textContent = 'Upload failed: rejected-late.txt';
+          document.body.append(snack);
+        }, 650);
+
+        dispatchDocFill({
+          attachments: [makeTxtAttachment('p12-late-snack', 'rejected-late.txt')],
+          text: 'Should fail on late rejection snackbar',
+          requestId: 'gemini-p12-late-snackbar',
+        });
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-p12-late-snackbar',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: [],
+          })
+        );
+      } finally {
+        cleanup();
+      }
+    }
+
+    // P2-2: Pre-existing rejection alert is dismissed while a brand-new rejection alert appears (count 1 -> 1).
+    {
+      const { cleanup } = mountGeminiHydrogenDeferred({
+        processFileStatus: 200,
+        processFileDelayMs: 400,
+        showRejectionAlert: false,
+      });
+      const oldAlert = document.createElement('mat-snack-bar-container');
+      oldAlert.setAttribute('role', 'alert');
+      oldAlert.textContent = 'Upload failed: earlier.txt';
+      document.body.append(oldAlert);
+      try {
+        setTimeout(() => {
+          oldAlert.remove();
+          const freshAlert = document.createElement('mat-snack-bar-container');
+          freshAlert.setAttribute('role', 'alert');
+          freshAlert.textContent = 'Upload failed: swapped-alert.txt';
+          document.body.append(freshAlert);
+        }, 550);
+
+        dispatchDocFill({
+          attachments: [makeTxtAttachment('p22-swap-alert', 'swapped-alert.txt')],
+          text: 'Should fail on swapped alert element',
+          requestId: 'gemini-p22-swapped-alert',
+        });
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(getLastActionResult()).toEqual(
+          expect.objectContaining({
+            requestId: 'gemini-p22-swapped-alert',
+            status: 'failed',
+            reason: 'preview-timeout',
+            succeededAttachmentIds: [],
+          })
+        );
+      } finally {
+        oldAlert.remove();
+        cleanup();
+      }
+    }
+  });
+
+  it('Gemini Hydrogen (P2-1 & Nit 1): handles 40k-char long unbroken tokens in linear time and keeps head-only rejection text ("Upload failed…") rejected for failed-jobs.csv', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <div class="text-input-field with-file-preview">
+          <div class="attachment-preview-wrapper">
+            <uploader-file-preview-container id="gem-p21-previews"></uploader-file-preview-container>
+          </div>
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          <button id="gem-p21-upload" type="button" aria-label="Upload &amp; tools">+</button>
+        </div>
+      </input-container>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gem-p21-upload');
+    const previews = document.getElementById('gem-p21-previews');
+    [editor, uploadBtn].forEach(markVisible);
+
+    // Mount a 40k-char payload containing "..." and a long unbroken base64-like token inside a preview chip.
+    const hugeBanner = document.createElement('uploader-file-preview');
+    hugeBanner.className = 'file-preview-chip';
+    hugeBanner.textContent = `prefix... ${'A'.repeat(40000)} failed`;
+    previews.append(hugeBanner);
+
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.csv,.pdf,.doc,.docx';
+      docInput.addEventListener('change', () => {
+        // Nit 1: Mount a non-role="alert" rejection message "Upload failed…" matching head-only stem of failed-jobs.csv.
+        const errChip = document.createElement('uploader-file-preview');
+        errChip.className = 'file-preview-chip';
+        errChip.textContent = 'Upload failed\u2026';
+        previews.append(errChip);
+      });
+      menu.append(docInput);
+      document.body.append(overlay);
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      const wallStartMs = vi.getRealSystemTime();
+      dispatchDocFill({
+        attachments: [makeTxtAttachment('nit1-failed-csv', 'failed-jobs.csv')],
+        text: 'Must stay rejected and run fast',
+        requestId: 'gemini-p21-nit1',
+      });
+      await vi.advanceTimersByTimeAsync(13000);
+      const wallElapsedMs = vi.getRealSystemTime() - wallStartMs;
+
+      // Linear-time scanning finishes 130+ polls over a 40k-char token well below any quadratic stall.
+      expect(wallElapsedMs).toBeLessThan(1500);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-p21-nit1',
+          status: 'failed',
+          reason: 'preview-timeout',
+          succeededAttachmentIds: [],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Gemini Hydrogen (P2-3): treats an ambiguous truncated chip matching two distinct long filenames as unassigned on partial retry', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <div class="text-input-field with-file-preview">
+          <div class="attachment-preview-wrapper">
+            <uploader-file-preview-container id="gem-p23-previews"></uploader-file-preview-container>
+          </div>
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          <button id="gem-p23-upload" type="button" aria-label="Upload &amp; tools">+</button>
+        </div>
+      </input-container>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gem-p23-upload');
+    const previews = document.getElementById('gem-p23-previews');
+    [editor, uploadBtn].forEach(markVisible);
+
+    // One surviving chip whose middle-truncated text matches BOTH fileA and fileB.
+    const survivingChip = document.createElement('uploader-file-preview');
+    survivingChip.className = 'file-preview-chip ng-star-inserted';
+    survivingChip.innerHTML = `
+      <span>TXT</span>
+      <span class="gem-attachment-text">quarterly-...nal-report</span>
+      <button type="button" aria-label="close quarterly-...nal-report"></button>
+    `;
+    previews.append(survivingChip);
+
+    const uploads = [];
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      docInput.addEventListener('change', () => {
+        const file = docInput.files?.[0];
+        if (!file) return;
+        uploads.push(file.name);
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        chip.innerHTML = `<span>TXT</span><span class="gem-attachment-text">${file.name}</span>`;
+        previews.append(chip);
+      });
+      menu.append(docInput);
+      document.body.append(overlay);
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      const fileA = makeTxtAttachment('p23-a', 'quarterly-architecture-v1-final-report.txt');
+      const fileB = makeTxtAttachment('p23-b', 'quarterly-architecture-v2-final-report.txt');
+
+      dispatchRetryWithFallback('gemini-p23-ambiguous-truncated-retry', fileA, fileB);
+      await vi.advanceTimersByTimeAsync(6000);
+
+      // Because the single truncated chip ambiguously matches both fileA and fileB,
+      // neither is silently skipped — both are re-uploaded cleanly.
+      expect(uploads).toEqual([
+        'quarterly-architecture-v1-final-report.txt',
+        'quarterly-architecture-v2-final-report.txt',
+      ]);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-p23-ambiguous-truncated-retry',
+          status: 'succeeded',
+          succeededAttachmentIds: ['p23-a', 'p23-b'],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Gemini Hydrogen (P2-A): retains colliding truncated chips when all colliding docs are present and re-uploads only the missing third doc', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <div class="text-input-field with-file-preview">
+          <div class="attachment-preview-wrapper">
+            <uploader-file-preview-container id="gem-p2a-previews"></uploader-file-preview-container>
+          </div>
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          <button id="gem-p2a-upload" type="button" aria-label="Upload &amp; tools">+</button>
+        </div>
+      </input-container>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gem-p2a-upload');
+    const previews = document.getElementById('gem-p2a-previews');
+    [editor, uploadBtn].forEach(markVisible);
+
+    // BOTH colliding truncated chips are still retained; only c.txt is missing.
+    for (let i = 0; i < 2; i += 1) {
+      const chip = document.createElement('uploader-file-preview');
+      chip.className = 'file-preview-chip ng-star-inserted';
+      chip.innerHTML = `
+        <span>TXT</span>
+        <span class="gem-attachment-text">quarterly-...nal-report</span>
+        <button type="button" aria-label="close quarterly-...nal-report"></button>
+      `;
+      previews.append(chip);
+    }
+
+    const uploads = [];
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      docInput.addEventListener('change', () => {
+        const file = docInput.files?.[0];
+        if (!file) return;
+        uploads.push(file.name);
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        chip.innerHTML = `<span>TXT</span><span class="gem-attachment-text">${file.name}</span>`;
+        previews.append(chip);
+      });
+      menu.append(docInput);
+      document.body.append(overlay);
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      const fileA = makeTxtAttachment('p2a-a', 'quarterly-architecture-v1-final-report.txt');
+      const fileB = makeTxtAttachment('p2a-b', 'quarterly-architecture-v2-final-report.txt');
+      const fileC = makeTxtAttachment('p2a-c', 'c.txt');
+
+      dispatchRetryWithFallback('gemini-p2a-retained-colliding-pair', fileA, fileB, fileC);
+      await vi.advanceTimersByTimeAsync(6000);
+
+      expect(uploads).toEqual(['c.txt']);
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-p2a-retained-colliding-pair',
+          status: 'succeeded',
+          succeededAttachmentIds: ['p2a-a', 'p2a-b', 'p2a-c'],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
+
+  it('Gemini Hydrogen (P2-B): confirms a warm upload whose head-only truncated chip starts with a rejection word (failed-jobs-2026…)', async () => {
+    window.happyDOM.setURL('https://gemini.google.com/app');
+    document.body.innerHTML = `
+      <input-container>
+        <div class="text-input-field with-file-preview">
+          <div class="attachment-preview-wrapper">
+            <uploader-file-preview-container id="gem-p2b-previews"></uploader-file-preview-container>
+          </div>
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          <button id="gem-p2b-upload" type="button" aria-label="Upload &amp; tools">+</button>
+        </div>
+      </input-container>
+    `;
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gem-p2b-upload');
+    const previews = document.getElementById('gem-p2b-previews');
+    [editor, uploadBtn].forEach(markVisible);
+
+    const uploads = [];
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+      docInput.addEventListener('change', () => {
+        const file = docInput.files?.[0];
+        if (!file) return;
+        uploads.push(file.name);
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        chip.innerHTML = `
+          <span>TXT</span>
+          <span class="gem-attachment-text">failed-jobs-2026\u2026</span>
+          <button type="button" aria-label="close failed-jobs-2026\u2026"></button>
+        `;
+        previews.append(chip);
+      });
+      menu.append(docInput);
+      document.body.append(overlay);
+    });
+    const onEscape = (event) => {
+      if (event.key === 'Escape') document.querySelector('.cdk-overlay-pane')?.remove();
+    };
+    document.addEventListener('keydown', onEscape);
+
+    try {
+      dispatchDocFill({
+        attachments: [makeTxtAttachment('p2b-failed-prefix', 'failed-jobs-2026-q3-export.txt')],
+        text: 'Summarize failed jobs export.',
+        requestId: 'gemini-p2b-head-only-rejection-prefix',
+      });
+      await vi.advanceTimersByTimeAsync(4000);
+
+      expect(uploads).toEqual(['failed-jobs-2026-q3-export.txt']);
+      expect(editor.textContent).toContain('Summarize failed jobs export.');
+      expect(getLastActionResult()).toEqual(
+        expect.objectContaining({
+          requestId: 'gemini-p2b-head-only-rejection-prefix',
+          provider: 'gemini',
+          status: 'succeeded',
+          succeededAttachmentIds: ['p2b-failed-prefix'],
+        })
+      );
+    } finally {
+      document.removeEventListener('keydown', onEscape);
+    }
+  });
 });

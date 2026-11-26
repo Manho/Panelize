@@ -3340,7 +3340,8 @@
     } else if (provider === 'gemini') {
       if (
         composerRoot &&
-        (countGeminiAttachmentPreviews(composerRoot, null, { excludeRejectionUi: true }) > 0 ||
+        (hasGeminiDeferredPreviewWrapper(composerRoot) ||
+          countGeminiAttachmentPreviews(composerRoot, null, { excludeRejectionUi: true }) > 0 ||
           (candidateImages || []).some(
             img => img?.name && countGeminiAttachmentPreviews(composerRoot, img, { excludeRejectionUi: true }) > 0
           ))
@@ -3591,7 +3592,8 @@
       const attachmentResults = [];
 
       // Inject attachments sequentially
-      for (const attachment of effectiveAttachments) {
+      for (let index = 0; index < effectiveAttachments.length; index += 1) {
+        const attachment = effectiveAttachments[index];
         const result = await injectSingleImage(provider, attachment, { retry: effectiveRetry });
         attachmentResults.push(result);
         if (result.skipped) {
@@ -3610,7 +3612,9 @@
           break;
         }
         // Wait a bit between attachments
-        await sleep(200);
+        if (index < effectiveAttachments.length - 1) {
+          await sleep(200);
+        }
       }
       if (partialRetryPlan) {
         succeededAttachmentIds.sort((a, b) => fallbackSucceededIds.indexOf(a) - fallbackSucceededIds.indexOf(b));
@@ -4096,6 +4100,101 @@
     return Boolean(re && text && re.test(text));
   }
 
+  const TRUNCATED_NAME_ELLIPSIS_RE = /\.{3}|\u2026/;
+  const TRUNCATED_NAME_MIN_CHARS = 3;
+  const TRUNCATED_NAME_DUPLICATE_SUFFIX_RE = /\s*\(\d+\)$/;
+  const TRUNCATED_NAME_CONTROL_PREFIX_RE = /^(?:close|remove|delete)\s+/i;
+
+  function stripTruncatedNameWrapper(label) {
+    return (label || '')
+      .trim()
+      .toLowerCase()
+      .replace(TRUNCATED_NAME_CONTROL_PREFIX_RE, '')
+      .replace(TRUNCATED_NAME_DUPLICATE_SUFFIX_RE, '')
+      .trim();
+  }
+
+  function parseTruncatedFileNameCandidate(label) {
+    const cleaned = stripTruncatedNameWrapper(label);
+    if (!cleaned) {
+      return null;
+    }
+    const ellipsis = cleaned.match(TRUNCATED_NAME_ELLIPSIS_RE);
+    if (!ellipsis) {
+      return null;
+    }
+    return {
+      cleaned,
+      head: cleaned.slice(0, ellipsis.index).trim(),
+      tail: cleaned.slice(ellipsis.index + ellipsis[0].length).trim(),
+    };
+  }
+
+  /**
+   * True when `label` is an ellipsis-truncated form of `fileName` or its stem,
+   * e.g. Gemini's middle truncation "very-long-...2026-final" or trailing "report...".
+   */
+  function matchesTruncatedFileName(label, fileName) {
+    const parsed = parseTruncatedFileNameCandidate(label);
+    const name = (fileName || '').trim().toLowerCase();
+    if (!parsed || !name) {
+      return false;
+    }
+    const { head, tail } = parsed;
+    if (head.length + tail.length < TRUNCATED_NAME_MIN_CHARS) {
+      return false;
+    }
+    const stem = getAttachmentFileNameStem(name).toLowerCase();
+    const targets = stem ? [stem, name] : [name];
+    return targets.some(
+      target =>
+        head.length + tail.length < target.length &&
+        target.startsWith(head) &&
+        target.endsWith(tail)
+    );
+  }
+
+  const BARE_REJECTION_WORD_RE =
+    /^(?:fail(?:ed|ure|s)?|errors?|unsupported|not supported|rejected|unable|cannot|can't|couldn't|could not|too large)$/i;
+
+  /**
+   * Removes ellipsis-truncated occurrences of `normalizedName` from `text` so a
+   * truncated filename containing words like "error" or "failure" (e.g.
+   * "fix-gemini-...failure" or "My Very Long ... failure") is not mistaken for
+   * an upload rejection banner. Uses linear-time token scanning and refuses to
+   * strip bare head-only rejection words (e.g. "Upload failed…" for "failed-jobs.csv")
+   * while still allowing compound prefixes like "failed-jobs-2026…".
+   */
+  function stripMatchingTruncatedFileNameTokens(text, normalizedName, candidateLabels = []) {
+    if (!text || !normalizedName || !TRUNCATED_NAME_ELLIPSIS_RE.test(text)) {
+      return text;
+    }
+    const maxCandidateLength = normalizedName.length + 16;
+    const getStripTarget = (candidate) => {
+      const parsed = parseTruncatedFileNameCandidate(candidate);
+      if (!parsed || parsed.cleaned.length > maxCandidateLength) {
+        return null;
+      }
+      if (!parsed.tail && BARE_REJECTION_WORD_RE.test(parsed.head)) {
+        return null;
+      }
+      return matchesTruncatedFileName(parsed.cleaned, normalizedName) ? parsed.cleaned : null;
+    };
+    let result = text;
+    for (const label of candidateLabels) {
+      const stripTarget = getStripTarget(label);
+      if (stripTarget) {
+        result = result.split(stripTarget).join(' ');
+      }
+    }
+    return result.replace(/[^\s,;:]+/g, (token) => {
+      if (token.length > maxCandidateLength || !TRUNCATED_NAME_ELLIPSIS_RE.test(token)) {
+        return token;
+      }
+      return getStripTarget(token) ? ' ' : token;
+    });
+  }
+
   /**
    * True when an element is page-level rejection UI (alerts, status toasts,
    * snackbars) or carries failure wording beyond the file name itself, so an
@@ -4115,6 +4214,21 @@
     const stemRe = createFileNameTokenRegExp(normalizedStem, 'gu');
     if (stemRe) {
       withoutName = withoutName.replace(stemRe, ' ');
+    }
+    if (normalizedName) {
+      const candidateLabels = [
+        element.getAttribute?.('aria-label') || '',
+        element.getAttribute?.('title') || '',
+        element.textContent || '',
+      ];
+      element.querySelectorAll?.('.gem-attachment-text, [aria-label], [title]').forEach((child) => {
+        candidateLabels.push(
+          child.textContent || '',
+          child.getAttribute?.('aria-label') || '',
+          child.getAttribute?.('title') || ''
+        );
+      });
+      withoutName = stripMatchingTruncatedFileNameTokens(withoutName, normalizedName, candidateLabels);
     }
     return REJECTION_TEXT_RE.test(withoutName);
   }
@@ -5786,6 +5900,7 @@
 
   const GEMINI_PREVIEW_CHIP_SELECTOR =
     'uploader-file-preview, .file-preview-chip, [data-test-id="file-preview"], [data-test-id="image-preview"]';
+  const GEMINI_PROCESS_FILE_URL_RE = /(?:\/|\.)BardFrontendService\/ProcessFile(?:\?|$)/i;
 
   function isInvalidGeminiPreviewContainer(element, normalizedName = '', excludeRejectionUi = true) {
     if (!element) return true;
@@ -5798,16 +5913,173 @@
     return excludeRejectionUi && isRejectionUiElement(element, normalizedName);
   }
 
+  function extractGeminiChipParts(element) {
+    const parts = [
+      (element.getAttribute?.('data-file-name') || '').trim().toLowerCase(),
+      (element.getAttribute?.('data-filename') || '').trim().toLowerCase(),
+      getElementAccessibleText(element)
+    ];
+    const describedIds = new Set();
+    const collectDescribedBy = (node) => {
+      const raw = (node?.getAttribute?.('aria-describedby') || '').trim();
+      if (!raw) return;
+      raw.split(/\s+/).forEach((id) => {
+        if (id) describedIds.add(id);
+      });
+    };
+    collectDescribedBy(element);
+    element.querySelectorAll?.('.gem-attachment-text, [aria-label], [title], img[alt], [aria-describedby]').forEach((child) => {
+      parts.push(
+        (child.textContent || '').trim().toLowerCase(),
+        (child.getAttribute?.('aria-label') || '').trim().toLowerCase(),
+        (child.getAttribute?.('title') || '').trim().toLowerCase(),
+        (child.getAttribute?.('alt') || '').trim().toLowerCase()
+      );
+      collectDescribedBy(child);
+    });
+    describedIds.forEach((id) => {
+      const descText = (document.getElementById(id)?.textContent || '').trim().toLowerCase();
+      if (descText) {
+        parts.push(descText);
+      }
+    });
+    return parts.filter(Boolean);
+  }
+
+  /**
+   * True when Gemini Hydrogen has mounted `.attachment-preview-wrapper` (and
+   * `.with-file-preview`) for staged upload(s) while `<uploader-file-preview-container>`
+   * is still pending inside Angular's `@defer (on idle)` block.
+   */
+  function hasGeminiDeferredPreviewWrapper(root) {
+    const searchRoot = root || document;
+    const wrapper = querySelectorDeep('.attachment-preview-wrapper', searchRoot);
+    if (!wrapper || wrapper.closest?.(GEMINI_SIDEBAR_ANCESTOR_SELECTOR)) {
+      return false;
+    }
+    if (
+      querySelectorDeep('uploader-file-preview-container', searchRoot) ||
+      querySelectorDeep(GEMINI_PREVIEW_CHIP_SELECTOR, searchRoot)
+    ) {
+      return false;
+    }
+    const textField = wrapper.closest?.('.text-input-field');
+    return Boolean(!textField || textField.classList?.contains('with-file-preview'));
+  }
+
+  const GEMINI_DEFERRED_UPLOAD_SETTLE_MS = 500;
+
+  function getGeminiRejectionAlertElements() {
+    const alerts = new Set();
+    document.querySelectorAll(REJECTION_UI_SELECTOR).forEach((el) => {
+      const text = getElementAccessibleText(el);
+      if (text && REJECTION_TEXT_RE.test(text)) {
+        alerts.add(el);
+      }
+    });
+    return alerts;
+  }
+
+  function hasNewGeminiRejectionAlert(baselineAlerts) {
+    for (const el of getGeminiRejectionAlertElements()) {
+      if (!baselineAlerts.has(el)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isCompletedGeminiProcessFileEntry(entry) {
+    if (!entry || typeof entry.name !== 'string' || !GEMINI_PROCESS_FILE_URL_RE.test(entry.name)) {
+      return false;
+    }
+    if (typeof entry.responseStatus === 'number') {
+      return entry.responseStatus >= 200 && entry.responseStatus < 300;
+    }
+    return Boolean(entry.responseEnd > 0 || entry.duration > 0);
+  }
+
+  /**
+   * Tracks Gemini's same-origin `ProcessFile` upload-registration RPC via
+   * PerformanceObserver (unaffected by the 250-entry resource timing buffer cap)
+   * with a `performance.getEntriesByType('resource')` fallback.
+   */
+  function startGeminiUploadResourceTracker() {
+    const countBufferedEntries = () => {
+      if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') {
+        return 0;
+      }
+      try {
+        return performance.getEntriesByType('resource').filter(isCompletedGeminiProcessFileEntry).length;
+      } catch {
+        return 0;
+      }
+    };
+
+    const baselineCount = countBufferedEntries();
+    let observedCount = 0;
+    let observer = null;
+
+    if (typeof PerformanceObserver === 'function') {
+      try {
+        observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (isCompletedGeminiProcessFileEntry(entry)) {
+              observedCount += 1;
+            }
+          }
+        });
+        observer.observe({ type: 'resource', buffered: false });
+      } catch {
+        observer = null;
+      }
+    }
+
+    return {
+      hasCompletedUpload() {
+        return observedCount > 0 || countBufferedEntries() > baselineCount;
+      },
+      stop() {
+        try {
+          observer?.disconnect();
+        } catch {
+          // Ignore disconnect errors in restricted runtimes
+        }
+        observer = null;
+      }
+    };
+  }
+
   /**
    * Collects the distinct, non-rejected attachment chips currently staged in
    * Gemini's composer (named chips, label-only chips and bare blob previews).
    */
-  function collectGeminiRetainedPreviewChips(root) {
+  function collectGeminiRetainedPreviewChips(root, candidateNames = []) {
     const searchRoot = root || document;
+    const normalizedCandidates = (candidateNames || [])
+      .map((name) => (typeof name === 'string' ? name.trim().toLowerCase() : ''))
+      .filter(Boolean);
+    const resolveMatchedName = (element) => {
+      if (normalizedCandidates.length === 0) return '';
+      const parts = extractGeminiChipParts(element);
+      const combined = parts.join(' ');
+      return normalizedCandidates.find((candidate) => {
+        if (combined.includes(candidate)) return true;
+        const stem = getAttachmentFileNameStem(candidate).toLowerCase();
+        return Boolean(
+          (stem && parts.some((part) => containsFileNameToken(part, stem))) ||
+          parts.some((part) => matchesTruncatedFileName(part, candidate))
+        );
+      }) || '';
+    };
     const chips = new Set();
     const addCanonical = (element) => {
       const canonical = element.closest?.('uploader-file-preview, .file-preview-chip') || element;
-      if (!isInvalidGeminiPreviewContainer(element) && !isInvalidGeminiPreviewContainer(canonical)) {
+      const matchedName = resolveMatchedName(canonical);
+      if (
+        !isInvalidGeminiPreviewContainer(element, matchedName) &&
+        !isInvalidGeminiPreviewContainer(canonical, matchedName)
+      ) {
         chips.add(canonical);
       }
     };
@@ -5854,23 +6126,13 @@
    * Returns the retained attachments and the ones still missing from the composer.
    */
   function reconcileGeminiRetainedAttachments(composerRoot, attachments) {
-    const chips = collectGeminiRetainedPreviewChips(composerRoot).map((chip) => {
-      const parts = [
-        (chip.getAttribute?.('data-file-name') || '').trim().toLowerCase(),
-        (chip.getAttribute?.('data-filename') || '').trim().toLowerCase(),
-        getElementAccessibleText(chip)
-      ];
-      chip.querySelectorAll?.('.gem-attachment-text, [aria-label], [title], img[alt]').forEach((child) => {
-        parts.push(
-          (child.textContent || '').trim().toLowerCase(),
-          (child.getAttribute?.('aria-label') || '').trim().toLowerCase(),
-          (child.getAttribute?.('title') || '').trim().toLowerCase(),
-          (child.getAttribute?.('alt') || '').trim().toLowerCase()
-        );
-      });
+    const candidateNames = (attachments || []).map((att) => att?.name).filter(Boolean);
+    const chips = collectGeminiRetainedPreviewChips(composerRoot, candidateNames).map((chip) => {
+      const parts = extractGeminiChipParts(chip);
       chip.querySelectorAll?.('span, div').forEach((child) => {
         if (child.children.length === 0) {
-          parts.push((child.textContent || '').trim().toLowerCase());
+          const leaf = (child.textContent || '').trim().toLowerCase();
+          if (leaf) parts.push(leaf);
         }
       });
       const filtered = parts.filter(Boolean);
@@ -5894,12 +6156,42 @@
       if (!name) return false;
       if (chip.combined.includes(name)) return 'full';
       const stem = getAttachmentFileNameStem(name).toLowerCase();
-      return stem && chip.parts.some(part => containsFileNameToken(part, stem)) ? 'stem' : false;
+      if (stem && chip.parts.some(part => containsFileNameToken(part, stem))) {
+        return 'stem';
+      }
+      return chip.parts.some(part => matchesTruncatedFileName(part, name)) ? 'truncated' : false;
     };
-    const tryAssign = (accept) => {
+    const tryAssign = (accept, { rejectAmbiguousChip = false } = {}) => {
       attachments.forEach((attachment, attachmentIndex) => {
         if (assignments.has(attachmentIndex)) return;
-        const chipIndex = chips.findIndex((chip, index) => !claimed.has(index) && accept(chip, attachment));
+        const chipIndex = chips.findIndex((chip, index) => {
+          if (claimed.has(index) || !accept(chip, attachment)) return false;
+          if (!rejectAmbiguousChip) return true;
+          // Skip a truncated chip when multiple distinct unassigned filenames match it
+          // and fewer unclaimed matching chips remain than colliding attachments, so a
+          // surviving chip from file B never suppresses re-uploading missing file A
+          // while fully retained colliding sets keep normal partial-retry behavior.
+          const matchingUnassigned = [];
+          const distinctMatchingNames = new Set();
+          attachments.forEach((candidate, candidateIndex) => {
+            if (!assignments.has(candidateIndex) && accept(chip, candidate)) {
+              matchingUnassigned.push(candidate);
+              distinctMatchingNames.add((candidate?.name || '').trim().toLowerCase() || `#${candidateIndex}`);
+            }
+          });
+          if (distinctMatchingNames.size <= 1) {
+            return true;
+          }
+          const competingChips = chips.reduce(
+            (count, candidateChip, candidateChipIndex) =>
+              !claimed.has(candidateChipIndex) &&
+              matchingUnassigned.some((candidate) => accept(candidateChip, candidate))
+                ? count + 1
+                : count,
+            0
+          );
+          return competingChips >= matchingUnassigned.length;
+        });
         if (chipIndex >= 0) {
           claimed.add(chipIndex);
           assignments.set(attachmentIndex, chipIndex);
@@ -5914,6 +6206,14 @@
     tryAssign((chip, attachment) =>
       matchesName(chip, attachment) === 'stem' && chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment)));
     tryAssign((chip, attachment) => matchesName(chip, attachment) === 'stem' && badgeAgrees(chip, attachment));
+    tryAssign((chip, attachment) =>
+      matchesName(chip, attachment) === 'truncated' && chip.badgeFamilies.has(getGeminiAttachmentTypeFamily(attachment)),
+      { rejectAmbiguousChip: true }
+    );
+    tryAssign((chip, attachment) =>
+      matchesName(chip, attachment) === 'truncated' && badgeAgrees(chip, attachment),
+      { rejectAmbiguousChip: true }
+    );
     tryAssign((chip, attachment) => !isDocumentAttachmentData(attachment) && chip.hasImageMedia);
 
     const retained = [];
@@ -5938,24 +6238,15 @@
       if (!normalizedName) {
         return true;
       }
-      const parts = [
-        (element.getAttribute?.('data-file-name') || '').trim().toLowerCase(),
-        (element.getAttribute?.('data-filename') || '').trim().toLowerCase(),
-        getElementAccessibleText(element)
-      ];
-      element.querySelectorAll?.('.gem-attachment-text, [aria-label], [title], img[alt]').forEach((child) => {
-        parts.push(
-          (child.textContent || '').trim().toLowerCase(),
-          (child.getAttribute?.('aria-label') || '').trim().toLowerCase(),
-          (child.getAttribute?.('title') || '').trim().toLowerCase(),
-          (child.getAttribute?.('alt') || '').trim().toLowerCase()
-        );
-      });
-      const combined = parts.filter(Boolean).join(' ');
+      const parts = extractGeminiChipParts(element);
+      const combined = parts.join(' ');
       if (combined.includes(normalizedName)) {
         return true;
       }
-      return Boolean(normalizedStem && parts.some(part => containsFileNameToken(part, normalizedStem)));
+      if (normalizedStem && parts.some(part => containsFileNameToken(part, normalizedStem))) {
+        return true;
+      }
+      return parts.some(part => matchesTruncatedFileName(part, normalizedName));
     };
 
     const isInvalidPreviewContainer = (element) =>
@@ -5989,7 +6280,8 @@
       if (
         !normalizedName ||
         text.includes(normalizedName) ||
-        (normalizedStem && containsFileNameToken(text, normalizedStem))
+        (normalizedStem && containsFileNameToken(text, normalizedStem)) ||
+        matchesTruncatedFileName(text, normalizedName)
       ) {
         matchedChips.add(canonicalChip);
       }
@@ -6088,37 +6380,82 @@
         const previousPreviewCount = shouldConfirmPreview
           ? countGeminiAttachmentPreviews(previewScope, imageData, { excludeRejectionUi: true })
           : 0;
+        const wasDeferredAtStart = shouldConfirmPreview && hasGeminiDeferredPreviewWrapper(previewScope);
+        const baselineRejectionAlerts = shouldConfirmPreview ? getGeminiRejectionAlertElements() : new Set();
+        const uploadTracker = shouldConfirmPreview ? startGeminiUploadResourceTracker() : null;
 
-        if (!assignFilesToInput(fileInput, [file])) {
+        try {
+          if (!assignFilesToInput(fileInput, [file])) {
+            if (openedUploadMenu) {
+              await sleep(50);
+              closeGeminiUploadMenu(clickedUploadBtn);
+            }
+            return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+          }
+
+          dispatchFileInputEvents(fileInput);
+
           if (openedUploadMenu) {
+            // Dismiss the overlay after change so Angular processes the upload before unmounting menu inputs.
             await sleep(50);
             closeGeminiUploadMenu(clickedUploadBtn);
           }
-          return createImageInjectionFailure(IMAGE_INJECTION_REASONS.INJECTION_ERROR);
+
+          if (shouldConfirmPreview) {
+            let deferredConfirmSince = null;
+            const isUploadConfirmed = () => {
+              const hasNewRejection = hasNewGeminiRejectionAlert(baselineRejectionAlerts);
+              const currentPreviews = countGeminiAttachmentPreviews(previewScope, imageData, {
+                excludeRejectionUi: true
+              });
+              if (currentPreviews > previousPreviewCount) {
+                // If @defer was pending at upload start and resolved mid-flight (rendering earlier
+                // already-confirmed chips), require this upload's own ProcessFile 2xx completion
+                // and a brief rejection-free settle window before confirming.
+                if (wasDeferredAtStart) {
+                  if (hasNewRejection || !uploadTracker?.hasCompletedUpload()) {
+                    deferredConfirmSince = null;
+                    return false;
+                  }
+                  const now = Date.now();
+                  if (deferredConfirmSince === null) {
+                    deferredConfirmSince = now;
+                  }
+                  return now - deferredConfirmSince >= GEMINI_DEFERRED_UPLOAD_SETTLE_MS;
+                }
+                return true;
+              }
+              const deferredReady = Boolean(
+                !hasNewRejection &&
+                hasGeminiDeferredPreviewWrapper(previewScope) &&
+                uploadTracker?.hasCompletedUpload()
+              );
+              if (!deferredReady) {
+                deferredConfirmSince = null;
+                return false;
+              }
+              const now = Date.now();
+              if (deferredConfirmSince === null) {
+                deferredConfirmSince = now;
+              }
+              return now - deferredConfirmSince >= GEMINI_DEFERRED_UPLOAD_SETTLE_MS;
+            };
+            const confirmed = await waitForPreviewIncrease(
+              () => (isUploadConfirmed() ? 1 : 0),
+              0,
+              getPreviewTimeoutMs(imageData)
+            );
+            console.log('[Image Injection] Gemini: Hidden file input upload', confirmed ? 'confirmed' : 'timed out');
+            return confirmed
+              ? createImageInjectionSuccess()
+              : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
+          }
+
+          console.log('[Image Injection] Gemini: Attachment injected via file input');
+          return createImageInjectionSuccess();
+        } finally {
+          uploadTracker?.stop();
         }
-
-        dispatchFileInputEvents(fileInput);
-
-        if (openedUploadMenu) {
-          // Dismiss the overlay after change so Angular processes the upload before unmounting menu inputs.
-          await sleep(50);
-          closeGeminiUploadMenu(clickedUploadBtn);
-        }
-
-        if (shouldConfirmPreview) {
-          const confirmed = await waitForPreviewIncrease(
-            () => countGeminiAttachmentPreviews(previewScope, imageData, { excludeRejectionUi: true }),
-            previousPreviewCount,
-            getPreviewTimeoutMs(imageData)
-          );
-          console.log('[Image Injection] Gemini: Hidden file input upload', confirmed ? 'confirmed' : 'timed out');
-          return confirmed
-            ? createImageInjectionSuccess()
-            : createImageInjectionFailure(IMAGE_INJECTION_REASONS.PREVIEW_TIMEOUT);
-        }
-
-        console.log('[Image Injection] Gemini: Attachment injected via file input');
-        return createImageInjectionSuccess();
       }
 
       if (openedUploadMenu) {
