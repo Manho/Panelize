@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CUSTOM_PROVIDERS_STORAGE_KEY } from '../modules/custom-providers.js';
+import { createOptionsPageLoader } from './helpers/options-page-loader.js';
 
 const MULTI_PANEL_HTML = readFileSync(
   resolve(process.cwd(), 'multi-panel/multi-panel.html'),
@@ -53,6 +54,7 @@ function expectBadgeStartTruncationDom(badgeEl, expectedOrigin) {
 }
 
 describe('B3b origin badge start-truncation invariants, title tooltip, and literal XSS name', () => {
+  const { loadOptionsPage, cleanupOptionsPages } = createOptionsPageLoader();
   let cleanupListeners = [];
   let storageChangeListeners = [];
   let areas = null;
@@ -197,7 +199,8 @@ describe('B3b origin badge start-truncation invariants, title tooltip, and liter
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanupOptionsPages();
     for (const cleanup of cleanupListeners.splice(0)) {
       cleanup();
     }
@@ -342,7 +345,7 @@ describe('B3b origin badge start-truncation invariants, title tooltip, and liter
       grantedOrigins: [`${spoofOrigin}/*`],
     });
 
-    const optionsMod = await import('../options/options.js');
+    const optionsMod = await loadOptionsPage();
     await vi.waitFor(() => {
       expect(
         document.querySelector('#provider-list .provider-item[data-provider-id="custom-3333333333"]')
