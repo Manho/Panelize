@@ -26,6 +26,7 @@ import {
   isProviderFrameOrigin,
 } from '../modules/provider-open-url.js';
 import { reconcileOptionalProviderAccess } from '../modules/optional-provider-access.js';
+import { createOptionsPageLoader } from './helpers/options-page-loader.js';
 
 const MULTI_PANEL_HTML = readFileSync(
   resolve(process.cwd(), 'multi-panel/multi-panel.html'),
@@ -141,6 +142,7 @@ function installStatefulChromeStorage({ syncInitial = {}, localInitial = {}, ses
 }
 
 describe('custom providers: exact-origin trust, envelope, foreign-id preservation, and entry-point hydration', () => {
+  const { loadOptionsPage, cleanupOptionsPages } = createOptionsPageLoader();
   let cleanupListeners = [];
 
   beforeEach(() => {
@@ -194,7 +196,8 @@ describe('custom providers: exact-origin trust, envelope, foreign-id preservatio
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanupOptionsPages();
     for (const cleanup of cleanupListeners.splice(0)) {
       cleanup();
     }
@@ -446,7 +449,7 @@ describe('custom providers: exact-origin trust, envelope, foreign-id preservatio
         },
       });
 
-      const optionsMod = await import('../options/options.js');
+      const optionsMod = await loadOptionsPage();
 
       // Wait for init() -> renderProviderList() to populate #provider-list including localCustom
       await vi.waitFor(() => {

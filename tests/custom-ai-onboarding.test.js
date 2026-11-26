@@ -11,6 +11,7 @@ import {
   setCustomProviderDescriptors,
 } from '../modules/provider-registry.js';
 import { createMockIndexedDB } from './helpers/mock-indexeddb.js';
+import { createOptionsPageLoader } from './helpers/options-page-loader.js';
 
 const ROOT = process.cwd();
 const LOCALES_DIR = resolve(ROOT, '_locales');
@@ -160,8 +161,20 @@ function installOptionsChromeEnv({
       permissionRemovedListeners.forEach((fn) => fn({ origins }));
       return Promise.resolve(true);
     }),
-    onAdded: { addListener: vi.fn((fn) => permissionAddedListeners.push(fn)) },
-    onRemoved: { addListener: vi.fn((fn) => permissionRemovedListeners.push(fn)) },
+    onAdded: {
+      addListener: vi.fn((fn) => permissionAddedListeners.push(fn)),
+      removeListener: vi.fn((fn) => {
+        const idx = permissionAddedListeners.indexOf(fn);
+        if (idx !== -1) permissionAddedListeners.splice(idx, 1);
+      }),
+    },
+    onRemoved: {
+      addListener: vi.fn((fn) => permissionRemovedListeners.push(fn)),
+      removeListener: vi.fn((fn) => {
+        const idx = permissionRemovedListeners.indexOf(fn);
+        if (idx !== -1) permissionRemovedListeners.splice(idx, 1);
+      }),
+    },
   };
 
   chrome.management = {
@@ -280,6 +293,7 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
 
   describe('Settings 3-mode Custom AI form, quick-fill chips, guide link, and hash highlight', () => {
     const originalIndexedDB = globalThis.indexedDB;
+    const { loadOptionsPage, cleanupOptionsPages } = createOptionsPageLoader();
 
     beforeEach(() => {
       vi.resetModules();
@@ -293,16 +307,19 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       window.history.replaceState(null, '', '/options/options.html');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+      await cleanupOptionsPages();
       vi.useRealTimers();
       resetCustomApiSecretsDbForTests();
       globalThis.indexedDB = originalIndexedDB;
+      delete globalThis.fetch;
+      document.body.innerHTML = '';
       window.history.replaceState(null, '', '/options/options.html');
     });
 
     it('renders 3 connection modes, maps both web and web-local to customKind="web", and updates placeholders/hints/chips', async () => {
       const { areas } = installOptionsChromeEnv();
-      const optionsMod = await import('../options/options.js');
+      const optionsMod = await loadOptionsPage();
       const { getProviderDescriptor } = await import('../modules/provider-registry.js');
       await vi.waitFor(() => {
         expect(document.getElementById('version')?.textContent).toContain('2.2.0');
@@ -430,7 +447,7 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
         syncInitial: { language: 'zh_CN' },
         uiLanguage: 'zh_CN',
       });
-      await import('../options/options.js');
+      await loadOptionsPage();
       await vi.waitFor(() => {
         expect(document.getElementById('version')?.textContent).toContain('2.2.0');
         expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
@@ -488,7 +505,7 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
 
     it('wires accessible group label on #custom-provider-examples and mode-hint description on #custom-provider-url', async () => {
       installOptionsChromeEnv();
-      await import('../options/options.js');
+      await loadOptionsPage();
       await vi.waitFor(() => {
         expect(document.getElementById('version')?.textContent).toContain('2.2.0');
       });
@@ -506,7 +523,7 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
 
     it('disables quick-fill chips when scoped frame rules are unsupported', async () => {
       installOptionsChromeEnv({ scopedFrameRules: false });
-      await import('../options/options.js');
+      await loadOptionsPage();
       await vi.waitFor(() => {
         expect(document.getElementById('version')?.textContent).toContain('2.2.0');
         expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
@@ -526,7 +543,7 @@ describe('Custom AI onboarding locales, Settings UI, and Multi-Panel menu action
       const card = document.getElementById('custom-provider-card');
       card.scrollIntoView = vi.fn();
 
-      await import('../options/options.js');
+      await loadOptionsPage();
       await vi.waitFor(() => {
         expect(document.getElementById('version')?.textContent).toContain('2.2.0');
         expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);

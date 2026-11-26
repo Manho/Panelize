@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CUSTOM_PROVIDERS_STORAGE_KEY,
   CUSTOM_PROVIDER_ICON,
@@ -11,6 +11,7 @@ import {
   setCustomProviderDescriptors,
 } from '../modules/provider-registry.js';
 import { importSettings, resetSettings } from '../modules/settings.js';
+import { createOptionsPageLoader } from './helpers/options-page-loader.js';
 
 const ROOT = process.cwd();
 const LOCALES_DIR = resolve(ROOT, '_locales');
@@ -145,9 +146,17 @@ function installChromeEnv({
     }),
     onAdded: {
       addListener: vi.fn((fn) => permissionAddedListeners.push(fn)),
+      removeListener: vi.fn((fn) => {
+        const idx = permissionAddedListeners.indexOf(fn);
+        if (idx !== -1) permissionAddedListeners.splice(idx, 1);
+      }),
     },
     onRemoved: {
       addListener: vi.fn((fn) => permissionRemovedListeners.push(fn)),
+      removeListener: vi.fn((fn) => {
+        const idx = permissionRemovedListeners.indexOf(fn);
+        if (idx !== -1) permissionRemovedListeners.splice(idx, 1);
+      }),
     },
   };
 
@@ -195,11 +204,19 @@ function installChromeEnv({
 }
 
 describe('B3.2 custom web providers in Options', () => {
+  const { loadOptionsPage, cleanupOptionsPages } = createOptionsPageLoader();
+
   beforeEach(() => {
     vi.restoreAllMocks();
     resetExtraProviderDescriptors();
     setCustomProviderDescriptors([]);
     document.documentElement.setAttribute('data-theme', 'light');
+    document.body.innerHTML = '';
+  });
+
+  afterEach(async () => {
+    await cleanupOptionsPages();
+    delete globalThis.fetch;
     document.body.innerHTML = '';
   });
 
@@ -278,7 +295,7 @@ describe('B3.2 custom web providers in Options', () => {
       },
     });
 
-    const optionsMod = await import('../options/options.js');
+    const optionsMod = await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
       expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
@@ -382,7 +399,7 @@ describe('B3.2 custom web providers in Options', () => {
       grantedOrigins: ['http://localhost:3000/*'],
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
       expect(document.querySelector('[data-provider-id="custom-0123456789"]')).not.toBeNull();
@@ -425,7 +442,7 @@ describe('B3.2 custom web providers in Options', () => {
       },
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
       expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
@@ -537,7 +554,7 @@ describe('B3.2 custom web providers in Options', () => {
       grantedOrigins: ['http://localhost:3000/*', 'https://shared-host.example.com/*'],
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     const registryAfterReset = await import('../modules/provider-registry.js');
     await vi.waitFor(() => {
       expect(document.querySelector('[data-provider-id="custom-1111111111"]')).not.toBeNull();
@@ -662,7 +679,7 @@ describe('B3.2 custom web providers in Options', () => {
       grantedOrigins: ['http://localhost:3000/*'],
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
       expect(document.querySelector('[data-provider-id="custom-0123456789"]')).not.toBeNull();
@@ -716,7 +733,7 @@ describe('B3.2 custom web providers in Options', () => {
       grantedOrigins: [],
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.querySelector('[data-provider-id="custom-abcdef0123"]')).not.toBeNull();
     });
@@ -740,6 +757,13 @@ describe('B3.2 custom web providers in Options', () => {
     row.querySelector('.toggle-switch').click();
     expect(chrome.permissions.request).toHaveBeenCalledTimes(1);
     expect(calledSynchronously).toBe(true);
+    await vi.waitFor(() => {
+      expect(
+        document
+          .querySelector('[data-provider-id="custom-abcdef0123"] .toggle-switch')
+          ?.classList.contains('active')
+      ).toBe(true);
+    });
   });
 
   it('resetSettings leaves customProviders untouched and importSettings keeps custom IDs in synced lists', async () => {
@@ -842,7 +866,7 @@ describe('B3.2 custom web providers in Options', () => {
       return Promise.resolve(true);
     });
 
-    const optionsMod = await import('../options/options.js');
+    const optionsMod = await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.querySelector(`[data-provider-id="${customRecord.id}"]`)).not.toBeNull();
     });
@@ -970,7 +994,7 @@ describe('B3.2 custom web providers in Options', () => {
     });
     chrome.runtime.sendMessage.mockResolvedValue({ success: true });
 
-    const optionsMod = await import('../options/options.js');
+    const optionsMod = await loadOptionsPage();
     await vi.waitFor(() => {
       const row = document.querySelector(`[data-provider-id="${mimoStudioRecord.id}"]`);
       expect(row).not.toBeNull();
@@ -1068,7 +1092,7 @@ describe('B3.2 custom web providers in Options', () => {
     });
     chrome.runtime.sendMessage.mockResolvedValue({ success: true });
 
-    const optionsMod = await import('../options/options.js');
+    const optionsMod = await loadOptionsPage();
     await vi.waitFor(() => {
       expect(document.querySelector(`[data-provider-id="${webRecord.id}"]`)).not.toBeNull();
       expect(document.querySelector(`[data-provider-id="${sameHostApiRecord.id}"]`)).not.toBeNull();
@@ -1115,7 +1139,7 @@ describe('B3.2 custom web providers in Options', () => {
     );
     chrome.runtime.sendMessage.mockResolvedValue({ success: true });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     await vi.waitFor(() => {
       const row = document.querySelector('[data-provider-id="chatglm"]');
       expect(row).not.toBeNull();
@@ -1198,7 +1222,47 @@ describe('B3.2 custom web providers in Options', () => {
     document.querySelector('[data-provider-id="chatglm"] .toggle-switch').click();
     await vi.waitFor(() => {
       expect(areas.sync.enabledProviders).toContain('chatglm');
+      expect(
+        document
+          .querySelector('[data-provider-id="chatglm"] .toggle-switch')
+          ?.classList.contains('active')
+      ).toBe(true);
     });
     expect(chrome.permissions.request).not.toHaveBeenCalled();
+  });
+
+  it('settles full init() via initPromise and unbinds global listeners on cleanupOptionsPage()', async () => {
+    vi.resetModules();
+    document.body.innerHTML = OPTIONS_BODY_HTML;
+
+    installChromeEnv({
+      syncInitial: {
+        theme: 'light',
+        language: 'en',
+        enabledProviders: ['chatgpt'],
+      },
+    });
+
+    const optionsMod = await loadOptionsPage();
+
+    // Full init() — including loadDataStats, loadLibraryCount, loadVersionDisplay, and renderProviderList — has settled
+    expect(document.getElementById('stat-prompts')?.textContent).toBe('0');
+    expect(document.getElementById('version')?.textContent).toContain('2.1.0');
+    expect(document.querySelectorAll('#provider-list .provider-item').length).toBeGreaterThan(0);
+
+    // Cleaning up must remove document/window listeners so later themechange/hashchange events do not re-render
+    optionsMod.cleanupOptionsPage();
+    const listContainer = document.getElementById('provider-list');
+    listContainer.replaceChildren();
+    document.dispatchEvent(new CustomEvent('panelize:themechange', { detail: { theme: 'dark' } }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(listContainer.querySelectorAll('.provider-item')).toHaveLength(0);
+
+    const card = document.getElementById('custom-provider-card');
+    card.scrollIntoView = vi.fn();
+    window.location.hash = '#custom-provider-card';
+    window.dispatchEvent(new Event('hashchange'));
+    expect(card.scrollIntoView).not.toHaveBeenCalled();
+    window.history.replaceState(null, '', '/options/options.html');
   });
 });

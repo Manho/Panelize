@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createOptionsPageLoader } from './helpers/options-page-loader.js';
 
 const MULTI_PANEL_HTML = readFileSync(
   resolve(process.cwd(), 'multi-panel/multi-panel.html'),
@@ -45,6 +46,7 @@ function expectNoInjectedElements(root = document) {
 }
 
 describe('provider UI DOM construction XSS safety', () => {
+  const { loadOptionsPage, cleanupOptionsPages } = createOptionsPageLoader();
   let cleanupListeners = [];
   let registryMod = null;
 
@@ -115,7 +117,8 @@ describe('provider UI DOM construction XSS safety', () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanupOptionsPages();
     registryMod?.resetExtraProviderDescriptors?.();
     registryMod = null;
     for (const cleanup of cleanupListeners.splice(0)) {
@@ -288,7 +291,7 @@ describe('provider UI DOM construction XSS safety', () => {
       });
     });
 
-    const optionsMod = await import('../options/options.js');
+    const optionsMod = await loadOptionsPage();
     await vi.waitFor(() => {
       expect(
         document.querySelector('#provider-list .provider-item[data-provider-id="test-xss"]')

@@ -22,6 +22,7 @@ import {
 } from '../modules/provider-registry.js';
 import { exportSettings } from '../modules/settings.js';
 import { createMockIndexedDB } from './helpers/mock-indexeddb.js';
+import { createOptionsPageLoader } from './helpers/options-page-loader.js';
 
 const ROOT = process.cwd();
 const LOCALES_DIR = resolve(ROOT, '_locales');
@@ -160,9 +161,17 @@ function installOptionsChromeEnv({
     }),
     onAdded: {
       addListener: vi.fn((fn) => permissionAddedListeners.push(fn)),
+      removeListener: vi.fn((fn) => {
+        const idx = permissionAddedListeners.indexOf(fn);
+        if (idx !== -1) permissionAddedListeners.splice(idx, 1);
+      }),
     },
     onRemoved: {
       addListener: vi.fn((fn) => permissionRemovedListeners.push(fn)),
+      removeListener: vi.fn((fn) => {
+        const idx = permissionRemovedListeners.indexOf(fn);
+        if (idx !== -1) permissionRemovedListeners.splice(idx, 1);
+      }),
     },
   };
 
@@ -211,6 +220,7 @@ function installOptionsChromeEnv({
 
 describe('M3 Custom API Options UI, secret isolation, and built-in API comparison panel', () => {
   const originalIndexedDB = globalThis.indexedDB;
+  const { loadOptionsPage, cleanupOptionsPages } = createOptionsPageLoader();
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -222,12 +232,14 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
     document.body.innerHTML = '';
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanupOptionsPages();
     resetCustomApiSecretsDbForTests();
     globalThis.indexedDB = originalIndexedDB;
     resetExtraProviderDescriptors();
     setCustomProviderDescriptors([]);
     delete globalThis.fetch;
+    document.body.innerHTML = '';
   });
 
   it('ships all 28 Custom API, Custom AI Edit, and Model Picker locale strings across all 10 locales', () => {
@@ -293,7 +305,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       },
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     const secretsMod = await import('../modules/custom-api-secrets.js');
 
     await vi.waitFor(() => {
@@ -361,6 +373,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
 
     await vi.waitFor(() => {
       expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toHaveLength(1);
+      expect(document.getElementById('custom-provider-add-btn').disabled).toBe(false);
     });
 
     const alphaRecord = areas.local[CUSTOM_PROVIDERS_STORAGE_KEY][0];
@@ -459,7 +472,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       },
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     const secretsMod = await import('../modules/custom-api-secrets.js');
 
     await vi.waitFor(() => {
@@ -564,7 +577,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       return baseFetch(url, init);
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
 
     await vi.waitFor(() => {
       expect(document.getElementById('custom-provider-form')?.dataset.customFormBound).toBe('true');
@@ -654,6 +667,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
 
     await vi.waitFor(() => {
       expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY]).toHaveLength(1);
+      expect(document.getElementById('custom-provider-add-btn').disabled).toBe(false);
     });
     expect(areas.local[CUSTOM_PROVIDERS_STORAGE_KEY][0]).toMatchObject({
       name: 'DeepSeek: R1 (free)',
@@ -703,7 +717,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       return baseFetch(url, init);
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
     const secretsMod = await import('../modules/custom-api-secrets.js');
 
     await vi.waitFor(() => {
@@ -997,6 +1011,11 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       );
       expect(updatedWeb?.name).toBe('Self Web v2');
       expect(updatedWeb?.url).toBe('https://selfchat.example.com/v2');
+      const refreshedWebRow = document.querySelector(
+        `#provider-list .provider-item[data-provider-id="${webRecord.id}"]`
+      );
+      expect(refreshedWebRow?.querySelector('.custom-provider-inline-edit')).toBeNull();
+      expect(refreshedWebRow?.querySelector('.provider-name')?.textContent).toBe('Self Web v2');
     });
   });
 
@@ -1047,7 +1066,7 @@ describe('M3 Custom API Options UI, secret isolation, and built-in API compariso
       return baseFetch(url, init);
     });
 
-    await import('../options/options.js');
+    await loadOptionsPage();
 
     await vi.waitFor(() => {
       expect(

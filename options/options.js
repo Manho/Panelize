@@ -266,6 +266,12 @@ let addFormModelCombobox = null;
 let sessionModelsRuleSeq = 0;
 let customProviderHighlightTimer = null;
 let boundCustomProviderHashListener = null;
+let boundThemeChangeListener = null;
+let boundCustomProvidersUnsubscribe = null;
+let boundStorageChangeListener = null;
+let boundPermissionChangeListener = null;
+const statusHideTimers = new Map();
+const toastTimers = new Set();
 let lastAppliedChipName = null;
 let lastAppliedChipUrl = null;
 
@@ -2942,13 +2948,24 @@ function updateShortcutHelperVisibility(isEnabled) {
 }
 
 
-// T050: Initialize settings page
-async function init() {
-  editingCustomProviderId = null;
+function clearTrackedTimers() {
   if (customProviderHighlightTimer) {
     clearTimeout(customProviderHighlightTimer);
     customProviderHighlightTimer = null;
   }
+  for (const timerId of statusHideTimers.values()) {
+    clearTimeout(timerId);
+  }
+  statusHideTimers.clear();
+  for (const timerId of toastTimers) {
+    clearTimeout(timerId);
+  }
+  toastTimers.clear();
+}
+
+export function cleanupOptionsPage() {
+  editingCustomProviderId = null;
+  clearTrackedTimers();
   if (activeInlineEditState) {
     activeInlineEditState.destroy();
     activeInlineEditState = null;
@@ -2957,8 +2974,34 @@ async function init() {
     addFormModelCombobox.destroy();
     addFormModelCombobox = null;
   }
+  if (boundCustomProviderHashListener) {
+    window.removeEventListener('hashchange', boundCustomProviderHashListener);
+    boundCustomProviderHashListener = null;
+  }
+  if (boundThemeChangeListener) {
+    document.removeEventListener('panelize:themechange', boundThemeChangeListener);
+    boundThemeChangeListener = null;
+  }
+  if (boundCustomProvidersUnsubscribe) {
+    boundCustomProvidersUnsubscribe();
+    boundCustomProvidersUnsubscribe = null;
+  }
+  if (boundStorageChangeListener) {
+    chrome?.storage?.onChanged?.removeListener?.(boundStorageChangeListener);
+    boundStorageChangeListener = null;
+  }
+  if (boundPermissionChangeListener) {
+    chrome?.permissions?.onAdded?.removeListener?.(boundPermissionChangeListener);
+    chrome?.permissions?.onRemoved?.removeListener?.(boundPermissionChangeListener);
+    boundPermissionChangeListener = null;
+  }
   modelCatalogCache.clear();
   transientProbedOrigins.clear();
+}
+
+// T050: Initialize settings page
+async function init() {
+  cleanupOptionsPage();
   await loadCustomProviders();
   await applyTheme();  // Apply theme first
   await initializeLanguage();  // Initialize language from user settings
@@ -3432,7 +3475,11 @@ function setupStorageChangeListener() {
     return;
   }
 
-  subscribeCustomProvidersChanged(() => {
+  if (boundCustomProvidersUnsubscribe) {
+    boundCustomProvidersUnsubscribe();
+    boundCustomProvidersUnsubscribe = null;
+  }
+  boundCustomProvidersUnsubscribe = subscribeCustomProvidersChanged(() => {
     if (editingCustomProviderId && !getProviderDescriptor(editingCustomProviderId)) {
       cancelEditingCustomProvider({ restoreFocus: false });
     } else {
@@ -3444,7 +3491,10 @@ function setupStorageChangeListener() {
     });
   });
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (boundStorageChangeListener) {
+    chrome.storage.onChanged.removeListener?.(boundStorageChangeListener);
+  }
+  boundStorageChangeListener = (changes, areaName) => {
     if (areaName !== 'sync' && areaName !== 'local') {
       return;
     }
@@ -3454,18 +3504,23 @@ function setupStorageChangeListener() {
         console.error('Error syncing Google mode control:', error);
       });
     }
-  });
+  };
+  chrome.storage.onChanged.addListener(boundStorageChangeListener);
 }
 
 function setupPermissionChangeListeners() {
-  const refreshProviders = () => {
+  if (boundPermissionChangeListener) {
+    chrome.permissions?.onAdded?.removeListener?.(boundPermissionChangeListener);
+    chrome.permissions?.onRemoved?.removeListener?.(boundPermissionChangeListener);
+  }
+  boundPermissionChangeListener = () => {
     renderProviderList().catch((error) => {
       console.error('Error syncing optional provider access:', error);
     });
   };
 
-  chrome.permissions?.onAdded?.addListener(refreshProviders);
-  chrome.permissions?.onRemoved?.addListener(refreshProviders);
+  chrome.permissions?.onAdded?.addListener(boundPermissionChangeListener);
+  chrome.permissions?.onRemoved?.addListener(boundPermissionChangeListener);
 }
 
 // Setup drag-and-drop reordering
@@ -3663,11 +3718,15 @@ async function getDefaultLibraryLanguage() {
 
 // T057-T064: Setup event listeners
 function setupEventListeners() {
-  document.addEventListener('panelize:themechange', () => {
+  if (boundThemeChangeListener) {
+    document.removeEventListener('panelize:themechange', boundThemeChangeListener);
+  }
+  boundThemeChangeListener = () => {
     renderProviderList().catch((error) => {
       console.error('Failed to refresh provider icons after theme change:', error);
     });
-  });
+  };
+  document.addEventListener('panelize:themechange', boundThemeChangeListener);
 
   // Theme change
   document.getElementById('theme-select').addEventListener('change', async (e) => {
@@ -3971,9 +4030,15 @@ function showStatus(type, message) {
   element.textContent = message;
   element.classList.add('show');
 
-  setTimeout(() => {
+  const existingTimer = statusHideTimers.get(elementId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timerId = setTimeout(() => {
+    statusHideTimers.delete(elementId);
     element.classList.remove('show');
   }, 3000);
+  statusHideTimers.set(elementId, timerId);
 }
 
 // Toast notification helper - lightweight, non-intrusive notifications
@@ -4008,12 +4073,16 @@ export function showToast(type, messageKey, params = []) {
   container.appendChild(toast);
 
   // Auto remove after 3 seconds
-  setTimeout(() => {
+  const hideTimerId = setTimeout(() => {
+    toastTimers.delete(hideTimerId);
     toast.classList.add('hiding');
-    setTimeout(() => {
+    const removeTimerId = setTimeout(() => {
+      toastTimers.delete(removeTimerId);
       toast.remove();
     }, 300);
+    toastTimers.add(removeTimerId);
   }, 3000);
+  toastTimers.add(hideTimerId);
 }
 
 // Validate prompt structure against expected format
@@ -4369,4 +4438,4 @@ async function performVersionCheck() {
 }
 
 // Initialize on load
-init();
+export const initPromise = init();
