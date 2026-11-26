@@ -483,4 +483,184 @@ test.describe('Document upload E2E (Issue #118 Item #5)', () => {
       await extension.close();
     }
   });
+
+  test('Gemini Hydrogen E2E: confirms deferred @defer(on idle) uploads via ProcessFile 200 and middle-truncated chips without false failure, while rejecting genuine failures', async () => {
+    const extension = await launchExtension({ viewport: { width: 1280, height: 800 } });
+    const pageErrors = [];
+    const renderGeminiFixture = () => `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Gemini Hydrogen Fixture</title></head>
+<body>
+  <input-container>
+    <input-area-v2>
+      <div class="input-area">
+        <div class="text-input-field with-toolbox-drawer">
+          <div class="ql-editor" contenteditable="true" role="textbox"></div>
+          <button id="gemini-upload-tools" type="button" aria-label="Upload &amp; tools">+</button>
+          <button id="gemini-send" type="button" aria-label="Send message">Send</button>
+        </div>
+      </div>
+    </input-area-v2>
+  </input-container>
+  <div id="sent-turns"></div>
+  <script>
+    window.__geminiFixture = { mode: 'deferred', processFileStatus: 200, uploaded: [], sent: [] };
+    const textField = document.querySelector('.text-input-field');
+    const editor = document.querySelector('.ql-editor');
+    const uploadBtn = document.getElementById('gemini-upload-tools');
+
+    const middleTruncate = (name) => {
+      const stem = name.replace(/\\.[^.]+$/, '');
+      return stem.length <= 20 ? stem : stem.slice(0, 10) + '...' + stem.slice(-10);
+    };
+
+    uploadBtn.addEventListener('click', () => {
+      if (document.querySelector('.cdk-overlay-pane')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'cdk-overlay-pane';
+      overlay.innerHTML = '<div role="menu" class="mat-mdc-menu-panel"></div>';
+      const menu = overlay.querySelector('[role="menu"]');
+
+      const docInput = document.createElement('input');
+      docInput.type = 'file';
+      docInput.multiple = true;
+      docInput.className = 'hidden-file-input';
+      docInput.accept = '.txt,.pdf,.doc,.docx';
+
+      const imgInput = document.createElement('input');
+      imgInput.type = 'file';
+      imgInput.multiple = true;
+      imgInput.className = 'hidden-file-input ng-star-inserted';
+      imgInput.accept = 'image/*,video/*';
+
+      const onFile = async (input) => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        window.__geminiFixture.uploaded.push(file.name);
+        textField.classList.add('with-file-preview');
+        let wrapper = textField.querySelector('.attachment-preview-wrapper');
+        if (!wrapper) {
+          wrapper = document.createElement('div');
+          wrapper.className = 'attachment-preview-wrapper';
+          wrapper.innerHTML = '<!----><!---->';
+          textField.prepend(wrapper);
+        }
+        if (window.__geminiFixture.mode === 'deferred') {
+          await fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/ProcessFile?bl=test&seq=' + window.__geminiFixture.uploaded.length, {
+            method: 'POST',
+            body: file.name,
+          });
+          return;
+        }
+        let container = wrapper.querySelector('uploader-file-preview-container');
+        if (!container) {
+          container = document.createElement('uploader-file-preview-container');
+          wrapper.append(container);
+        }
+        const chip = document.createElement('uploader-file-preview');
+        chip.className = 'file-preview-chip ng-star-inserted';
+        const label = middleTruncate(file.name);
+        chip.innerHTML = '<span>TXT</span><span class="gem-attachment-text">' + label + '</span><button type="button" aria-label="close ' + label + '">x</button>';
+        container.append(chip);
+      };
+
+      docInput.addEventListener('change', () => { void onFile(docInput); });
+      imgInput.addEventListener('change', () => { void onFile(imgInput); });
+      menu.append(docInput, imgInput);
+      document.body.append(overlay);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelector('.cdk-overlay-pane')?.remove();
+      }
+    });
+
+    document.getElementById('gemini-send').addEventListener('click', () => {
+      window.__geminiFixture.sent.push({
+        text: editor.textContent,
+        files: [...window.__geminiFixture.uploaded],
+      });
+    });
+  </script>
+</body>
+</html>`;
+
+    try {
+      await extension.context.route('https://gemini.google.com/**', async (route) => {
+        const url = route.request().url();
+        if (url.includes('BardFrontendService/ProcessFile')) {
+          const status = url.includes('seq=4') ? 500 : 200;
+          await route.fulfill({ status, contentType: 'application/json', body: ')]}\'\n[]' });
+          return;
+        }
+        await route.fulfill({ contentType: 'text/html', body: renderGeminiFixture() });
+      });
+
+      const page = await openMultiPanel(extension, { providers: ['gemini'], layout: '1x1' });
+      page.on('pageerror', (err) => pageErrors.push(err.message));
+
+      const getGeminiFrame = () => page.frames().find((f) => f.url().startsWith('https://gemini.google.com/'));
+      await expect.poll(async () => Boolean(await getGeminiFrame()?.evaluate(() => window.__geminiFixture).catch(() => null))).toBe(true);
+
+      // 1) Deferred preview container (fresh page): mixed PNG + long-named TXT + text -> MUST succeed via ProcessFile 200!
+      await page.locator('#image-file-input').setInputFiles([
+        { name: 'diagram.png', mimeType: 'image/png', buffer: PNG_BYTES },
+        { name: 'very-long-quarterly-engineering-architecture-report-2026-final.txt', mimeType: 'text/plain', buffer: TXT_BYTES },
+      ]);
+      await expect(page.locator('.image-preview-item')).toHaveCount(1);
+      await expect(page.locator('.attachment-doc-chip')).toHaveCount(1);
+      await page.locator('#unified-input').fill('Summarize both attached files.');
+      await page.locator('#send-all-btn').click();
+
+      await expect(page.locator('#send-status')).toHaveText('Filled 1 input', { timeout: 10000 });
+      await expect(page.locator('#fill-input-btn')).toHaveAttribute('data-retry-failed', 'false');
+      await expect(page.locator('.attachment-doc-chip')).toHaveCount(0);
+
+      // Click Send All (empty input triggers send) -> both files & text submitted!
+      await page.locator('#send-all-btn').click();
+      await expect.poll(async () => (await getGeminiFrame().evaluate(() => window.__geminiFixture.sent)).length).toBe(1);
+      const sentState = await getGeminiFrame().evaluate(() => window.__geminiFixture.sent[0]);
+      expect(sentState.text).toContain('Summarize both attached files.');
+      expect(sentState.files).toEqual([
+        'diagram.png',
+        'very-long-quarterly-engineering-architecture-report-2026-final.txt',
+      ]);
+
+      // 2) Warm preview container with middle-truncated rejection-word filename -> MUST succeed!
+      await getGeminiFrame().evaluate(() => {
+        window.__geminiFixture.mode = 'warm';
+        document.querySelector('.ql-editor').textContent = '';
+      });
+      await page.locator('#image-file-input').setInputFiles([
+        { name: 'fix-gemini-file-text-false-failure-summary.txt', mimeType: 'text/plain', buffer: TXT_BYTES },
+      ]);
+      await expect(page.locator('.attachment-doc-chip')).toHaveCount(1);
+      await page.locator('#unified-input').fill('Check truncated failure-word filename.');
+      await page.locator('#send-all-btn').click();
+      await expect(page.locator('#send-status')).toHaveText('Filled 1 input', { timeout: 10000 });
+      await expect(page.locator('#fill-input-btn')).toHaveAttribute('data-retry-failed', 'false');
+      await expect(page.locator('.attachment-doc-chip')).toHaveCount(0);
+
+      // 3) Genuine failure (deferred + ProcessFile 500 on seq=4) -> MUST fail with Retry Failed!
+      await getGeminiFrame().evaluate(() => {
+        window.__geminiFixture.mode = 'deferred';
+        document.querySelector('.attachment-preview-wrapper')?.remove();
+        document.querySelector('.text-input-field')?.classList.remove('with-file-preview');
+        document.querySelector('.ql-editor').textContent = '';
+      });
+      await page.locator('#image-file-input').setInputFiles([
+        { name: 'broken-upload.txt', mimeType: 'text/plain', buffer: TXT_BYTES },
+      ]);
+      await expect(page.locator('.attachment-doc-chip')).toHaveCount(1);
+      await page.locator('#unified-input').fill('Should report failure.');
+      await page.locator('#send-all-btn').click();
+      await expect(page.locator('#send-status')).toHaveText('Fill failed: 1/1 panels failed', { timeout: 15000 });
+      await expect(page.locator('#fill-input-btn')).toHaveAttribute('data-retry-failed', 'true');
+
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await extension.close();
+    }
+  });
 });
