@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.4 - 2026-11-27
+- Fix false upload failure (preview-timeout) on Gemini Hydrogen when sending files with text by confirming deferred preview uploads via ProcessFile completion with a rejection-free settle window and matching truncated attachment chip names.
+- Eliminate Permissions policy violation: focus-without-user-activation extension errors by guarding programmatic focus calls in sandboxed cross-origin provider iframes when denied without user activation.
+
 ## 2.3.3 - 2026-11-25
 - Harden ChatGPT attachment uploads by skipping the mobile camera-capture input, preferring the composer multi-file input, verifying staged attachment previews, and retrying once on hydration drops instead of blindly succeeding.
 - Fix false preview-timeout / Retry Failed on Custom Web UI providers (such as Xiaomi MiMo) during mixed image + document uploads by tracking preview images, remove controls, and filename chips independently.
